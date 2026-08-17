@@ -1,0 +1,33 @@
+---
+description: Thème Foumbot Link figé — rouge, blanc, noir jusqu'à la fin du projet
+alwaysApply: true
+---
+
+# Thème Foumbot Link (figé)
+
+Ne **pas** changer la direction visuelle du projet jusqu’à la fin.
+
+## Palette obligatoire
+
+- Noir : `#0A0A0A` (`AppColors.black`)
+- Blanc : `#FFFFFF` (`AppColors.white`)
+- Rouge : `#E53935` (`AppColors.red`)
+
+Utiliser uniquement `lib/theme/app_colors.dart` et `lib/theme/app_theme.dart`.
+Gérer le thème via GetX `ThemeController` (`lib/theme/theme_controller.dart`).
+
+## Typo
+
+- Titres : **Space Grotesk** (Google Fonts)
+- Corps : **Manrope** (Google Fonts)
+
+## Interdictions
+
+- Pas de nouvelle palette (teal, violet, crème, etc.)
+- Pas de thème alternatif hors clair/sombre rouge–blanc–noir
+- Pas de remplacement des Google Fonts actuelles sans demande explicite
+
+## Nom affiché
+
+- App système : **Foumbot Link**
+- AppBar / headers UI : **Foumbot**

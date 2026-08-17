@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Foumbot Link</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: transparent; touch-action: none;
+    }
+    canvas { display: block; width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <script src="./three.min.js"></script>
+  <script src="./map_geometry.js"></script>
+  <script>
+    (function () {
+      const C = {
+        border: 0xa6a6a6,
+        main: 0xf04424,
+        dash: 0xff5540,
+        river: 0x2438c8,
+        dot: 0x111111,
+        pulse: 0xff5a3d,
+        core: 0xffe0d6,
+      };
+
+      let scene, camera, renderer, clock, group;
+      let currentScene = 'welcome';
+      let animId = null;
+      let map = null;
+      let mesh = null;
+      const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
+
+      function clearScene() {
+        if (animId) cancelAnimationFrame(animId);
+        animId = null;
+        map = null;
+        mesh = null;
+        while (scene && scene.children.length) {
+          const obj = scene.children[0];
+          scene.remove(obj);
+          obj.traverse((c) => {
+            if (c.geometry) c.geometry.dispose();
+            if (c.material) {
+              (Array.isArray(c.material) ? c.material : [c.material]).forEach((m) => m.dispose());
+            }
+          });
+        }
+        group = null;
+      }
+
+      function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+      function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+      function lerp(a, b, t) { return a + (b - a) * t; }
+
+      function densify(points, z, segsPer) {
+        if (!points || points.length < 2) return null;
+        // retire les doublons consécutifs (évite les erreurs CatmullRom)
+        const cleaned = [points[0]];
+        for (let i = 1; i < points.length; i++) {
+          const a = cleaned[cleaned.length - 1];
+          const b = points[i];
+          if (a[0] !== b[0] || a[1] !== b[1]) cleaned.push(b);
+        }
+        if (cleaned.length < 2) return null;
+        const curve = new THREE.CatmullRomCurve3(
+          cleaned.map((p) => new THREE.Vector3(p[0], p[1], z)),
+          false,
+          'catmullrom',
+          0.28
+        );
+        const n = Math.max(12, cleaned.length * (segsPer || 4));
+        return { curve: curve, points: curve.getPoints(n) };
+      }
+
+      function makeAnimLine(points3, color, opts) {
+        opts = opts || {};
+        const geo = new THREE.BufferGeometry().setFromPoints(points3);
+        geo.setDrawRange(0, 0);
+        let mat;
+        if (opts.dashed) {
+          mat = new THREE.LineDashedMaterial({
+            color: color,
+            transparent: true,
+            opacity: opts.opacity || 0.85,
+            dashSize: opts.dashSize || 0.04,
+            gapSize: opts.gapSize || 0.03,
+          });
+        } else {
+          mat = new THREE.LineBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: opts.opacity || 1,
+          });
+        }
+        const line = new THREE.Line(geo, mat);
+        if (opts.dashed) line.computeLineDistances();
+        line.userData.total = points3.length;
+        line.userData.progress = 0;
+        line.visible = false;
+        return line;
+      }
+
+      function setLineProgress(line, p) {
+        const total = line.userData.total || 0;
+        // count < 2 → géométrie vide → WebGL "Render count is 0"
+        const count = Math.max(0, Math.floor(total * clamp01(p)));
+        if (count < 2) {
+          line.visible = false;
+          line.geometry.setDrawRange(0, 0);
+        } else {
+          line.visible = true;
+          line.geometry.setDrawRange(0, count);
+        }
+        line.userData.progress = p;
+      }
+
+      function buildWelcomeMap() {
+        const g = typeof MAP_GEOMETRY !== 'undefined' ? MAP_GEOMETRY : null;
+        if (!g) return;
+
+        group = new THREE.Group();
+        map = {
+          t: 0,
+          introDone: false,
+          pause: 0,
+          borderLines: [],
+          riverLines: [],
+          dashLines: [],
+          mainLines: [],
+          dotMeshes: [],
+          borderCurve: null,
+          transportCurve: null,
+          pulse: null,
+          trail: [],
+          roadPulse: null,
+        };
+
+        // Contour
+        const borderData = densify(g.boundary, 0.04, 3);
+        if (!borderData) return;
+        map.borderCurve = borderData.curve;
+        const borderLine = makeAnimLine(borderData.points, C.border, { opacity: 0.95 });
+        group.add(borderLine);
+        map.borderLines.push(borderLine);
+
+        // Rivers
+        (g.rivers || []).forEach((r) => {
+          const d = densify(r, 0.0, 3);
+          if (!d || d.points.length < 2) return;
+          const line = makeAnimLine(d.points, C.river, { opacity: 0.8 });
+          group.add(line);
+          map.riverLines.push(line);
+        });
+
+        // Dashed secondary
+        (g.dashedRoads || []).forEach((r) => {
+          const d = densify(r, 0.015, 3);
+          if (!d || d.points.length < 2) return;
+          const line = makeAnimLine(d.points, C.dash, {
+            opacity: 0.8,
+            dashed: true,
+            dashSize: 0.036,
+            gapSize: 0.028,
+          });
+          group.add(line);
+          map.dashLines.push(line);
+        });
+
+        // Main roads — double line for visual weight
+        (g.mainRoads || []).forEach((r) => {
+          const d = densify(r, 0.025, 4);
+          if (!d || d.points.length < 2) return;
+          const line = makeAnimLine(d.points, C.main, { opacity: 0.98 });
+          group.add(line);
+          map.mainLines.push(line);
+          const d2 = densify(r, 0.026, 4);
+          if (!d2) return;
+          const line2 = makeAnimLine(d2.points, C.main, { opacity: 0.35 });
+          line2.scale.set(1.002, 1.002, 1);
+          group.add(line2);
+          map.mainLines.push(line2);
+        });
+
+        // Transport path for subtle pulse
+        const tp = g.transportPath || (g.mainRoads && g.mainRoads[0]);
+        if (tp) {
+          const td = densify(tp, 0.03, 4);
+          if (td) map.transportCurve = td.curve;
+        }
+
+        // Dots
+        (g.dots || []).forEach((d) => {
+          const m = new THREE.Mesh(
+            new THREE.CircleGeometry(0.03, 14),
+            new THREE.MeshBasicMaterial({ color: C.dot, transparent: true, opacity: 0 })
+          );
+          m.position.set(d[0], d[1], 0.05);
+          m.scale.setScalar(0.01);
+          m.userData.pulseT = 0;
+          group.add(m);
+          map.dotMeshes.push(m);
+        });
+
+        // Border “voiture” + trail
+        const car = makeBorderCar();
+        car.visible = false;
+        group.add(car);
+
+        const halo = new THREE.Mesh(
+          new THREE.CircleGeometry(0.08, 16),
+          new THREE.MeshBasicMaterial({ color: C.pulse, transparent: true, opacity: 0, depthWrite: false })
+        );
+        halo.position.z = -0.01;
+        car.add(halo);
+
+        map.pulse = { group: car, halo: halo, u: 0 };
+
+        for (let i = 0; i < 12; i++) {
+          const tr = new THREE.Mesh(
+            new THREE.CircleGeometry(0.016, 10),
+            new THREE.MeshBasicMaterial({
+              color: C.pulse, transparent: true, opacity: 0, depthWrite: false,
+            })
+          );
+          tr.visible = false;
+          group.add(tr);
+          map.trail.push(tr);
+        }
+
+        const rp = new THREE.Mesh(
+          new THREE.CircleGeometry(0.02, 12),
+          new THREE.MeshBasicMaterial({ color: C.pulse, transparent: true, opacity: 0, depthWrite: false })
+        );
+        rp.visible = false;
+        group.add(rp);
+        map.roadPulse = { mesh: rp, u: 0 };
+
+        group.rotation.x = -0.24;
+        group.scale.setScalar(1.0);
+        group.position.set(0, 0, 0);
+        scene.add(group);
+      }
+
+      function makeBorderCar() {
+        const car = new THREE.Group();
+        const body = new THREE.Mesh(
+          new THREE.BoxGeometry(0.078, 0.034, 0.02),
+          new THREE.MeshBasicMaterial({ color: C.pulse, transparent: true, opacity: 0.98 })
+        );
+        const cabin = new THREE.Mesh(
+          new THREE.BoxGeometry(0.036, 0.022, 0.018),
+          new THREE.MeshBasicMaterial({ color: C.core, transparent: true, opacity: 0.95 })
+        );
+        cabin.position.set(0.006, 0.016, 0.002);
+        const lightL = new THREE.Mesh(
+          new THREE.BoxGeometry(0.008, 0.01, 0.006),
+          new THREE.MeshBasicMaterial({ color: 0xffe082 })
+        );
+        lightL.position.set(0.038, 0.0, 0.012);
+        const lightR = lightL.clone();
+        lightR.position.z = -0.012;
+        car.add(body, cabin, lightL, lightR);
+        return car;
+      }
+
+      function applyIntro(t) {
+        const borderP = easeOutCubic(clamp01(t / 1.8));
+        const riverP = easeOutCubic(clamp01((t - 1.55) / 1.35));
+        const dashP = easeOutCubic(clamp01((t - 2.85) / 1.35));
+        const mainP = easeOutCubic(clamp01((t - 4.05) / 1.4));
+        const dotsP = easeOutCubic(clamp01((t - 5.35) / 1.0));
+
+        map.borderLines.forEach((l) => setLineProgress(l, borderP));
+
+        map.riverLines.forEach((l, i) => {
+          const delay = (i % 8) * 0.04;
+          setLineProgress(l, clamp01((riverP - delay) / Math.max(0.05, 1 - delay)));
+        });
+
+        map.dashLines.forEach((l, i) => {
+          const delay = (i % 10) * 0.03;
+          setLineProgress(l, clamp01((dashP - delay) / Math.max(0.05, 1 - delay)));
+        });
+
+        map.mainLines.forEach((l, i) => {
+          const delay = (i % 6) * 0.04;
+          setLineProgress(l, clamp01((mainP - delay) / Math.max(0.05, 1 - delay)));
+        });
+
+        map.dotMeshes.forEach((m, i) => {
+          const delay = i * 0.03;
+          const p = easeOutCubic(clamp01((dotsP - delay) / 0.85));
+          m.material.opacity = p * 0.96;
+          m.scale.setScalar(Math.max(0.01, p));
+        });
+
+        if (t >= 6.5) {
+          map.introDone = true;
+          // finalize full
+          map.borderLines.forEach((l) => setLineProgress(l, 1));
+          map.riverLines.forEach((l) => setLineProgress(l, 1));
+          map.dashLines.forEach((l) => setLineProgress(l, 1));
+          map.mainLines.forEach((l) => setLineProgress(l, 1));
+          map.dotMeshes.forEach((m) => {
+            m.material.opacity = 0.96;
+            m.scale.setScalar(1);
+          });
+        }
+      }
+
+      function updatePulse(dt) {
+        if (!map.introDone || !map.borderCurve) return;
+        const period = 8.5;
+        const pause = 0.65;
+
+        if (map.pause > 0) {
+          map.pause -= dt;
+          map.pulse.group.visible = false;
+          map.trail.forEach((m) => { m.visible = false; });
+          return;
+        }
+
+        map.pulse.u += dt / period;
+        if (map.pulse.u >= 1) {
+          map.pulse.u = 0;
+          map.pause = pause;
+          return;
+        }
+
+        const u = map.pulse.u;
+        const pos = map.borderCurve.getPointAt(u);
+        const tangent = map.borderCurve.getTangentAt(u);
+        map.pulse.group.visible = true;
+        map.pulse.group.position.set(pos.x, pos.y, 0.08);
+        map.pulse.group.rotation.z = Math.atan2(tangent.y, tangent.x);
+        map.pulse.halo.material.opacity = 0.22;
+
+        // brighten border near pulse
+        map.borderLines.forEach((l) => {
+          l.material.color.setHex(C.border);
+          l.material.opacity = 0.88 + 0.1 * Math.sin(u * Math.PI);
+        });
+
+        map.trail.forEach((m, i) => {
+          let uu = u - (i + 1) * 0.011;
+          if (uu < 0) uu += 1;
+          const p = map.borderCurve.getPointAt(uu);
+          m.visible = true;
+          m.position.set(p.x, p.y, 0.065);
+          const fade = 1 - (i + 1) / (map.trail.length + 1);
+          m.material.opacity = 0.32 * fade;
+          m.scale.setScalar(0.65 + 0.45 * fade);
+        });
+
+        map.dotMeshes.forEach((m) => {
+          const dx = m.position.x - pos.x;
+          const dy = m.position.y - pos.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 0.17) {
+            const k = 1 - dist / 0.17;
+            m.scale.setScalar(1 + 0.12 * k);
+            m.material.opacity = lerp(0.85, 1, k);
+            m.userData.pulseT = 0.45;
+          } else if (m.userData.pulseT > 0) {
+            m.userData.pulseT -= dt;
+            const k = clamp01(m.userData.pulseT / 0.45);
+            m.scale.setScalar(1 + 0.12 * k);
+            m.material.opacity = lerp(0.94, 1, k);
+          } else {
+            m.scale.setScalar(1);
+            m.material.opacity = 0.96;
+          }
+        });
+      }
+
+      function updateRoadPulse(dt) {
+        if (!map.introDone || !map.transportCurve) return;
+        map.roadPulse.u = (map.roadPulse.u + dt * 0.065) % 1;
+        const p = map.transportCurve.getPointAt(map.roadPulse.u);
+        map.roadPulse.mesh.visible = true;
+        map.roadPulse.mesh.position.set(p.x, p.y, 0.045);
+        map.roadPulse.mesh.material.opacity = 0.32;
+      }
+
+      function updateAmbient(t) {
+        map.riverLines.forEach((l, i) => {
+          l.material.opacity = 0.72 + 0.1 * Math.sin(t * 0.65 + i * 0.4);
+        });
+        group.rotation.x = -0.24 + Math.sin(t * 0.34) * 0.018 + pointer.y * 0.03;
+        group.rotation.y = Math.sin(t * 0.27) * 0.03 + pointer.x * 0.045;
+        group.position.x = pointer.x * 0.02;
+        group.position.y = Math.sin(t * 0.42) * 0.015;
+      }
+
+      function animateWelcome(dt, t) {
+        if (!map) return;
+        map.t += dt;
+        if (!map.introDone) applyIntro(map.t);
+        else {
+          updatePulse(dt);
+          updateRoadPulse(dt);
+        }
+        updateAmbient(t);
+        pointer.x = lerp(pointer.x, pointer.tx, 0.08);
+        pointer.y = lerp(pointer.y, pointer.ty, 0.08);
+      }
+
+      function buildConnect() {
+        group = new THREE.Group();
+        const mat = new THREE.MeshStandardMaterial({ color: 0x2dd4bf });
+        [[0,0,0],[1.2,0.6,0.3],[-1.1,0.5,-0.4],[0.4,-1,0.6]].forEach((p) => {
+          const n = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 16), mat.clone());
+          n.position.fromArray(p); group.add(n);
+        });
+        scene.add(group);
+      }
+      function buildExplore() {
+        group = new THREE.Group();
+        mesh = new THREE.Mesh(
+          new THREE.TorusKnotGeometry(0.7, 0.22, 100, 14),
+          new THREE.MeshStandardMaterial({ color: 0x0d9488 })
+        );
+        group.add(mesh); scene.add(group);
+      }
+      function buildReady() {
+        group = new THREE.Group();
+        mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(0.7, 28, 28),
+          new THREE.MeshStandardMaterial({ color: 0x14b8a6 })
+        );
+        group.add(mesh); scene.add(group);
+      }
+
+      function mountScene(name) {
+        clearScene();
+        scene.add(new THREE.AmbientLight(0xffffff, 0.95));
+        currentScene = name;
+        if (name === 'welcome') buildWelcomeMap();
+        else if (name === 'connect') buildConnect();
+        else if (name === 'explore') buildExplore();
+        else buildReady();
+        animate();
+      }
+
+      function animate() {
+        animId = requestAnimationFrame(animate);
+        const dt = Math.min(0.05, clock.getDelta());
+        const t = clock.elapsedTime;
+        if (currentScene === 'welcome') animateWelcome(dt, t);
+        else if (group) {
+          group.rotation.y = t * 0.22;
+          if (mesh) mesh.rotation.y = t * 0.35;
+        }
+        renderer.render(scene, camera);
+      }
+
+      function onPointer(e) {
+        const cx = e.touches ? e.touches[0].clientX : e.clientX;
+        const cy = e.touches ? e.touches[0].clientY : e.clientY;
+        pointer.tx = (cx / window.innerWidth - 0.5) * 2;
+        pointer.ty = (cy / window.innerHeight - 0.5) * 2;
+      }
+      function onPointerUp() { pointer.tx = 0; pointer.ty = 0; }
+
+      function init() {
+        if (typeof THREE === 'undefined') {
+          console.error('THREE is not defined');
+          window.__FOUMBOTLIK_READY = false;
+          window.__FOUMBOTLIK_ERROR = 'THREE_MISSING';
+          return;
+        }
+        if (typeof MAP_GEOMETRY === 'undefined') {
+          console.error('MAP_GEOMETRY is not defined');
+          window.__FOUMBOTLIK_READY = false;
+          window.__FOUMBOTLIK_ERROR = 'MAP_MISSING';
+          return;
+        }
+
+        clock = new THREE.Clock();
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(36, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 0, 5.5);
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x000000, 0);
+        document.body.appendChild(renderer.domElement);
+        mountScene('welcome');
+        window.__FOUMBOTLIK_READY = true;
+        window.__FOUMBOTLIK_SCENE = 'welcome';
+        window.addEventListener('resize', () => {
+          camera.aspect = window.innerWidth / window.innerHeight;
+          camera.updateProjectionMatrix();
+          renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        window.addEventListener('pointermove', onPointer, { passive: true });
+        window.addEventListener('touchmove', onPointer, { passive: true });
+        window.addEventListener('pointerup', onPointerUp);
+        window.addEventListener('touchend', onPointerUp);
+      }
+
+      window.setOnboardingScene = function (name) {
+        try {
+          if (!scene || !name) return;
+          if (window.__FOUMBOTLIK_SCENE === name && group) return;
+          mountScene(name);
+          window.__FOUMBOTLIK_SCENE = name;
+        } catch (err) {
+          console.error('setOnboardingScene failed', err);
+        }
+      };
+
+      window.__FOUMBOTLIK_READY = false;
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+      else init();
+    })();
+  </script>
+</body>
+</html>
