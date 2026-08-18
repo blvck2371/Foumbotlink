@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'foumbot_loader.dart';
+
 /// Affiche une scène Three.js chargée depuis les assets locaux.
 class ThreeJsView extends StatefulWidget {
   const ThreeJsView({
@@ -161,13 +163,7 @@ class _ThreeJsViewState extends State<ThreeJsView> {
     }
 
     if (_controller == null) {
-      return const Center(
-        child: SizedBox(
-          width: 28,
-          height: 28,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      );
+      return const Center(child: FoumbotLoader());
     }
 
     return AnimatedOpacity(

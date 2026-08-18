@@ -1,13 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../controllers/home_controller.dart';
 import '../../models/feed_item.dart';
+import '../../services/auth_service.dart';
+import '../../services/feed_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/feed_image.dart';
 import '../../widgets/foumbot_app_bar.dart';
+import '../../widgets/foumbot_loader.dart';
 
 class FeedPostScreen extends StatefulWidget {
   const FeedPostScreen({super.key});
@@ -20,27 +25,64 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
   final _commentCtrl = TextEditingController();
   final _commentFocus = FocusNode();
   final _home = Get.find<HomeController>();
+  final _feed = Get.find<FeedService>();
+  final _auth = Get.find<AuthService>();
+
   late String _postId;
   String? _replyToCommentId;
   String? _replyToAuthorName;
   final Set<String> _expandedReplies = {};
 
+  List<FeedComment> _comments = [];
+  bool _loadingComments = true;
+  FeedItem? _firestorePost;
+  bool _loadingPost = true;
+
+  StreamSubscription? _commentsSub;
+
   @override
   void initState() {
     super.initState();
     _postId = Get.arguments as String;
+    _loadPost();
+    _watchComments();
   }
 
   @override
   void dispose() {
+    _commentsSub?.cancel();
     _commentCtrl.dispose();
     _commentFocus.dispose();
     super.dispose();
   }
 
-  FeedItem? get _post => _home.feedService.getById(_postId);
+  String? get _uid => _auth.isSignedIn ? _auth.uid : null;
 
-  void _refresh() => setState(() {});
+  FeedItem? get _post {
+    final index = _home.items.indexWhere((e) => e.id == _postId);
+    if (index >= 0) return _home.items[index];
+    return _firestorePost;
+  }
+
+  Future<void> _loadPost() async {
+    final index = _home.items.indexWhere((e) => e.id == _postId);
+    if (index >= 0) {
+      if (mounted) setState(() => _loadingPost = false);
+      return;
+    }
+    final post = await _feed.getById(_postId, currentUid: _uid);
+    if (mounted) setState(() { _firestorePost = post; _loadingPost = false; });
+  }
+
+  void _watchComments() {
+    _commentsSub = _feed.watchComments(
+      _postId,
+      currentUid: _uid,
+      onData: (comments) {
+        if (mounted) setState(() { _comments = comments; _loadingComments = false; });
+      },
+    );
+  }
 
   void _toggleReplies(String commentId) {
     setState(() {
@@ -52,15 +94,10 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
     });
   }
 
-  void _expandReplies(String commentId) {
-    setState(() => _expandedReplies.add(commentId));
-  }
-
   void _startReply(FeedComment comment) {
     setState(() {
       _replyToCommentId = comment.id;
       _replyToAuthorName = comment.authorName;
-      // Déplie déjà le fil qu'on prolonge, pour voir la réponse arriver.
       _expandedReplies.add(comment.id);
     });
     _commentFocus.requestFocus();
@@ -73,22 +110,22 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
     });
   }
 
-  void _submitComment() {
+  Future<void> _submitComment() async {
     final text = _commentCtrl.text;
     if (text.trim().isEmpty) return;
     final parentId = _replyToCommentId;
-    _home.addComment(
+    final replyName = _replyToAuthorName;
+    _commentCtrl.clear();
+    _cancelReply();
+    FocusScope.of(context).unfocus();
+
+    await _home.addComment(
       _postId,
       text,
       parentCommentId: parentId,
+      replyToName: replyName,
     );
-    _commentCtrl.clear();
-    if (parentId != null) {
-      _expandReplies(parentId);
-    }
-    _refresh();
-    _cancelReply();
-    FocusScope.of(context).unfocus();
+    if (parentId != null) _expandedReplies.add(parentId);
   }
 
   @override
@@ -98,10 +135,19 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
 
     return Obx(() {
       final isDark = themeController.isDarkMode;
-      _home.feedTick.value;
       final post = _post;
       final ink = isDark ? AppColors.white : AppColors.black;
       final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
+
+      if (_loadingPost) {
+        return Scaffold(
+          backgroundColor: isDark ? AppColors.black : AppColors.white,
+          appBar: FoumbotAppBar(isDark: isDark, title: 'Publication'),
+          body: const Center(
+            child: FoumbotLoader(),
+          ),
+        );
+      }
 
       if (post == null) {
         return Scaffold(
@@ -266,10 +312,7 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                                 : (isDark
                                     ? AppColors.white
                                     : AppColors.black),
-                            onTap: () {
-                              _home.toggleLike(post.id);
-                              _refresh();
-                            },
+                            onTap: () => _home.toggleLike(post.id),
                           ),
                         ),
                         Expanded(
@@ -288,13 +331,20 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                       style: textTheme.titleLarge?.copyWith(color: ink),
                     ),
                     const SizedBox(height: 12),
-                    if (post.comments.isEmpty)
+                    if (_loadingComments)
+                      const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(20),
+                          child: FoumbotLoader(),
+                        ),
+                      )
+                    else if (_comments.isEmpty)
                       Text(
                         'Soyez le premier à commenter.',
                         style: GoogleFonts.manrope(color: muted),
                       )
                     else
-                      ...post.comments.map(
+                      ..._comments.map(
                         (c) => _CommentNode(
                           comment: c,
                           depth: 0,
@@ -304,9 +354,9 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                           timeAgo: _home.timeAgo,
                           expandedIds: _expandedReplies,
                           onToggleReplies: _toggleReplies,
-                          onLike: (commentId) {
-                            _home.toggleCommentLike(_postId, commentId);
-                          },
+                          onLike: (commentId, currentlyLiked) =>
+                              _home.toggleCommentLike(
+                                  _postId, commentId, currentlyLiked),
                           onReply: _startReply,
                         ),
                       ),
@@ -408,10 +458,6 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
   }
 }
 
-/// Un nœud du fil de commentaires, à profondeur illimitée : il se
-/// dessine lui-même puis, si des réponses existent et sont dépliées,
-/// dessine récursivement chacune de ses réponses en dessous, légèrement
-/// indentées — comme un fil de commentaires TikTok/Reddit.
 class _CommentNode extends StatelessWidget {
   const _CommentNode({
     required this.comment,
@@ -434,15 +480,12 @@ class _CommentNode extends StatelessWidget {
   final String Function(DateTime) timeAgo;
   final Set<String> expandedIds;
   final void Function(String commentId) onToggleReplies;
-  final void Function(String commentId) onLike;
+  final void Function(String commentId, bool currentlyLiked) onLike;
   final void Function(FeedComment comment) onReply;
 
   static const double _rootAvatar = 36;
   static const double _replyAvatar = 28;
   static const double _lineWidth = 2;
-  // Au-delà de cette profondeur, l'indentation cesse d'augmenter pour ne
-  // pas écraser le texte — le fil reste logiquement illimité, seul
-  // l'affichage se stabilise (comme sur Instagram/Reddit).
   static const int _maxIndentDepth = 4;
 
   double get _avatarSize => depth == 0 ? _rootAvatar : _replyAvatar;
@@ -572,7 +615,7 @@ class _CommentBody extends StatelessWidget {
   final Color ink;
   final Color muted;
   final String Function(DateTime) timeAgo;
-  final void Function(String commentId) onLike;
+  final void Function(String commentId, bool currentlyLiked) onLike;
   final void Function(FeedComment comment) onReply;
 
   @override
@@ -639,7 +682,7 @@ class _CommentBody extends StatelessWidget {
               ),
               const SizedBox(width: 14),
               InkWell(
-                onTap: () => onLike(comment.id),
+                onTap: () => onLike(comment.id, comment.likedByMe),
                 borderRadius: BorderRadius.circular(8),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(

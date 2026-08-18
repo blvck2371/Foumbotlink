@@ -5,10 +5,15 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../controllers/home_controller.dart';
 import '../../models/app_feature.dart';
 import '../../models/feed_item.dart';
+import '../../models/market_item.dart';
+import '../../routes/app_routes.dart';
+import '../../services/auth_service.dart';
+import '../../services/user_profile_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/feed_image.dart';
 import '../../widgets/foumbot_app_bar.dart';
+import '../../widgets/foumbot_loader.dart';
 import '../../widgets/weather_badge.dart';
 
 class HomeScreen extends GetView<HomeController> {
@@ -131,6 +136,11 @@ class HomeScreen extends GetView<HomeController> {
                           ),
                         ),
                         const SizedBox(height: 16),
+                        _ComposerEntry(
+                          isDark: isDark,
+                          onTap: controller.openCompose,
+                        ),
+                        const SizedBox(height: 16),
                         SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
                           child: Row(
@@ -166,6 +176,14 @@ class HomeScreen extends GetView<HomeController> {
                                 onTap: () => controller
                                     .setFilter(FeedFilter.population),
                               ),
+                              const SizedBox(width: 8),
+                              _FilterChip(
+                                label: 'Vente & Achats',
+                                selected: filter == FeedFilter.venteAchat,
+                                isDark: isDark,
+                                onTap: () => controller
+                                    .setFilter(FeedFilter.venteAchat),
+                              ),
                             ],
                           ),
                         ),
@@ -173,76 +191,215 @@ class HomeScreen extends GetView<HomeController> {
                     ),
                   ),
                 ),
-                if (loading && items.isEmpty)
-                  const SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(
-                      child: CircularProgressIndicator(color: AppColors.red),
-                    ),
-                  )
-                else if (!loading && items.isEmpty)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(
-                      child: Text(
-                        'Aucune publication pour le moment.',
-                        style: GoogleFonts.manrope(
-                          fontSize: 16,
-                          color: muted,
-                        ),
-                      ),
-                    ),
-                  )
-                else
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                    sliver: SliverList.separated(
-                      itemCount: items.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 12),
-                      itemBuilder: (context, i) {
-                        final item = items[i];
-                        return _FeedCard(
-                          item: item,
-                          isDark: isDark,
-                          timeLabel: controller.timeAgo(item.publishedAt),
-                          onOpen: () => controller.openPost(item),
-                          onLike: () => controller.toggleLike(item.id),
-                          onComment: () => controller.openPost(item),
-                        );
-                      },
-                    ),
+                if (controller.isMarketMode) ...[
+                  ..._buildMarketSliver(
+                    controller: controller,
+                    isDark: isDark,
+                    muted: muted,
+                    loading: loading,
+                    loadingMore: loadingMore,
                   ),
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 28, top: 4),
-                    child: Center(
-                      child: loadingMore
-                          ? const SizedBox(
-                              width: 28,
-                              height: 28,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.5,
-                                color: AppColors.red,
-                              ),
-                            )
-                          : (!controller.hasMore.value && items.isNotEmpty)
-                              ? Text(
-                                  'Fin du fil d’actualité',
-                                  style: GoogleFonts.manrope(
-                                    fontSize: 13,
-                                    color: muted,
-                                  ),
-                                )
-                              : const SizedBox(height: 12),
-                    ),
+                ] else ...[
+                  ..._buildFeedSliver(
+                    controller: controller,
+                    items: items,
+                    isDark: isDark,
+                    muted: muted,
+                    loading: loading,
+                    loadingMore: loadingMore,
                   ),
-                ),
+                ],
               ],
             ),
           ),
         ),
       );
     });
+  }
+}
+
+List<Widget> _buildFeedSliver({
+  required HomeController controller,
+  required RxList<FeedItem> items,
+  required bool isDark,
+  required Color muted,
+  required bool loading,
+  required bool loadingMore,
+}) {
+  return [
+    if (loading && items.isEmpty)
+      const SliverFillRemaining(
+        hasScrollBody: false,
+        child: Center(child: FoumbotLoader()),
+      )
+    else if (!loading && items.isEmpty)
+      SliverFillRemaining(
+        hasScrollBody: false,
+        child: Center(
+          child: Text(
+            'Aucune publication pour le moment.',
+            style: GoogleFonts.manrope(fontSize: 16, color: muted),
+          ),
+        ),
+      )
+    else
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        sliver: SliverList.separated(
+          itemCount: items.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
+          itemBuilder: (context, i) {
+            final item = items[i];
+            return _FeedCard(
+              item: item,
+              isDark: isDark,
+              timeLabel: controller.timeAgo(item.publishedAt),
+              onOpen: () => controller.openPost(item),
+              onLike: () => controller.toggleLike(item.id),
+              onComment: () => controller.openPost(item),
+            );
+          },
+        ),
+      ),
+    SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 28, top: 4),
+        child: Center(
+          child: loadingMore
+              ? const FoumbotLoader()
+              : (!controller.hasMore.value && items.isNotEmpty)
+                  ? Text(
+                      'Fin du fil d’actualité',
+                      style: GoogleFonts.manrope(fontSize: 13, color: muted),
+                    )
+                  : const SizedBox(height: 12),
+        ),
+      ),
+    ),
+  ];
+}
+
+List<Widget> _buildMarketSliver({
+  required HomeController controller,
+  required bool isDark,
+  required Color muted,
+  required bool loading,
+  required bool loadingMore,
+}) {
+  final items = controller.marketItems;
+  return [
+    if (loading && items.isEmpty)
+      const SliverFillRemaining(
+        hasScrollBody: false,
+        child: Center(child: FoumbotLoader()),
+      )
+    else if (!loading && items.isEmpty)
+      SliverFillRemaining(
+        hasScrollBody: false,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.storefront_outlined, size: 48, color: muted),
+              const SizedBox(height: 14),
+              Text(
+                'Aucune annonce pour le moment.',
+                style: GoogleFonts.manrope(fontSize: 16, color: muted),
+              ),
+            ],
+          ),
+        ),
+      )
+    else
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        sliver: SliverList.separated(
+          itemCount: items.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
+          itemBuilder: (context, i) {
+            final item = items[i];
+            return _MarketFeedCard(
+              item: item,
+              isDark: isDark,
+              timeLabel: controller.timeAgo(item.createdAt),
+              onTap: () => controller.openMarketItem(item),
+            );
+          },
+        ),
+      ),
+    SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 28, top: 4),
+        child: Center(
+          child: loadingMore
+              ? const FoumbotLoader()
+              : (!controller.hasMore.value && items.isNotEmpty)
+                  ? Text(
+                      'Fin des annonces',
+                      style: GoogleFonts.manrope(fontSize: 13, color: muted),
+                    )
+                  : const SizedBox(height: 12),
+        ),
+      ),
+    ),
+  ];
+}
+
+/// Point d'entrée pour publier, façon "Quoi de neuf ?" de Facebook — en
+/// haut du fil, avant les filtres.
+class _ComposerEntry extends StatelessWidget {
+  const _ComposerEntry({required this.isDark, required this.onTap});
+
+  final bool isDark;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
+
+    return Material(
+      color: isDark ? AppColors.blackElevated : AppColors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: muted.withValues(alpha: 0.2)),
+          ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: AppColors.red.withValues(alpha: 0.15),
+                child: Icon(Icons.person_outline, color: AppColors.red),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isDark ? AppColors.blackSoft : AppColors.whiteSoft,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    'Quoi de neuf à Foumbot ?',
+                    style: GoogleFonts.manrope(fontSize: 14, color: muted),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Icon(Icons.add_circle, color: AppColors.red, size: 26),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -514,6 +671,168 @@ class _FeedAction extends StatelessWidget {
   }
 }
 
+class _MarketFeedCard extends StatelessWidget {
+  const _MarketFeedCard({
+    required this.item,
+    required this.isDark,
+    required this.timeLabel,
+    required this.onTap,
+  });
+
+  final MarketItem item;
+  final bool isDark;
+  final String timeLabel;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = isDark ? AppColors.white : AppColors.black;
+    final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
+    final isVente = item.listingType == MarketListingType.vente;
+    final accent = isVente ? AppColors.red : AppColors.blue;
+
+    return Material(
+      color: isDark ? AppColors.blackElevated : AppColors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: accent.withValues(alpha: 0.2)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Center(
+                      child: Text(item.category.icon,
+                          style: const TextStyle(fontSize: 20)),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.sellerName,
+                          style: GoogleFonts.manrope(
+                              fontWeight: FontWeight.w800, color: ink),
+                        ),
+                        Text(
+                          '${item.location} · $timeLabel',
+                          style: GoogleFonts.manrope(
+                              fontSize: 12, color: muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      item.typeLabel.toUpperCase(),
+                      style: GoogleFonts.manrope(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.6,
+                        color: accent,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                item.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  height: 1.2,
+                  color: ink,
+                ),
+              ),
+              if (item.hasDescription) ...[
+                const SizedBox(height: 6),
+                Text(
+                  item.description,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style:
+                      GoogleFonts.manrope(fontSize: 14, height: 1.4, color: muted),
+                ),
+              ],
+              if (item.hasImages) ...[
+                const SizedBox(height: 10),
+                FeedImageCarousel(
+                  imageUrls: item.imageUrls,
+                  isDark: isDark,
+                  borderRadius: 12,
+                ),
+              ],
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Text(
+                    item.priceLabel,
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: accent,
+                    ),
+                  ),
+                  if (item.negotiable) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      'Négociable',
+                      style: GoogleFonts.manrope(fontSize: 12, color: muted),
+                    ),
+                  ],
+                  if (item.condition != null) ...[
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: ink.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        item.condition!.label,
+                        style: GoogleFonts.manrope(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: muted),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _HomeDrawer extends StatelessWidget {
   const _HomeDrawer({
     required this.isDark,
@@ -567,6 +886,10 @@ class _HomeDrawer extends StatelessWidget {
               ),
             ),
             Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              child: _AccountSection(isDark: isDark, ink: ink, muted: muted),
+            ),
+            Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
               child: Text(
                 'Toutes les fonctionnalités',
@@ -615,5 +938,124 @@ class _HomeDrawer extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Identité connectée (nom, type de compte) + déconnexion, ou invitation
+/// à se connecter si aucune session active.
+class _AccountSection extends StatelessWidget {
+  const _AccountSection({required this.isDark, required this.ink, required this.muted});
+
+  final bool isDark;
+  final Color ink;
+  final Color muted;
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = Get.find<AuthService>();
+    final profiles = Get.find<UserProfileService>();
+
+    return Obx(() {
+      final profile = profiles.profile.value;
+      final signedIn = auth.isSignedIn && profile != null;
+
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: signedIn
+            ? Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: AppColors.red.withValues(alpha: 0.15),
+                    child: Text(
+                      profile.displayName.isNotEmpty
+                          ? profile.displayName[0].toUpperCase()
+                          : '?',
+                      style: GoogleFonts.spaceGrotesk(
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.red,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          profile.displayName,
+                          style: GoogleFonts.manrope(
+                            fontWeight: FontWeight.w700,
+                            color: ink,
+                          ),
+                        ),
+                        Text(
+                          profile.authorSubtitle,
+                          style: GoogleFonts.manrope(fontSize: 12, color: muted),
+                        ),
+                        if (!profile.canPublish) ...[
+                          const SizedBox(height: 3),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.hourglass_top_rounded,
+                                size: 11,
+                                color: AppColors.blue,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'En attente de validation',
+                                style: GoogleFonts.manrope(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.blue,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Se déconnecter',
+                    onPressed: () {
+                      Get.back();
+                      Get.find<HomeController>().signOut();
+                    },
+                    icon: Icon(Icons.logout_rounded, color: muted),
+                  ),
+                ],
+              )
+            : InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () {
+                  Get.back();
+                  Get.toNamed(AppRoutes.auth);
+                },
+                child: Row(
+                  children: [
+                    Icon(Icons.person_outline, color: AppColors.red),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Se connecter',
+                        style: GoogleFonts.manrope(
+                          fontWeight: FontWeight.w700,
+                          color: ink,
+                        ),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, color: muted),
+                  ],
+                ),
+              ),
+      );
+    });
   }
 }

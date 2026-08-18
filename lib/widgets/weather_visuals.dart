@@ -9,7 +9,9 @@ import '../theme/app_colors.dart';
 IconData weatherIcon(WeatherCondition condition) => switch (condition) {
       WeatherCondition.sunny => Icons.wb_sunny_rounded,
       WeatherCondition.cloudy => Icons.wb_cloudy_rounded,
-      WeatherCondition.rain => Icons.umbrella_rounded,
+      // Une goutte d'eau claire plutôt qu'un parapluie (illisible en
+      // petit — il ressort fermé/affaissé, pas clairement "pluie").
+      WeatherCondition.rain => Icons.water_drop_rounded,
       WeatherCondition.storm => Icons.thunderstorm_rounded,
       WeatherCondition.fog => Icons.foggy,
       WeatherCondition.snow => Icons.ac_unit_rounded,

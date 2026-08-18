@@ -1,35 +1,32 @@
 enum FeedType { info, annonce, post }
 
-enum FeedFilter { all, infos, annonces, population }
+enum FeedFilter { all, infos, annonces, population, venteAchat }
 
-/// Commentaire d'un fil imbriqué à profondeur illimitée (façon TikTok) :
-/// chaque commentaire — racine ou réponse — porte sa propre liste de
-/// réponses, elles-mêmes rattachables à d'autres réponses.
 class FeedComment {
   FeedComment({
     required this.id,
+    required this.authorUid,
     required this.authorName,
     required this.text,
     required this.createdAt,
+    this.parentCommentId,
+    this.replyToName,
     this.likesCount = 0,
     this.likedByMe = false,
-    this.replyToName,
     List<FeedComment>? replies,
   }) : replies = replies ?? [];
 
   final String id;
+  final String authorUid;
   final String authorName;
   final String text;
   final DateTime createdAt;
-  /// Auteur du commentaire parent direct — affiché en préfixe `@Nom`
-  /// quand ce commentaire est lui-même une réponse.
+  final String? parentCommentId;
   final String? replyToName;
-  int likesCount;
-  bool likedByMe;
+  final int likesCount;
+  final bool likedByMe;
   final List<FeedComment> replies;
 
-  /// Nombre total de réponses en dessous de ce commentaire, à toute
-  /// profondeur.
   int get totalReplyCount {
     var total = replies.length;
     for (final reply in replies) {
@@ -46,9 +43,11 @@ class FeedComment {
   }) {
     return FeedComment(
       id: id,
+      authorUid: authorUid,
       authorName: authorName,
       text: text,
       createdAt: createdAt,
+      parentCommentId: parentCommentId,
       replyToName: replyToName ?? this.replyToName,
       likesCount: likesCount ?? this.likesCount,
       likedByMe: likedByMe ?? this.likedByMe,
@@ -63,27 +62,29 @@ class FeedItem {
     required this.type,
     required this.title,
     required this.body,
+    required this.authorUid,
     required this.authorName,
     required this.authorSubtitle,
     required this.publishedAt,
     this.likesCount = 0,
     this.likedByMe = false,
+    this.commentsCount = 0,
     List<String>? imageUrls,
     List<FeedComment>? comments,
-  }) : imageUrls = imageUrls ?? [],
-       comments = comments ?? [];
+  })  : imageUrls = imageUrls ?? [],
+        comments = comments ?? [];
 
   final String id;
   final FeedType type;
   final String title;
   final String body;
+  final String authorUid;
   final String authorName;
   final String authorSubtitle;
   final DateTime publishedAt;
-  int likesCount;
-  bool likedByMe;
-  /// Photos jointes à la publication, dans l'ordre d'affichage. Vide pour
-  /// une publication uniquement textuelle.
+  final int likesCount;
+  final bool likedByMe;
+  final int commentsCount;
   final List<String> imageUrls;
   final List<FeedComment> comments;
 
@@ -95,17 +96,10 @@ class FeedItem {
         FeedType.post => 'Publication',
       };
 
-  int get commentsCount {
-    var total = comments.length;
-    for (final c in comments) {
-      total += c.totalReplyCount;
-    }
-    return total;
-  }
-
   FeedItem copyWith({
     int? likesCount,
     bool? likedByMe,
+    int? commentsCount,
     List<FeedComment>? comments,
   }) {
     return FeedItem(
@@ -113,11 +107,13 @@ class FeedItem {
       type: type,
       title: title,
       body: body,
+      authorUid: authorUid,
       authorName: authorName,
       authorSubtitle: authorSubtitle,
       publishedAt: publishedAt,
       likesCount: likesCount ?? this.likesCount,
       likedByMe: likedByMe ?? this.likedByMe,
+      commentsCount: commentsCount ?? this.commentsCount,
       imageUrls: imageUrls,
       comments: comments ?? List<FeedComment>.from(this.comments),
     );

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 /// Modules principaux de Foumbot Link.
 enum AppFeatureId {
   infos,
+  venteAchat,
   demarches,
   communaute,
   idees,
@@ -33,34 +34,16 @@ class AppFeature {
       icon: Icons.campaign_outlined,
     ),
     AppFeature(
-      id: AppFeatureId.demarches,
-      title: 'Démarches',
-      subtitle: 'Services et formalités administratives',
-      icon: Icons.assignment_outlined,
+      id: AppFeatureId.venteAchat,
+      title: 'Vente & Achat',
+      subtitle: 'Marché local entre habitants',
+      icon: Icons.storefront_outlined,
     ),
     AppFeature(
       id: AppFeatureId.communaute,
       title: 'Communauté',
       subtitle: 'Échanger entre habitants',
       icon: Icons.forum_outlined,
-    ),
-    AppFeature(
-      id: AppFeatureId.idees,
-      title: 'Idées & initiatives',
-      subtitle: 'Partager et soutenir des projets',
-      icon: Icons.lightbulb_outline,
-    ),
-    AppFeature(
-      id: AppFeatureId.mairie,
-      title: 'Mairie',
-      subtitle: 'Dialogue avec l’administration',
-      icon: Icons.account_balance_outlined,
-    ),
-    AppFeature(
-      id: AppFeatureId.notifications,
-      title: 'Notifications',
-      subtitle: 'Alertes et messages reçus',
-      icon: Icons.notifications_outlined,
     ),
     AppFeature(
       id: AppFeatureId.profil,

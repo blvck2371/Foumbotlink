@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "141324093576",
+    "project_id": "foumbotlink",
+    "storage_bucket": "foumbotlink.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:141324093576:android:a08e57eb6efd5b7d88773d",
+        "android_client_info": {
+          "package_name": "com.foumbotlik.foumbotlik"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCEELwBpYSnp6Dg2qkhc_56HGJrmG4i_fA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

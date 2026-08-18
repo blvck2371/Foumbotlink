@@ -1,13 +1,20 @@
+import 'dart:io';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
 
-/// Image réseau façon Facebook : pas de roue de chargement — un fond
-/// neutre qui s'efface en fondu doux dès que la photo est prête. Mise en
-/// cache disque (`cached_network_image`) pour qu'une photo déjà vue
-/// réapparaisse instantanément, sans re-téléchargement, y compris après
-/// avoir quitté l'app.
+/// `imageUrls` mélange des URLs réseau (photos de démo) et des chemins
+/// de fichiers locaux (photos jointes par l'utilisateur via la galerie).
+bool _isNetworkUrl(String path) =>
+    path.startsWith('http://') || path.startsWith('https://');
+
+/// Image d'une publication, réseau ou locale, façon Facebook : pas de
+/// roue de chargement — un fond neutre qui s'efface en fondu doux dès que
+/// la photo est prête. Les photos réseau passent par un cache disque
+/// (`cached_network_image`) pour réapparaître instantanément une fois
+/// vues, sans re-téléchargement, y compris après avoir quitté l'app.
 class FeedNetworkImage extends StatelessWidget {
   const FeedNetworkImage({
     super.key,
@@ -23,6 +30,24 @@ class FeedNetworkImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final placeholder = isDark ? AppColors.blackElevated : AppColors.whiteSoft;
+    final errorFallback = ColoredBox(
+      color: placeholder,
+      child: Icon(
+        Icons.image_not_supported_outlined,
+        color: isDark ? AppColors.whiteMuted : AppColors.gray,
+      ),
+    );
+
+    if (!_isNetworkUrl(url)) {
+      return Image.file(
+        File(url),
+        fit: fit,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (context, error, stackTrace) => errorFallback,
+      );
+    }
+
     return CachedNetworkImage(
       imageUrl: url,
       fit: fit,
@@ -31,13 +56,7 @@ class FeedNetworkImage extends StatelessWidget {
       fadeInDuration: const Duration(milliseconds: 200),
       fadeInCurve: Curves.easeOut,
       placeholder: (context, _) => ColoredBox(color: placeholder),
-      errorWidget: (context, _, error) => ColoredBox(
-        color: placeholder,
-        child: Icon(
-          Icons.image_not_supported_outlined,
-          color: isDark ? AppColors.whiteMuted : AppColors.gray,
-        ),
-      ),
+      errorWidget: (context, _, error) => errorFallback,
     );
   }
 }
@@ -116,10 +135,13 @@ class _SingleFeedImageState extends State<_SingleFeedImage> {
 
   void _resolve() {
     _stream?.removeListener(_listener!);
-    // Même provider que `CachedNetworkImage` (mêmes clé et cache manager)
-    // : mesurer le ratio ne déclenche pas un second téléchargement.
-    final stream = CachedNetworkImageProvider(widget.url)
-        .resolve(const ImageConfiguration());
+    // Même provider que celui utilisé pour l'affichage (mêmes clé et
+    // cache manager côté réseau) : mesurer le ratio ne déclenche pas un
+    // second téléchargement.
+    final provider = _isNetworkUrl(widget.url)
+        ? CachedNetworkImageProvider(widget.url)
+        : FileImage(File(widget.url)) as ImageProvider;
+    final stream = provider.resolve(const ImageConfiguration());
     final listener = ImageStreamListener((info, _) {
       if (!mounted) return;
       final raw = info.image.width / info.image.height;
