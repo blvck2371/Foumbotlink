@@ -2,27 +2,48 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    // Images des publications — lecture publique, écriture authentifiée
+    // Images des publications — lecture publique, écriture réservée à
+    // l'auteur. feed_service.dart uploade les images avant de créer le
+    // document Firestore (docRef.id généré côté client), donc le
+    // document n'existe pas encore au premier upload : on l'autorise
+    // dans ce cas précis, puis on verrouille sur `authorUid` dès que le
+    // post existe — empêche un tiers de réécrire les images d'un post
+    // existant en devinant son id (public, lisible depuis le fil).
     match /posts/{postId}/{fileName} {
       allow read: if true;
       allow write: if request.auth != null
         && request.resource.size < 10 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+        && request.resource.contentType.matches('image/.*')
+        && (
+          !firestore.exists(/databases/(default)/documents/posts/$(postId))
+          || firestore.get(/databases/(default)/documents/posts/$(postId)).data.authorUid == request.auth.uid
+        );
     }
 
-    // Images du marché — lecture publique, écriture authentifiée
+    // Images du marché — même logique que les posts, verrouillée sur
+    // `sellerUid` dès que l'annonce existe.
     match /market/{itemId}/{fileName} {
       allow read: if true;
       allow write: if request.auth != null
         && request.resource.size < 10 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+        && request.resource.contentType.matches('image/.*')
+        && (
+          !firestore.exists(/databases/(default)/documents/market/$(itemId))
+          || firestore.get(/databases/(default)/documents/market/$(itemId)).data.sellerUid == request.auth.uid
+        );
     }
 
-    // Pièces jointes de chat (vocal, image, document) — accès authentifié
+    // Pièces jointes de chat (vocal, image, document) — réservées aux
+    // participants de la conversation (le conversationId est prévisible :
+    // `uid1_uid2` triés — sans cette vérification, n'importe quel compte
+    // connaissant les deux uids pourrait lire/écrire les fichiers d'une
+    // conversation qui n'est pas la sienne).
     match /chat/{conversationId}/{allPaths=**} {
-      allow read: if request.auth != null;
+      allow read: if request.auth != null
+        && request.auth.uid in firestore.get(/databases/(default)/documents/conversations/$(conversationId)).data.participants;
       allow write: if request.auth != null
-        && request.resource.size < 20 * 1024 * 1024;
+        && request.resource.size < 20 * 1024 * 1024
+        && request.auth.uid in firestore.get(/databases/(default)/documents/conversations/$(conversationId)).data.participants;
     }
   }
 }
