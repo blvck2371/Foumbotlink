@@ -1,13 +1,20 @@
 import 'package:get/get.dart';
 
 import '../bindings/auth_binding.dart';
+import '../bindings/chat_binding.dart';
+import '../bindings/community_binding.dart';
+import '../bindings/conversations_binding.dart';
 import '../bindings/compose_binding.dart';
 import '../bindings/home_binding.dart';
 import '../bindings/market_binding.dart';
 import '../bindings/market_compose_binding.dart';
 import '../bindings/onboarding_binding.dart';
+import '../bindings/profile_binding.dart';
 import '../bindings/splash_binding.dart';
 import '../screens/auth/auth_screen.dart';
+import '../screens/chat/chat_screen.dart';
+import '../screens/chat/conversations_screen.dart';
+import '../screens/community/community_screen.dart';
 import '../screens/compose/compose_screen.dart';
 import '../screens/feed/feed_post_screen.dart';
 import '../screens/feature/feature_placeholder_screen.dart';
@@ -16,6 +23,9 @@ import '../screens/market/market_compose_screen.dart';
 import '../screens/market/market_detail_screen.dart';
 import '../screens/market/market_screen.dart';
 import '../screens/onboarding/onboarding_screen.dart';
+import '../screens/demarches/demarche_detail_screen.dart';
+import '../screens/demarches/demarches_screen.dart';
+import '../screens/profile/user_profile_screen.dart';
 import '../screens/splash/splash_screen.dart';
 import 'app_routes.dart';
 
@@ -87,6 +97,46 @@ class AppPages {
       page: () => const MarketComposeScreen(),
       binding: MarketComposeBinding(),
       transition: Transition.downToUp,
+      transitionDuration: const Duration(milliseconds: 320),
+    ),
+    GetPage(
+      name: AppRoutes.conversations,
+      page: () => const ConversationsScreen(),
+      binding: ConversationsBinding(),
+      transition: Transition.cupertino,
+      transitionDuration: const Duration(milliseconds: 320),
+    ),
+    GetPage(
+      name: AppRoutes.chat,
+      page: () => const ChatScreen(),
+      binding: ChatBinding(),
+      transition: Transition.cupertino,
+      transitionDuration: const Duration(milliseconds: 320),
+    ),
+    GetPage(
+      name: AppRoutes.community,
+      page: () => const CommunityScreen(),
+      binding: CommunityBinding(),
+      transition: Transition.cupertino,
+      transitionDuration: const Duration(milliseconds: 320),
+    ),
+    GetPage(
+      name: AppRoutes.userProfile,
+      page: () => const UserProfileScreen(),
+      binding: ProfileBinding(),
+      transition: Transition.cupertino,
+      transitionDuration: const Duration(milliseconds: 320),
+    ),
+    GetPage(
+      name: AppRoutes.demarches,
+      page: () => const DemarchesScreen(),
+      transition: Transition.cupertino,
+      transitionDuration: const Duration(milliseconds: 320),
+    ),
+    GetPage(
+      name: AppRoutes.demarcheDetail,
+      page: () => const DemarcheDetailScreen(),
+      transition: Transition.cupertino,
       transitionDuration: const Duration(milliseconds: 320),
     ),
   ];

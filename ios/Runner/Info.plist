@@ -26,6 +26,8 @@
 		<string>$(FLUTTER_BUILD_NUMBER)</string>
 		<key>LSRequiresIPhoneOS</key>
 		<true/>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>Foumbot Link a besoin du micro pour enregistrer des messages vocaux.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>Foumbot Link a besoin d’accéder à vos photos pour les joindre à une publication.</string>
 		<key>UIApplicationSceneManifest</key>

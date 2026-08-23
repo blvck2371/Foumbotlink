@@ -75,6 +75,7 @@ class ComposeController extends GetxController {
         authorUid: _auth.uid,
         authorName: profile.displayName,
         authorSubtitle: authorSubtitle,
+        authorVerified: profile.verified,
         localImagePaths: images,
       );
     } finally {

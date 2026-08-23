@@ -14,6 +14,7 @@ import '../../theme/theme_controller.dart';
 import '../../widgets/feed_image.dart';
 import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
+import '../../widgets/verified_badge.dart';
 import '../../widgets/weather_badge.dart';
 
 class HomeScreen extends GetView<HomeController> {
@@ -495,39 +496,70 @@ class _FeedCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  CircleAvatar(
-                    radius: 20,
-                    backgroundColor: badgeColor.withValues(alpha: 0.15),
-                    child: Text(
-                      item.authorName.isNotEmpty
-                          ? item.authorName[0].toUpperCase()
-                          : '?',
-                      style: GoogleFonts.spaceGrotesk(
-                        fontWeight: FontWeight.w700,
-                        color: badgeColor,
+                  GestureDetector(
+                    onTap: item.authorUid.isEmpty
+                        ? null
+                        : () => Get.toNamed(
+                              AppRoutes.userProfile,
+                              arguments: item.authorUid,
+                              preventDuplicates: false,
+                            ),
+                    behavior: HitTestBehavior.opaque,
+                    child: CircleAvatar(
+                      radius: 20,
+                      backgroundColor: badgeColor.withValues(alpha: 0.15),
+                      child: Text(
+                        item.authorName.isNotEmpty
+                            ? item.authorName[0].toUpperCase()
+                            : '?',
+                        style: GoogleFonts.spaceGrotesk(
+                          fontWeight: FontWeight.w700,
+                          color: badgeColor,
+                        ),
                       ),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          item.authorName,
-                          style: GoogleFonts.manrope(
-                            fontWeight: FontWeight.w800,
-                            color: ink,
+                    child: GestureDetector(
+                      onTap: item.authorUid.isEmpty
+                          ? null
+                          : () => Get.toNamed(
+                                AppRoutes.userProfile,
+                                arguments: item.authorUid,
+                                preventDuplicates: false,
+                              ),
+                      behavior: HitTestBehavior.opaque,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  item.authorName,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.manrope(
+                                    fontWeight: FontWeight.w800,
+                                    color: ink,
+                                  ),
+                                ),
+                              ),
+                              if (item.authorVerified) ...[
+                                const SizedBox(width: 5),
+                                const VerifiedBadge.small(),
+                              ],
+                            ],
                           ),
-                        ),
-                        Text(
-                          '${item.authorSubtitle} · $timeLabel',
-                          style: GoogleFonts.manrope(
-                            fontSize: 12,
-                            color: muted,
+                          Text(
+                            '${item.authorSubtitle} · $timeLabel',
+                            style: GoogleFonts.manrope(
+                              fontSize: 12,
+                              color: muted,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                   Container(
@@ -889,53 +921,98 @@ class _HomeDrawer extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
               child: _AccountSection(isDark: isDark, ink: ink, muted: muted),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-              child: Text(
-                'Toutes les fonctionnalités',
-                style: GoogleFonts.manrope(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: muted,
-                ),
-              ),
-            ),
             Expanded(
-              child: ListView.separated(
+              child: ListView(
                 padding: const EdgeInsets.fromLTRB(8, 0, 8, 16),
-                itemCount: features.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 4),
-                itemBuilder: (context, i) {
-                  final f = features[i];
-                  return ListTile(
-                    leading: Icon(f.icon, color: AppColors.red),
-                    title: Text(
-                      f.title,
-                      style: GoogleFonts.manrope(
-                        fontWeight: FontWeight.w700,
-                        color: ink,
+                children: [
+                  for (final section in AppFeatureSection.values)
+                    _DrawerSection(
+                      title: _sectionTitles[section]!,
+                      // Les notifications ont déjà leur propre icône dans
+                      // l'AppBar — pas besoin de les dupliquer ici.
+                      features: features.where(
+                        (f) => f.section == section && f.id != AppFeatureId.notifications,
                       ),
+                      ink: ink,
+                      muted: muted,
+                      onSelect: onSelect,
                     ),
-                    subtitle: Text(
-                      f.subtitle,
-                      style: GoogleFonts.manrope(
-                        fontSize: 12,
-                        color: muted,
-                      ),
-                    ),
-                    onTap: () {
-                      Get.back();
-                      onSelect(f);
-                    },
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  );
-                },
+                ],
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  static const _sectionTitles = {
+    AppFeatureSection.community: 'Fil & communauté',
+    AppFeatureSection.municipalServices: 'Services municipaux',
+    AppFeatureSection.account: 'Votre compte',
+  };
+}
+
+/// Un groupe du tiroir : en-tête + ses modules — rend la hiérarchie du
+/// menu explicite au lieu d'une liste plate mélangeant fil, services
+/// municipaux et compte.
+class _DrawerSection extends StatelessWidget {
+  const _DrawerSection({
+    required this.title,
+    required this.features,
+    required this.ink,
+    required this.muted,
+    required this.onSelect,
+  });
+
+  final String title;
+  final Iterable<AppFeature> features;
+  final Color ink;
+  final Color muted;
+  final ValueChanged<AppFeature> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = features.toList();
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: Text(
+              title.toUpperCase(),
+              style: GoogleFonts.manrope(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
+                color: muted,
+              ),
+            ),
+          ),
+          for (final f in items)
+            ListTile(
+              leading: Icon(f.icon, color: AppColors.red),
+              title: Text(
+                f.title,
+                style: GoogleFonts.manrope(fontWeight: FontWeight.w700, color: ink),
+              ),
+              subtitle: Text(
+                f.subtitle,
+                style: GoogleFonts.manrope(fontSize: 12, color: muted),
+              ),
+              onTap: () {
+                Get.back();
+                onSelect(f);
+              },
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+        ],
       ),
     );
   }

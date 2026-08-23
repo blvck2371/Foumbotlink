@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../controllers/home_controller.dart';
 import '../../models/feed_item.dart';
+import '../../routes/app_routes.dart';
 import '../../services/auth_service.dart';
 import '../../services/feed_service.dart';
 import '../../theme/app_colors.dart';
@@ -13,6 +14,7 @@ import '../../theme/theme_controller.dart';
 import '../../widgets/feed_image.dart';
 import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
+import '../../widgets/verified_badge.dart';
 
 class FeedPostScreen extends StatefulWidget {
   const FeedPostScreen({super.key});
@@ -212,38 +214,69 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                   children: [
                     Row(
                       children: [
-                        CircleAvatar(
-                          backgroundColor: badgeColor.withValues(alpha: 0.15),
-                          child: Text(
-                            post.authorName.isNotEmpty
-                                ? post.authorName[0].toUpperCase()
-                                : '?',
-                            style: GoogleFonts.spaceGrotesk(
-                              fontWeight: FontWeight.w700,
-                              color: badgeColor,
+                        GestureDetector(
+                          onTap: post.authorUid.isEmpty
+                              ? null
+                              : () => Get.toNamed(
+                                    AppRoutes.userProfile,
+                                    arguments: post.authorUid,
+                                    preventDuplicates: false,
+                                  ),
+                          behavior: HitTestBehavior.opaque,
+                          child: CircleAvatar(
+                            backgroundColor: badgeColor.withValues(alpha: 0.15),
+                            child: Text(
+                              post.authorName.isNotEmpty
+                                  ? post.authorName[0].toUpperCase()
+                                  : '?',
+                              style: GoogleFonts.spaceGrotesk(
+                                fontWeight: FontWeight.w700,
+                                color: badgeColor,
+                              ),
                             ),
                           ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                post.authorName,
-                                style: GoogleFonts.manrope(
-                                  fontWeight: FontWeight.w800,
-                                  color: ink,
+                          child: GestureDetector(
+                            onTap: post.authorUid.isEmpty
+                                ? null
+                                : () => Get.toNamed(
+                                      AppRoutes.userProfile,
+                                      arguments: post.authorUid,
+                                      preventDuplicates: false,
+                                    ),
+                            behavior: HitTestBehavior.opaque,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        post.authorName,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: GoogleFonts.manrope(
+                                          fontWeight: FontWeight.w800,
+                                          color: ink,
+                                        ),
+                                      ),
+                                    ),
+                                    if (post.authorVerified) ...[
+                                      const SizedBox(width: 5),
+                                      const VerifiedBadge(),
+                                    ],
+                                  ],
                                 ),
-                              ),
-                              Text(
-                                '${post.authorSubtitle} · ${_home.timeAgo(post.publishedAt)}',
-                                style: GoogleFonts.manrope(
-                                  fontSize: 12,
-                                  color: muted,
+                                Text(
+                                  '${post.authorSubtitle} · ${_home.timeAgo(post.publishedAt)}',
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 12,
+                                    color: muted,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                         Container(

@@ -66,6 +66,7 @@ class FeedItem {
     required this.authorName,
     required this.authorSubtitle,
     required this.publishedAt,
+    this.authorVerified = false,
     this.likesCount = 0,
     this.likedByMe = false,
     this.commentsCount = 0,
@@ -82,6 +83,7 @@ class FeedItem {
   final String authorName;
   final String authorSubtitle;
   final DateTime publishedAt;
+  final bool authorVerified;
   final int likesCount;
   final bool likedByMe;
   final int commentsCount;
@@ -111,6 +113,7 @@ class FeedItem {
       authorName: authorName,
       authorSubtitle: authorSubtitle,
       publishedAt: publishedAt,
+      authorVerified: authorVerified,
       likesCount: likesCount ?? this.likesCount,
       likedByMe: likedByMe ?? this.likedByMe,
       commentsCount: commentsCount ?? this.commentsCount,

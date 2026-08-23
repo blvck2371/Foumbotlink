@@ -305,17 +305,40 @@ class HomeController extends GetxController {
       Get.toNamed(AppRoutes.market);
       return;
     }
+    if (feature.id == AppFeatureId.communaute) {
+      if (!_auth.isSignedIn) {
+        Get.toNamed(AppRoutes.auth);
+        return;
+      }
+      Get.toNamed(AppRoutes.community);
+      return;
+    }
+    if (feature.id == AppFeatureId.messages) {
+      if (!_auth.isSignedIn) {
+        Get.toNamed(AppRoutes.auth);
+        return;
+      }
+      Get.toNamed(AppRoutes.conversations);
+      return;
+    }
+    if (feature.id == AppFeatureId.demarches) {
+      Get.toNamed(AppRoutes.demarches);
+      return;
+    }
+    if (feature.id == AppFeatureId.profil) {
+      if (_auth.isSignedIn) {
+        Get.toNamed(AppRoutes.userProfile, arguments: _auth.uid);
+      } else {
+        Get.toNamed(AppRoutes.auth);
+      }
+      return;
+    }
     Get.toNamed(AppRoutes.feature, arguments: feature);
   }
 
   void openNotifications() {
     unreadNotifications.value = 0;
-    Get.toNamed(AppRoutes.feature, arguments: const AppFeature(
-      id: AppFeatureId.notifications,
-      title: 'Notifications',
-      subtitle: 'Alertes et messages reçus',
-      icon: Icons.notifications_outlined,
-    ));
+    Get.toNamed(AppRoutes.feature, arguments: AppFeature.byId(AppFeatureId.notifications));
   }
 
   String timeAgo(DateTime date) {

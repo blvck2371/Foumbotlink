@@ -2,11 +2,14 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 import 'firebase_options.dart';
 import 'routes/app_pages.dart';
 import 'services/auth_service.dart';
 import 'services/feed_service.dart';
+import 'services/chat_service.dart';
+import 'services/follow_service.dart';
 import 'services/market_service.dart';
 import 'services/onboarding_service.dart';
 import 'services/user_profile_service.dart';
@@ -27,6 +30,7 @@ Future<void> main() async {
   );
 
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await initializeDateFormatting('fr_FR');
 
   await Get.putAsync<OnboardingService>(
     () async => OnboardingService().init(),
@@ -38,6 +42,8 @@ Future<void> main() async {
   Get.put<UserProfileService>(UserProfileService(), permanent: true);
   Get.put(FeedService(), permanent: true);
   Get.put(MarketService(), permanent: true);
+  Get.put(FollowService(), permanent: true);
+  Get.put(ChatService(), permanent: true);
 
   runApp(const FoumbotlikApp());
 }

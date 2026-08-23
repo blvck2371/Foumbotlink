@@ -12,21 +12,19 @@ class UserProfile {
     this.phoneNumber,
     required this.createdAt,
     this.verified = false,
+    this.followersCount = 0,
+    this.followingCount = 0,
   });
 
   final String uid;
   final AccountType accountType;
-  /// Nom affiché sur les publications : nom de la personne pour un
-  /// compte personnel, nom de l'entité pour un compte structure.
   final String displayName;
   final String? email;
   final String? phoneNumber;
   final DateTime createdAt;
-  /// Validé par l'administrateur depuis la console Firebase. Ce champ
-  /// n'est jamais modifiable par l'app elle-même (voir `firestore.rules`)
-  /// — seule une édition manuelle du document dans la console peut le
-  /// faire passer à `true`. Sans objet pour un compte personnel.
   final bool verified;
+  final int followersCount;
+  final int followingCount;
 
   /// Sous-titre affiché sous le nom sur une publication, ex. "Habitant·e
   /// de Foumbot" ou "Structure locale".
@@ -47,6 +45,8 @@ class UserProfile {
         'phoneNumber': phoneNumber,
         'createdAt': createdAt.toIso8601String(),
         'verified': verified,
+        'followersCount': followersCount,
+        'followingCount': followingCount,
       };
 
   factory UserProfile.fromMap(String uid, Map<String, dynamic> map) {
@@ -62,6 +62,8 @@ class UserProfile {
       createdAt: DateTime.tryParse(map['createdAt'] as String? ?? '') ??
           DateTime.now(),
       verified: map['verified'] as bool? ?? false,
+      followersCount: map['followersCount'] as int? ?? 0,
+      followingCount: map['followingCount'] as int? ?? 0,
     );
   }
 }

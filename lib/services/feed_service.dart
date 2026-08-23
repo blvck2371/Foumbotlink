@@ -75,6 +75,7 @@ class FeedService {
       authorSubtitle: d['authorSubtitle'] as String? ?? '',
       publishedAt:
           (d['publishedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      authorVerified: d['authorVerified'] as bool? ?? false,
       imageUrls: List<String>.from(d['imageUrls'] ?? []),
       likesCount: d['likesCount'] as int? ?? 0,
       likedByMe: currentUid != null && likedBy.contains(currentUid),
@@ -93,6 +94,7 @@ class FeedService {
     required String authorUid,
     required String authorName,
     required String authorSubtitle,
+    bool authorVerified = false,
     List<String> localImagePaths = const [],
   }) async {
     final docRef = _postsRef.doc();
@@ -110,6 +112,7 @@ class FeedService {
       'authorUid': authorUid,
       'authorName': authorName,
       'authorSubtitle': authorSubtitle,
+      'authorVerified': authorVerified,
       'publishedAt': Timestamp.fromDate(now),
       'imageUrls': imageUrls,
       'likesCount': 0,
@@ -125,6 +128,7 @@ class FeedService {
       authorUid: authorUid,
       authorName: authorName,
       authorSubtitle: authorSubtitle,
+      authorVerified: authorVerified,
       publishedAt: now,
       imageUrls: imageUrls,
     );
