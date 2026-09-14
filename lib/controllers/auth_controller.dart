@@ -16,7 +16,26 @@ class AuthController extends GetxController {
   // basculer vers la connexion si besoin.
   final emailMode = EmailMode.signUp.obs;
   final isLoading = false.obs;
+
+  /// Échec renvoyé par le serveur (identifiants refusés, réseau…) —
+  /// distinct de [successMessage], qui partageait le même champ et donc
+  /// la même couleur : « e-mail envoyé » s'affichait exactement comme
+  /// « mot de passe incorrect ».
   final errorMessage = RxnString();
+  final successMessage = RxnString();
+
+  /// Erreurs par champ, affichées **sous le champ concerné**. Un message
+  /// unique en bas de page oblige à deviner lequel des deux champs est en
+  /// cause.
+  final emailError = RxnString();
+  final passwordError = RxnString();
+  final phoneError = RxnString();
+  final otpError = RxnString();
+  final nameError = RxnString();
+
+  /// Mot de passe affiché en clair. Saisir à l'aveugle sur un clavier
+  /// tactile est la première cause d'échec de connexion.
+  final obscurePassword = true.obs;
 
   final emailCtrl = TextEditingController();
   final passwordCtrl = TextEditingController();
@@ -56,23 +75,129 @@ class AuthController extends GetxController {
   }
 
   void goTo(AuthStep next) {
-    errorMessage.value = null;
+    _clearMessages();
     step.value = next;
   }
 
-  void toggleEmailMode() {
-    emailMode.value =
-        emailMode.value == EmailMode.signIn ? EmailMode.signUp : EmailMode.signIn;
+  /// Étape précédente dans le parcours. L'écran n'offrait que la flèche
+  /// de la barre du haut, qui quitte l'authentification entière : arrivé
+  /// sur le code SMS, il n'y avait aucun moyen de revenir choisir
+  /// l'e-mail sans tout recommencer.
+  void back() {
+    switch (step.value) {
+      case AuthStep.emailForm:
+      case AuthStep.phoneForm:
+        goTo(AuthStep.choice);
+      case AuthStep.phoneOtp:
+        goTo(AuthStep.phoneForm);
+      case AuthStep.choice:
+      case AuthStep.accountSetup:
+        // La configuration du compte n'a pas de retour : la session est
+        // créée, revenir en arrière laisserait un compte sans profil.
+        break;
+    }
+  }
+
+  bool get canGoBack =>
+      step.value == AuthStep.emailForm ||
+      step.value == AuthStep.phoneForm ||
+      step.value == AuthStep.phoneOtp;
+
+  void _clearMessages() {
     errorMessage.value = null;
+    successMessage.value = null;
+    emailError.value = null;
+    passwordError.value = null;
+    phoneError.value = null;
+    otpError.value = null;
+    nameError.value = null;
+  }
+
+  // -----------------------------------------------------------------------
+  // Validation
+  // -----------------------------------------------------------------------
+
+  /// Contrôles faits **avant** l'appel réseau. Ils n'ont pas vocation à
+  /// remplacer les refus du serveur — un e-mail bien formé peut très bien
+  /// être inconnu — mais à ne pas faire attendre un aller-retour pour une
+  /// faute visible à l'œil nu.
+  static String? validateEmail(String value) {
+    final email = value.trim();
+    if (email.isEmpty) return 'Renseignez votre adresse e-mail.';
+    final at = email.indexOf('@');
+    final dot = email.lastIndexOf('.');
+    if (at < 1 ||
+        dot < at + 2 ||
+        dot >= email.length - 1 ||
+        email.contains(' ')) {
+      return 'Cette adresse ne semble pas valide.';
+    }
+    return null;
+  }
+
+  static String? validatePassword(String value, {required bool isSignUp}) {
+    if (value.isEmpty) return 'Renseignez votre mot de passe.';
+    // Uniquement à l'inscription : à la connexion, la longueur d'un mot
+    // de passe existant ne nous regarde pas, et le refuser localement
+    // enfermerait un ancien compte hors de l'app.
+    if (isSignUp && value.length < 6) {
+      return 'Six caractères minimum.';
+    }
+    return null;
+  }
+
+  static String? validatePhone(String value) {
+    final phone = value.replaceAll(' ', '');
+    if (phone.isEmpty) return 'Renseignez votre numéro.';
+    if (!phone.startsWith('+')) {
+      return 'Commencez par l’indicatif, par exemple +237.';
+    }
+    final digits = phone.substring(1);
+    if (digits.length < 8 ||
+        digits.length > 15 ||
+        int.tryParse(digits) == null) {
+      return 'Ce numéro ne semble pas valide.';
+    }
+    return null;
+  }
+
+  static String? validateOtp(String value) {
+    final code = value.trim();
+    if (code.isEmpty) return 'Entrez le code reçu par SMS.';
+    if (code.length != 6 || int.tryParse(code) == null) {
+      return 'Le code compte six chiffres.';
+    }
+    return null;
+  }
+
+  static String? validateName(String value, AccountType type) {
+    final name = value.trim();
+    if (name.isEmpty) {
+      return type == AccountType.structure
+          ? 'Indiquez le nom de la structure.'
+          : 'Indiquez votre nom.';
+    }
+    if (name.length < 2) return 'Ce nom est trop court.';
+    return null;
+  }
+
+  void toggleEmailMode() {
+    emailMode.value = emailMode.value == EmailMode.signIn
+        ? EmailMode.signUp
+        : EmailMode.signIn;
+    _clearMessages();
   }
 
   Future<void> submitEmail() async {
+    _clearMessages();
     final email = emailCtrl.text.trim();
     final password = passwordCtrl.text;
-    if (email.isEmpty || password.isEmpty) {
-      errorMessage.value = 'Renseignez votre e-mail et votre mot de passe.';
-      return;
-    }
+    final isSignUp = emailMode.value == EmailMode.signUp;
+
+    emailError.value = validateEmail(email);
+    passwordError.value = validatePassword(password, isSignUp: isSignUp);
+    if (emailError.value != null || passwordError.value != null) return;
+
     isLoading.value = true;
     final error = emailMode.value == EmailMode.signIn
         ? await _auth.signInWithEmail(email, password)
@@ -86,24 +211,31 @@ class AuthController extends GetxController {
   }
 
   Future<void> sendPasswordReset() async {
+    _clearMessages();
     final email = emailCtrl.text.trim();
-    if (email.isEmpty) {
-      errorMessage.value = 'Renseignez votre e-mail pour recevoir le lien.';
-      return;
-    }
+    emailError.value = validateEmail(email);
+    if (emailError.value != null) return;
+
     isLoading.value = true;
     final error = await _auth.sendPasswordReset(email);
     isLoading.value = false;
-    errorMessage.value =
-        error ?? 'E-mail de réinitialisation envoyé à $email.';
+    // Succès et échec dans deux champs distincts : ils s'affichaient tous
+    // deux en orange, et « lien envoyé » se lisait comme un refus.
+    if (error != null) {
+      errorMessage.value = error;
+    } else {
+      successMessage.value =
+          'Lien de réinitialisation envoyé à $email. Vérifiez votre boîte '
+          'de réception, et vos indésirables.';
+    }
   }
 
   Future<void> submitPhone() async {
+    _clearMessages();
     final phone = phoneCtrl.text.trim();
-    if (phone.isEmpty) {
-      errorMessage.value = 'Renseignez votre numéro de téléphone.';
-      return;
-    }
+    phoneError.value = validatePhone(phone);
+    if (phoneError.value != null) return;
+
     isLoading.value = true;
     await _auth.sendPhoneCode(
       phoneNumber: phone,
@@ -124,13 +256,13 @@ class AuthController extends GetxController {
   }
 
   Future<void> submitOtp() async {
+    _clearMessages();
     final verificationId = _verificationId;
     final code = otpCtrl.text.trim();
     if (verificationId == null) return;
-    if (code.isEmpty) {
-      errorMessage.value = 'Entrez le code reçu par SMS.';
-      return;
-    }
+    otpError.value = validateOtp(code);
+    if (otpError.value != null) return;
+
     isLoading.value = true;
     final error = await _auth.confirmPhoneCode(verificationId, code);
     isLoading.value = false;
@@ -142,7 +274,7 @@ class AuthController extends GetxController {
   }
 
   Future<void> _afterSignIn({String? email, String? phoneNumber}) async {
-    errorMessage.value = null;
+    _clearMessages();
     // Lecture directe (pas le listener réactif, plus lent à démarrer) :
     // on vient de se connecter, la réponse doit être immédiate et sûre.
     final hasProfile = await _profiles.ensureLoaded();
@@ -156,13 +288,11 @@ class AuthController extends GetxController {
   }
 
   Future<void> submitAccountSetup() async {
+    _clearMessages();
     final name = nameCtrl.text.trim();
-    if (name.isEmpty) {
-      errorMessage.value = accountType.value == AccountType.structure
-          ? 'Indiquez le nom de la structure.'
-          : 'Indiquez votre nom.';
-      return;
-    }
+    nameError.value = validateName(name, accountType.value);
+    if (nameError.value != null) return;
+
     isLoading.value = true;
     await _profiles.createProfile(
       accountType: accountType.value,

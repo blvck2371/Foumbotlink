@@ -11,13 +11,13 @@ class AppTheme {
       brightness: Brightness.dark,
       scaffoldBackgroundColor: AppColors.black,
       colorScheme: const ColorScheme.dark(
-        primary: AppColors.red,
+        primary: AppColors.orange,
         secondary: AppColors.white,
         surface: AppColors.blackSoft,
         onPrimary: AppColors.white,
         onSecondary: AppColors.black,
         onSurface: AppColors.white,
-        error: AppColors.redDeep,
+        error: AppColors.orangeDeep,
       ),
     );
     return _withTypography(
@@ -36,13 +36,13 @@ class AppTheme {
       brightness: Brightness.light,
       scaffoldBackgroundColor: AppColors.white,
       colorScheme: const ColorScheme.light(
-        primary: AppColors.red,
+        primary: AppColors.orange,
         secondary: AppColors.black,
         surface: AppColors.whiteSoft,
         onPrimary: AppColors.white,
         onSecondary: AppColors.white,
         onSurface: AppColors.black,
-        error: AppColors.redDeep,
+        error: AppColors.orangeDeep,
       ),
     );
     return _withTypography(
@@ -116,7 +116,7 @@ class AppTheme {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.red,
+          backgroundColor: AppColors.orange,
           foregroundColor: AppColors.white,
           textStyle: GoogleFonts.manrope(
             fontWeight: FontWeight.w700,
@@ -165,10 +165,10 @@ class AppTheme {
       ),
       iconTheme: IconThemeData(color: onSurface),
       progressIndicatorTheme: const ProgressIndicatorThemeData(
-        color: AppColors.red,
+        color: AppColors.orange,
       ),
       floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        backgroundColor: AppColors.red,
+        backgroundColor: AppColors.orange,
         foregroundColor: AppColors.white,
       ),
     );

@@ -11,6 +11,7 @@ import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
+import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
 
 class CommunityScreen extends GetView<CommunityController> {
@@ -80,7 +81,7 @@ class CommunityScreen extends GetView<CommunityController> {
                 child: controller.isLoading.value
                     ? const Center(child: FoumbotLoader())
                     : RefreshIndicator(
-                        color: AppColors.red,
+                        color: AppColors.orange,
                         backgroundColor:
                             isDark ? AppColors.blackElevated : AppColors.white,
                         onRefresh: controller.refresh,
@@ -170,17 +171,31 @@ class _MemberList extends GetView<CommunityController> {
         );
       }
 
+      // Une entrée de plus que la liste : le pied porte le chargeur du
+      // défilement infini, et sa seule présence garantit que la zone
+      // scrollable dépasse l'écran quand la page est courte.
       return ListView.separated(
+        controller: controller.scrollController,
         physics: const AlwaysScrollableScrollPhysics(
           parent: BouncingScrollPhysics(),
         ),
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-        itemCount: members.length,
+        itemCount: members.length + 1,
         separatorBuilder: (_, _) => const SizedBox(height: 8),
-        itemBuilder: (_, i) => _MemberCard(
-          profile: members[i],
-          isDark: isDark,
-        ),
+        itemBuilder: (_, i) {
+          if (i == members.length) {
+            return Obx(() {
+              if (controller.isLoadingMore.value) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 18),
+                  child: Center(child: FoumbotLoader()),
+                );
+              }
+              return const SizedBox(height: 12);
+            });
+          }
+          return _MemberCard(profile: members[i], isDark: isDark);
+        },
       );
     });
   }
@@ -227,19 +242,15 @@ class _MemberCard extends GetView<CommunityController> {
             ),
             child: Row(
               children: [
-                CircleAvatar(
+                // Photo de profil du membre, initiales en secours — la
+                // liste n'affichait que la première lettre du nom et ne
+                // lisait jamais `profile.photoUrl`.
+                UserAvatar(
+                  name: profile.displayName,
+                  photoUrl: profile.photoUrl,
                   radius: 24,
-                  backgroundColor: AppColors.red.withValues(alpha: 0.15),
-                  child: Text(
-                    profile.displayName.isNotEmpty
-                        ? profile.displayName[0].toUpperCase()
-                        : '?',
-                    style: GoogleFonts.spaceGrotesk(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.red,
-                    ),
-                  ),
+                  backgroundColor: AppColors.orange.withValues(alpha: 0.15),
+                  fontSize: 20,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -335,11 +346,11 @@ class _MemberCard extends GetView<CommunityController> {
                                 controller.toggleFollow(profile.uid),
                             style: OutlinedButton.styleFrom(
                               backgroundColor:
-                                  following ? Colors.transparent : AppColors.red,
+                                  following ? Colors.transparent : AppColors.orange,
                               foregroundColor:
-                                  following ? AppColors.red : AppColors.white,
+                                  following ? AppColors.orange : AppColors.white,
                               side: BorderSide(
-                                color: AppColors.red,
+                                color: AppColors.orange,
                                 width: following ? 1.5 : 0,
                               ),
                               padding:

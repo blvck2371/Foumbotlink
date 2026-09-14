@@ -17,8 +17,7 @@ class FollowService {
   Future<void> follow(String myUid, String targetUid) async {
     if (myUid == targetUid) return;
 
-    final alreadyFollowing =
-        await _followingRef(myUid).doc(targetUid).get();
+    final alreadyFollowing = await _followingRef(myUid).doc(targetUid).get();
     if (alreadyFollowing.exists) return;
 
     final targetDoc = await _userRef(targetUid).get();
@@ -83,18 +82,16 @@ class FollowService {
   }
 
   Future<List<String>> getFollowers(String uid, {int limit = 50}) async {
-    final snap = await _followersRef(uid)
-        .orderBy('followedAt', descending: true)
-        .limit(limit)
-        .get();
+    final snap = await _followersRef(
+      uid,
+    ).orderBy('followedAt', descending: true).limit(limit).get();
     return snap.docs.map((d) => d.id).toList();
   }
 
   Future<List<String>> getFollowing(String uid, {int limit = 50}) async {
-    final snap = await _followingRef(uid)
-        .orderBy('followedAt', descending: true)
-        .limit(limit)
-        .get();
+    final snap = await _followingRef(
+      uid,
+    ).orderBy('followedAt', descending: true).limit(limit).get();
     return snap.docs.map((d) => d.id).toList();
   }
 }

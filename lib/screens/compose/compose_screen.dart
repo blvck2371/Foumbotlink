@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -11,7 +9,9 @@ import '../../theme/app_colors.dart';
 import '../../widgets/foumbot_loader.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/form_field_box.dart';
+import '../../widgets/feed_image.dart';
 import '../../widgets/foumbot_app_bar.dart';
+import '../../widgets/user_avatar.dart';
 
 class ComposeScreen extends GetView<ComposeController> {
   const ComposeScreen({super.key});
@@ -26,10 +26,11 @@ class ComposeScreen extends GetView<ComposeController> {
       final ink = isDark ? AppColors.white : AppColors.black;
       final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
       final official = controller.canPublishOfficialContent;
+      final isEditing = controller.isEditing;
 
       return Scaffold(
         backgroundColor: isDark ? AppColors.black : AppColors.white,
-        appBar: FoumbotAppBar(isDark: isDark, title: 'Nouvelle publication'),
+        appBar: FoumbotAppBar(isDark: isDark, title: controller.screenTitle),
         body: DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -55,22 +56,17 @@ class ComposeScreen extends GetView<ComposeController> {
                   child: ListView(
                     padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
                     children: [
-                      _SectionLabel('Publié en tant que', ink: ink),
+                      _SectionLabel(
+                        isEditing ? 'Publication de' : 'Publié en tant que',
+                        ink: ink,
+                      ),
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          CircleAvatar(
+                          UserAvatar(
+                            name: profile.displayName,
+                            photoUrl: profile.photoUrl,
                             radius: 16,
-                            backgroundColor: AppColors.red.withValues(alpha: 0.15),
-                            child: Text(
-                              profile.displayName.isNotEmpty
-                                  ? profile.displayName[0].toUpperCase()
-                                  : '?',
-                              style: GoogleFonts.spaceGrotesk(
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.red,
-                              ),
-                            ),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
@@ -109,7 +105,7 @@ class ComposeScreen extends GetView<ComposeController> {
                                 subtitle: 'Mise en avant, plus visible',
                                 selected: controller.postKind.value ==
                                     FeedType.annonce,
-                                color: AppColors.red,
+                                color: AppColors.orange,
                                 isDark: isDark,
                                 onTap: () => controller
                                     .selectPostKind(FeedType.annonce),
@@ -119,7 +115,7 @@ class ComposeScreen extends GetView<ComposeController> {
                         ),
                       ],
                       const SizedBox(height: 22),
-                      _SectionLabel('Titre', ink: ink),
+                      _SectionLabel('Titre (facultatif)', ink: ink),
                       const SizedBox(height: 8),
                       FormFieldBox(
                         isDark: isDark,
@@ -130,7 +126,7 @@ class ComposeScreen extends GetView<ComposeController> {
                             fontWeight: FontWeight.w700,
                           ),
                           decoration: InputDecoration.collapsed(
-                            hintText: 'De quoi s’agit-il ?',
+                            hintText: 'Donnez un titre, ou laissez vide',
                             hintStyle: GoogleFonts.manrope(color: muted),
                           ),
                         ),
@@ -171,7 +167,7 @@ class ComposeScreen extends GetView<ComposeController> {
                           : null,
                       child: controller.isPublishing.value
                           ? const FoumbotLoader.button()
-                          : const Text('Publier'),
+                          : Text(controller.submitLabel),
                     ),
                   ),
                 ),
@@ -275,15 +271,24 @@ class _ImagesPicker extends StatelessWidget {
     final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
 
     return Obx(() {
-      final images = controller.images;
+      // En édition, deux sources cohabitent : les images déjà en ligne
+      // (retirées de Storage à l'enregistrement si l'auteur les supprime) et
+      // les fichiers ajoutés dans cette session, pas encore uploadés.
+      // `FeedNetworkImage` affiche indifféremment une URL ou un chemin local,
+      // ce qui permet de les rendre avec la même tuile.
+      final existing = controller.existingImageUrls;
+      final added = controller.images;
+      final total = existing.length + added.length;
+      final canAdd = controller.canAddImages;
+
       return SizedBox(
         height: 88,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
-          itemCount: images.length + (images.length < 5 ? 1 : 0),
+          itemCount: total + (canAdd ? 1 : 0),
           separatorBuilder: (_, _) => const SizedBox(width: 10),
           itemBuilder: (context, i) {
-            if (i == images.length) {
+            if (i == total) {
               return InkWell(
                 onTap: controller.pickImages,
                 borderRadius: BorderRadius.circular(14),
@@ -299,39 +304,65 @@ class _ImagesPicker extends StatelessWidget {
                 ),
               );
             }
-            final path = images[i];
-            return Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  child: Image.file(
-                    File(path),
-                    width: 88,
-                    height: 88,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                Positioned(
-                  top: 4,
-                  right: 4,
-                  child: InkWell(
-                    onTap: () => controller.removeImage(i),
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: const BoxDecoration(
-                        color: Colors.black54,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.close, size: 14, color: Colors.white),
-                    ),
-                  ),
-                ),
-              ],
+
+            final isExisting = i < existing.length;
+            final source = isExisting ? existing[i] : added[i - existing.length];
+
+            return _ImageTile(
+              source: source,
+              isDark: isDark,
+              onRemove: () => isExisting
+                  ? controller.removeExistingImage(i)
+                  : controller.removeImage(i - existing.length),
             );
           },
         ),
       );
     });
+  }
+}
+
+class _ImageTile extends StatelessWidget {
+  const _ImageTile({
+    required this.source,
+    required this.isDark,
+    required this.onRemove,
+  });
+
+  /// URL distante (image déjà publiée) ou chemin de fichier local.
+  final String source;
+  final bool isDark;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: SizedBox(
+            width: 88,
+            height: 88,
+            child: FeedNetworkImage(url: source, isDark: isDark),
+          ),
+        ),
+        Positioned(
+          top: 4,
+          right: 4,
+          child: InkWell(
+            onTap: onRemove,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.all(3),
+              decoration: const BoxDecoration(
+                color: Colors.black54,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.close, size: 14, color: Colors.white),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }

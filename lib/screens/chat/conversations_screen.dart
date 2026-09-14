@@ -4,10 +4,13 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../controllers/conversations_controller.dart';
 import '../../models/conversation.dart';
+import '../../services/chat_service.dart' show ChatActivity;
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
+import '../../widgets/chat_activity_line.dart';
 import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
+import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
 
 class ConversationsScreen extends GetView<ConversationsController> {
@@ -99,7 +102,7 @@ class _AnimatedFabState extends State<_AnimatedFab>
       scale: _scale,
       child: FloatingActionButton(
         onPressed: widget.onTap,
-        backgroundColor: AppColors.red,
+        backgroundColor: AppColors.orange,
         elevation: 6,
         child: const Icon(Icons.chat_outlined, color: AppColors.white),
       ),
@@ -184,11 +187,11 @@ class _ConversationList extends GetView<ConversationsController> {
                   Container(
                     padding: const EdgeInsets.all(24),
                     decoration: BoxDecoration(
-                      color: AppColors.red.withValues(alpha: 0.08),
+                      color: AppColors.orange.withValues(alpha: 0.08),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(Icons.chat_bubble_outline,
-                        size: 48, color: AppColors.red),
+                        size: 48, color: AppColors.orange),
                   ),
                   const SizedBox(height: 20),
                   Text(
@@ -304,9 +307,11 @@ class _ConversationTile extends GetView<ConversationsController> {
   @override
   Widget build(BuildContext context) {
     final name = conv.otherUserName ?? 'Utilisateur';
-    final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
     final time = controller.timeLabel(conv.lastMessageAt);
     final hasMessage = conv.lastMessagePreview.isNotEmpty;
+    final hasUnread = conv.unreadCount > 0;
+    final unreadLabel =
+        conv.unreadCount > 99 ? '99+' : '${conv.unreadCount}';
 
     return Material(
       color: Colors.transparent,
@@ -322,23 +327,22 @@ class _ConversationTile extends GetView<ConversationsController> {
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: AppColors.red.withValues(alpha: 0.15),
+                      color: AppColors.orange.withValues(alpha: 0.15),
                       blurRadius: 8,
                       spreadRadius: 1,
                     ),
                   ],
                 ),
-                child: CircleAvatar(
+                // Même avatar que partout ailleurs dans l'app : photo de
+                // profil si elle existe, initiales sinon. La liste ne
+                // montrait que la première lettre du nom, sans jamais lire
+                // `photoUrl`.
+                child: UserAvatar(
+                  name: name,
+                  photoUrl: conv.otherUserPhotoUrl,
                   radius: 26,
-                  backgroundColor: AppColors.red.withValues(alpha: 0.12),
-                  child: Text(
-                    initial,
-                    style: GoogleFonts.spaceGrotesk(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.red,
-                    ),
-                  ),
+                  backgroundColor: AppColors.orange.withValues(alpha: 0.12),
+                  fontSize: 20,
                 ),
               ),
               const SizedBox(width: 14),
@@ -354,7 +358,8 @@ class _ConversationTile extends GetView<ConversationsController> {
                             overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.manrope(
                               fontSize: 15,
-                              fontWeight: FontWeight.w800,
+                              fontWeight:
+                                  hasUnread ? FontWeight.w800 : FontWeight.w700,
                               color: ink,
                             ),
                           ),
@@ -366,30 +371,86 @@ class _ConversationTile extends GetView<ConversationsController> {
                       ],
                     ),
                     const SizedBox(height: 3),
-                    Text(
-                      hasMessage
-                          ? conv.lastMessagePreview
-                          : 'Nouvelle conversation',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.manrope(
-                        fontSize: 13,
-                        color: muted,
-                      ),
-                    ),
+                    // L'indicateur temps réel prend la place de l'aperçu
+                    // tant que l'interlocuteur écrit ou enregistre, façon
+                    // WhatsApp. `Obx` local : l'activité change bien plus
+                    // souvent que la conversation elle-même, seule cette
+                    // ligne se reconstruit.
+                    Obx(() {
+                      final activity = controller.activities[conv.id];
+                      if (activity != null && activity != ChatActivity.idle) {
+                        return ChatActivityLine(
+                          activity: activity,
+                          fontSize: 13,
+                          compact: true,
+                        );
+                      }
+                      return Text(
+                        hasMessage
+                            ? conv.lastMessagePreview
+                            : 'Nouvelle conversation',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.manrope(
+                          fontSize: 13,
+                          fontWeight:
+                              hasUnread ? FontWeight.w700 : FontWeight.w400,
+                          color: hasUnread ? ink : muted,
+                        ),
+                      );
+                    }),
                   ],
                 ),
               ),
-              if (time.isNotEmpty) ...[
+              if (time.isNotEmpty || hasUnread) ...[
                 const SizedBox(width: 8),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      time,
-                      style: GoogleFonts.manrope(fontSize: 11, color: muted),
-                    ),
+                    if (time.isNotEmpty)
+                      Text(
+                        time,
+                        style: GoogleFonts.manrope(
+                          fontSize: 11,
+                          fontWeight:
+                              hasUnread ? FontWeight.w700 : FontWeight.w400,
+                          // Sur fond clair, l'orange du thème tombe à
+                          // 2,83:1 : illisible pour un horodatage de 11 px.
+                          color: hasUnread
+                              ? (isDark
+                                    ? AppColors.orangeSoft
+                                    : AppColors.orangeReadable)
+                              : muted,
+                        ),
+                      ),
+                    if (hasUnread) ...[
+                      if (time.isNotEmpty) const SizedBox(height: 6),
+                      Container(
+                        constraints: const BoxConstraints(
+                          minWidth: 20,
+                          minHeight: 20,
+                        ),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: conv.unreadCount > 9 ? 6 : 0,
+                        ),
+                        decoration: const BoxDecoration(
+                          // Le compteur est écrit en blanc sur 11 px :
+                          // l'orange du thème n'y offrait que 3,08:1.
+                          color: AppColors.orangeReadable,
+                          shape: BoxShape.circle,
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          unreadLabel,
+                          style: GoogleFonts.manrope(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.white,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ],

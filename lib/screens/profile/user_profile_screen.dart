@@ -2,16 +2,23 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../controllers/profile_controller.dart';
 import '../../models/conversation.dart';
 import '../../models/feed_item.dart';
+import '../../models/user_status.dart';
 import '../../routes/app_routes.dart';
 import '../../services/auth_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
+import '../../widgets/feed_image.dart';
 import '../../widgets/foumbot_loader.dart';
+import '../../widgets/status_ring.dart';
+import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
+import '../status/status_composer_screen.dart';
+import '../status/status_viewer_screen.dart';
 
 class UserProfileScreen extends GetView<ProfileController> {
   const UserProfileScreen({super.key});
@@ -32,50 +39,55 @@ class UserProfileScreen extends GetView<ProfileController> {
         body: loadingProfile
             ? const Center(child: FoumbotLoader())
             : profile == null
-                ? _EmptyState(isDark: isDark, muted: muted)
-                : CustomScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    slivers: [
-                      _ProfileAppBar(isDark: isDark, ink: ink),
-                      SliverToBoxAdapter(
-                        child: _ProfileHeader(
-                          isDark: isDark,
-                          ink: ink,
-                          muted: muted,
-                        ),
-                      ),
-                      SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 3,
-                                height: 18,
-                                decoration: BoxDecoration(
-                                  color: AppColors.red,
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Publications',
-                                style: GoogleFonts.spaceGrotesk(
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w700,
-                                  color: ink,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      _PostsGrid(isDark: isDark, muted: muted),
-                      const SliverToBoxAdapter(
-                        child: SizedBox(height: 32),
-                      ),
-                    ],
+            ? _EmptyState(isDark: isDark, muted: muted)
+            : CustomScrollView(
+                physics: const BouncingScrollPhysics(),
+                slivers: [
+                  _ProfileAppBar(isDark: isDark, ink: ink),
+                  SliverToBoxAdapter(
+                    child: _ProfileHeader(
+                      isDark: isDark,
+                      ink: ink,
+                      muted: muted,
+                    ),
                   ),
+                  SliverToBoxAdapter(
+                    child: _StatusesSection(
+                      isDark: isDark,
+                      ink: ink,
+                      muted: muted,
+                    ),
+                  ),
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 3,
+                            height: 18,
+                            decoration: BoxDecoration(
+                              color: AppColors.orange,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Publications',
+                            style: GoogleFonts.spaceGrotesk(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                              color: ink,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  _PostsGrid(isDark: isDark, muted: muted),
+                  const SliverToBoxAdapter(child: SizedBox(height: 32)),
+                ],
+              ),
       );
     });
   }
@@ -153,6 +165,7 @@ class _ProfileHeader extends GetView<ProfileController> {
       final isOwn = controller.isOwnProfile;
       final following = controller.isFollowing.value;
       final toggling = controller.isToggling.value;
+      final uploadingPhoto = controller.isUploadingPhoto.value;
 
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -160,33 +173,89 @@ class _ProfileHeader extends GetView<ProfileController> {
           children: [
             const SizedBox(height: 8),
 
-            // Avatar
+            // Avatar — entouré de l'anneau des statuts quand il y en a.
+            // Un appui ouvre alors la visionneuse ; la pastille appareil
+            // photo garde, elle, l'accès aux réglages de la photo de
+            // profil, sans quoi les deux gestes se marcheraient dessus.
             Hero(
               tag: 'avatar_${profile.uid}',
-              child: Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.red.withValues(alpha: 0.2),
-                      blurRadius: 16,
-                      spreadRadius: 2,
+              child: StatusRing(
+                radius: 46,
+                hasStatuses: controller.hasStatuses,
+                hasUnseen: controller.hasUnseenStatuses,
+                backgroundColor: isDark ? AppColors.black : AppColors.white,
+                onTap: controller.hasStatuses
+                    ? () => _openStatuses(context, controller)
+                    : (isOwn
+                          ? () => _showPhotoOptions(
+                              context,
+                              profile.photoUrl != null,
+                            )
+                          : null),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.orange.withValues(alpha: 0.2),
+                            blurRadius: 16,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                      child: UserAvatar(
+                        name: profile.displayName,
+                        photoUrl: profile.photoUrl,
+                        radius: 46,
+                        fontSize: 36,
+                      ),
                     ),
+                    if (uploadingPhoto)
+                      Container(
+                        width: 92,
+                        height: 92,
+                        decoration: BoxDecoration(
+                          color: AppColors.black.withValues(alpha: 0.45),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Center(
+                          child: SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: AppColors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (isOwn && !uploadingPhoto)
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: GestureDetector(
+                          onTap: () => _showPhotoOptions(
+                            context,
+                            profile.photoUrl != null,
+                          ),
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: const BoxDecoration(
+                              color: AppColors.orange,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.camera_alt_outlined,
+                              size: 16,
+                              color: AppColors.white,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
-                ),
-                child: CircleAvatar(
-                  radius: 46,
-                  backgroundColor: AppColors.red.withValues(alpha: 0.12),
-                  child: Text(
-                    profile.displayName.isNotEmpty
-                        ? profile.displayName[0].toUpperCase()
-                        : '?',
-                    style: GoogleFonts.spaceGrotesk(
-                      fontSize: 36,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.red,
-                    ),
-                  ),
                 ),
               ),
             ),
@@ -228,7 +297,9 @@ class _ProfileHeader extends GetView<ProfileController> {
               const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 4),
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
                     colors: [AppColors.blue, Color(0xFF00BCD4)],
@@ -288,10 +359,10 @@ class _ProfileHeader extends GetView<ProfileController> {
                       child: ElevatedButton(
                         onPressed: toggling ? null : controller.toggleFollow,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor:
-                              following ? Colors.transparent : AppColors.red,
-                          foregroundColor:
-                              following ? ink : AppColors.white,
+                          backgroundColor: following
+                              ? Colors.transparent
+                              : AppColors.orange,
+                          foregroundColor: following ? ink : AppColors.white,
                           side: following
                               ? BorderSide(
                                   color: muted.withValues(alpha: 0.3),
@@ -299,7 +370,7 @@ class _ProfileHeader extends GetView<ProfileController> {
                                 )
                               : null,
                           elevation: following ? 0 : 3,
-                          shadowColor: AppColors.red.withValues(alpha: 0.3),
+                          shadowColor: AppColors.orange.withValues(alpha: 0.3),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
@@ -352,14 +423,26 @@ class _ProfileHeader extends GetView<ProfileController> {
                           : AppColors.whiteSoft,
                       borderRadius: BorderRadius.circular(12),
                       child: InkWell(
-                        onTap: () {},
+                        onTap: controller.shareProfile,
                         borderRadius: BorderRadius.circular(12),
-                        child: Icon(
-                          Icons.share_outlined,
-                          color: ink,
-                          size: 20,
-                        ),
+                        child: Icon(Icons.share_outlined, color: ink, size: 20),
                       ),
+                    ),
+                  ),
+
+                  const SizedBox(width: 8),
+
+                  // Signalement / blocage — exigés par l'App Store dès
+                  // qu'une app diffuse du contenu d'utilisateurs.
+                  SizedBox(
+                    width: 46,
+                    height: 46,
+                    child: Material(
+                      color: isDark
+                          ? AppColors.blackElevated
+                          : AppColors.whiteSoft,
+                      borderRadius: BorderRadius.circular(12),
+                      child: _ProfileModerationMenu(isDark: isDark, ink: ink),
                     ),
                   ),
                 ],
@@ -370,16 +453,172 @@ class _ProfileHeader extends GetView<ProfileController> {
     });
   }
 
+  void _showPhotoOptions(BuildContext context, bool hasPhoto) {
+    final isDark = Get.find<ThemeController>().isDarkMode;
+    final ink = isDark ? AppColors.white : AppColors.black;
+    final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
+
+    Get.bottomSheet(
+      Container(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.blackElevated : AppColors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: muted.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Text(
+                'Photo de profil',
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: ink,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: const Icon(
+                  Icons.photo_library_outlined,
+                  color: AppColors.orange,
+                ),
+                title: Text(
+                  'Choisir dans la galerie',
+                  style: GoogleFonts.manrope(color: ink),
+                ),
+                onTap: () {
+                  Get.back();
+                  controller.pickProfilePhoto(ImageSource.gallery);
+                },
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.photo_camera_outlined,
+                  color: AppColors.orange,
+                ),
+                title: Text(
+                  'Prendre une photo',
+                  style: GoogleFonts.manrope(color: ink),
+                ),
+                onTap: () {
+                  Get.back();
+                  controller.pickProfilePhoto(ImageSource.camera);
+                },
+              ),
+              if (hasPhoto)
+                ListTile(
+                  leading: const Icon(
+                    Icons.delete_outline,
+                    color: AppColors.orange,
+                  ),
+                  title: Text(
+                    'Supprimer la photo',
+                    style: GoogleFonts.manrope(color: ink),
+                  ),
+                  onTap: () {
+                    Get.back();
+                    controller.removeProfilePhoto();
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+      isScrollControlled: true,
+    );
+  }
+
   void _openChat(String otherUid) {
     final auth = Get.find<AuthService>();
     if (!auth.isSignedIn) {
       Get.toNamed(AppRoutes.auth);
       return;
     }
-    Get.toNamed(AppRoutes.chat, arguments: {
-      'conversationId': Conversation.buildId(auth.uid, otherUid),
-      'otherUid': otherUid,
+    Get.toNamed(
+      AppRoutes.chat,
+      arguments: {
+        'conversationId': Conversation.buildId(auth.uid, otherUid),
+        'otherUid': otherUid,
+      },
+    );
+  }
+}
+
+enum _ProfileAction { report, block }
+
+class _ProfileModerationMenu extends StatelessWidget {
+  const _ProfileModerationMenu({required this.isDark, required this.ink});
+
+  final bool isDark;
+  final Color ink;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = Get.find<ProfileController>();
+
+    return Obx(() {
+      final blocked = controller.isBlocked.value;
+
+      return PopupMenuButton<_ProfileAction>(
+        tooltip: 'Options',
+        icon: Icon(Icons.more_horiz, color: ink, size: 20),
+        color: isDark ? AppColors.blackElevated : AppColors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        position: PopupMenuPosition.under,
+        onSelected: (action) => switch (action) {
+          _ProfileAction.report => controller.reportProfile(),
+          _ProfileAction.block => controller.toggleBlock(),
+        },
+        itemBuilder: (context) => [
+          PopupMenuItem(
+            value: _ProfileAction.report,
+            height: 44,
+            child: _menuRow(
+              Icons.flag_outlined,
+              'Signaler ce profil',
+              AppColors.orange,
+            ),
+          ),
+          PopupMenuItem(
+            value: _ProfileAction.block,
+            height: 44,
+            child: _menuRow(
+              blocked ? Icons.lock_open_rounded : Icons.block,
+              blocked ? 'Débloquer' : 'Bloquer',
+              blocked ? ink : AppColors.orange,
+            ),
+          ),
+        ],
+      );
     });
+  }
+
+  Widget _menuRow(IconData icon, String label, Color color) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 12),
+        Text(
+          label,
+          style: GoogleFonts.manrope(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -424,13 +663,7 @@ class _StatColumn extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 2),
-        Text(
-          label,
-          style: GoogleFonts.manrope(
-            fontSize: 12,
-            color: muted,
-          ),
-        ),
+        Text(label, style: GoogleFonts.manrope(fontSize: 12, color: muted)),
       ],
     );
   }
@@ -470,8 +703,11 @@ class _PostsGrid extends GetView<ProfileController> {
             child: Center(
               child: Column(
                 children: [
-                  Icon(Icons.grid_view_rounded, size: 40,
-                      color: muted.withValues(alpha: 0.4)),
+                  Icon(
+                    Icons.grid_view_rounded,
+                    size: 40,
+                    color: muted.withValues(alpha: 0.4),
+                  ),
                   const SizedBox(height: 12),
                   Text(
                     'Aucune publication',
@@ -497,10 +733,8 @@ class _PostsGrid extends GetView<ProfileController> {
             (context, i) => _PostThumbnail(
               item: posts[i],
               isDark: isDark,
-              onTap: () => Get.toNamed(
-                AppRoutes.feedPost,
-                arguments: posts[i].id,
-              ),
+              onTap: () =>
+                  Get.toNamed(AppRoutes.feedPost, arguments: posts[i].id),
             ),
             childCount: posts.length,
           ),
@@ -524,7 +758,7 @@ class _PostThumbnail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final badgeColor = switch (item.type) {
-      FeedType.annonce => AppColors.red,
+      FeedType.annonce => AppColors.orange,
       FeedType.info => AppColors.blue,
       FeedType.post => AppColors.gray,
     };
@@ -579,8 +813,11 @@ class _PostThumbnail extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.favorite,
-                        size: 12, color: AppColors.white),
+                    const Icon(
+                      Icons.favorite,
+                      size: 12,
+                      color: AppColors.white,
+                    ),
                     const SizedBox(width: 3),
                     Text(
                       '${item.likesCount}',
@@ -591,8 +828,11 @@ class _PostThumbnail extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 10),
-                    const Icon(Icons.chat_bubble,
-                        size: 11, color: AppColors.white),
+                    const Icon(
+                      Icons.chat_bubble,
+                      size: 11,
+                      color: AppColors.white,
+                    ),
                     const SizedBox(width: 3),
                     Text(
                       '${item.commentsCount}',
@@ -612,8 +852,7 @@ class _PostThumbnail extends StatelessWidget {
               left: 4,
               top: 4,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 5, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                 decoration: BoxDecoration(
                   color: badgeColor.withValues(alpha: 0.85),
                   borderRadius: BorderRadius.circular(4),
@@ -668,7 +907,7 @@ class _TextThumbnail extends StatelessWidget {
           const SizedBox(height: 16),
           Expanded(
             child: Text(
-              item.title.isNotEmpty ? item.title : item.body,
+              item.summaryLine,
               maxLines: 4,
               overflow: TextOverflow.ellipsis,
               style: GoogleFonts.manrope(
@@ -679,6 +918,466 @@ class _TextThumbnail extends StatelessWidget {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Ouvre les statuts en plein écran, puis recale l'anneau : la
+/// visionneuse enregistre les vues au fur et à mesure, l'anneau doit en
+/// tenir compte au retour.
+Future<void> _openStatuses(
+  BuildContext context,
+  ProfileController controller, {
+  int index = 0,
+}) async {
+  final list = List<UserStatus>.from(controller.statuses);
+  if (list.isEmpty) return;
+  await openStatusViewer(
+    context,
+    statuses: list,
+    initialIndex: index,
+    canDelete: controller.isOwnProfile,
+    onDelete: controller.deleteStatus,
+  );
+  await controller.refreshSeenStatuses();
+}
+
+/// Choix du type de statut, puis composition, puis publication.
+Future<void> _addStatus(
+  BuildContext context,
+  ProfileController controller,
+) async {
+  final source = await _askStatusKind();
+  if (source == null) return;
+
+  String? imagePath;
+  String? videoPath;
+  switch (source) {
+    case _StatusKind.photoGallery:
+      imagePath = await controller.pickStatusPhoto(ImageSource.gallery);
+    case _StatusKind.photoCamera:
+      imagePath = await controller.pickStatusPhoto(ImageSource.camera);
+    case _StatusKind.videoGallery:
+      videoPath = await controller.pickStatusVideo(ImageSource.gallery);
+    case _StatusKind.videoCamera:
+      videoPath = await controller.pickStatusVideo(ImageSource.camera);
+    case _StatusKind.text:
+      break;
+  }
+  // Sélecteur refermé sans rien choisir : on n'ouvre pas la composition
+  // sur un média absent.
+  if (source != _StatusKind.text && imagePath == null && videoPath == null) {
+    return;
+  }
+
+  final draft = await Get.to<StatusDraft>(
+    () => StatusComposerScreen(imagePath: imagePath, videoPath: videoPath),
+  );
+  if (draft == null) return;
+  await controller.publishStatus(draft);
+}
+
+Future<_StatusKind?> _askStatusKind() {
+  final isDark = Get.find<ThemeController>().isDarkMode;
+  final ink = isDark ? AppColors.white : AppColors.black;
+  final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
+
+  return Get.bottomSheet<_StatusKind>(
+    Container(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.blackElevated : AppColors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: muted.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Text(
+                'Nouveau statut',
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: ink,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Visible 24 heures, puis il disparaît.',
+                style: GoogleFonts.manrope(fontSize: 13, color: muted),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const Icon(
+                  Icons.photo_library_outlined,
+                  color: AppColors.orange,
+                ),
+                title: Text(
+                  'Choisir une photo',
+                  style: GoogleFonts.manrope(color: ink),
+                ),
+                onTap: () => Get.back(result: _StatusKind.photoGallery),
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.video_library_outlined,
+                  color: AppColors.orange,
+                ),
+                title: Text(
+                  'Choisir une vidéo',
+                  style: GoogleFonts.manrope(color: ink),
+                ),
+                subtitle: Text(
+                  '30 secondes maximum',
+                  style: GoogleFonts.manrope(fontSize: 12, color: muted),
+                ),
+                onTap: () => Get.back(result: _StatusKind.videoGallery),
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.photo_camera_outlined,
+                  color: AppColors.orange,
+                ),
+                title: Text(
+                  'Prendre une photo',
+                  style: GoogleFonts.manrope(color: ink),
+                ),
+                onTap: () => Get.back(result: _StatusKind.photoCamera),
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.videocam_outlined,
+                  color: AppColors.orange,
+                ),
+                title: Text(
+                  'Filmer une vidéo',
+                  style: GoogleFonts.manrope(color: ink),
+                ),
+                onTap: () => Get.back(result: _StatusKind.videoCamera),
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.text_fields_rounded,
+                  color: AppColors.orange,
+                ),
+                title: Text(
+                  'Écrire un texte',
+                  style: GoogleFonts.manrope(color: ink),
+                ),
+                onTap: () => Get.back(result: _StatusKind.text),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+    isScrollControlled: true,
+  );
+}
+
+/// Les cinq portes d'entrée d'un statut. Photo et vidéo sont distinguées
+/// dès le choix : les deux sélecteurs système ne sont pas les mêmes, et la
+/// durée d'une vidéo se borne à la prise de vue.
+enum _StatusKind { photoGallery, photoCamera, videoGallery, videoCamera, text }
+
+/// Bande des statuts, sous l'en-tête du profil.
+///
+/// Chez soi, elle s'ouvre sur une tuile « Ajouter » et chaque statut
+/// affiche son nombre de vues — c'est là qu'on vient voir qui a regardé.
+/// Chez les autres, elle disparaît complètement s'il n'y a rien à montrer,
+/// plutôt que de laisser un titre suivi du vide.
+class _StatusesSection extends GetView<ProfileController> {
+  const _StatusesSection({
+    required this.isDark,
+    required this.ink,
+    required this.muted,
+  });
+
+  final bool isDark;
+  final Color ink;
+  final Color muted;
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      final statuses = controller.statuses;
+      final isOwn = controller.isOwnProfile;
+      if (statuses.isEmpty && !isOwn) return const SizedBox.shrink();
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 3,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: AppColors.orange,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Statuts',
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: ink,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '24 h',
+                  style: GoogleFonts.manrope(fontSize: 12, color: muted),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 132,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: statuses.length + (isOwn ? 1 : 0),
+              separatorBuilder: (_, _) => const SizedBox(width: 12),
+              itemBuilder: (context, i) {
+                if (isOwn && i == 0) {
+                  return _AddStatusTile(
+                    isDark: isDark,
+                    muted: muted,
+                    ink: ink,
+                    onTap: () => _addStatus(context, controller),
+                  );
+                }
+                final index = isOwn ? i - 1 : i;
+                return _StatusTile(
+                  status: statuses[index],
+                  isOwn: isOwn,
+                  isDark: isDark,
+                  ink: ink,
+                  muted: muted,
+                  onTap: () => _openStatuses(context, controller, index: index),
+                );
+              },
+            ),
+          ),
+        ],
+      );
+    });
+  }
+}
+
+class _AddStatusTile extends StatelessWidget {
+  const _AddStatusTile({
+    required this.isDark,
+    required this.muted,
+    required this.ink,
+    required this.onTap,
+  });
+
+  final bool isDark;
+  final Color muted;
+  final Color ink;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 92,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Material(
+            color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                width: 92,
+                height: 104,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: muted.withValues(alpha: 0.35),
+                    style: BorderStyle.solid,
+                  ),
+                ),
+                child: Icon(
+                  Icons.add_rounded,
+                  color: AppColors.orange,
+                  size: 30,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Ajouter',
+            style: GoogleFonts.manrope(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: ink,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusTile extends StatelessWidget {
+  const _StatusTile({
+    required this.status,
+    required this.isOwn,
+    required this.isDark,
+    required this.ink,
+    required this.muted,
+    required this.onTap,
+  });
+
+  final UserStatus status;
+  final bool isOwn;
+  final bool isDark;
+  final Color ink;
+  final Color muted;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 92,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          GestureDetector(
+            onTap: onTap,
+            child: Container(
+              width: 92,
+              height: 104,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: status.viewedByMe || isOwn
+                      ? muted.withValues(alpha: 0.3)
+                      : AppColors.orange,
+                  width: status.viewedByMe || isOwn ? 1 : 2,
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(13),
+                child: status.hasVideo
+                    // Pas de vignette pour une vidéo : en extraire une
+                    // demanderait de la télécharger et de la décoder pour
+                    // une image de 92 pixels. Une pastille de lecture dit
+                    // l'essentiel — que c'est une vidéo.
+                    ? ColoredBox(
+                        color: AppColors.blackElevated,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            const Icon(
+                              Icons.play_circle_fill_rounded,
+                              color: AppColors.white,
+                              size: 34,
+                            ),
+                            if (status.hasText)
+                              Positioned(
+                                left: 6,
+                                right: 6,
+                                bottom: 6,
+                                child: Text(
+                                  status.text,
+                                  maxLines: 2,
+                                  textAlign: TextAlign.center,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.white,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      )
+                    : status.hasImage
+                    ? FeedNetworkImage(
+                        url: status.imageUrl!,
+                        isDark: isDark,
+                        decodeWidth: 320,
+                      )
+                    : ColoredBox(
+                        color: Color(status.backgroundColor),
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Center(
+                            child: Text(
+                              status.text,
+                              maxLines: 4,
+                              textAlign: TextAlign.center,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.manrope(
+                                fontSize: 11,
+                                height: 1.3,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          // Le compteur de vues ne s'affiche qu'à l'auteur : savoir qui
+          // regarde ses statuts le concerne, lui seul.
+          Row(
+            children: [
+              Icon(
+                isOwn ? Icons.visibility_outlined : Icons.schedule,
+                size: 13,
+                color: muted,
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  isOwn ? '${status.viewsCount}' : status.ageLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: isOwn ? ink : muted,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (isOwn)
+            Text(
+              status.remainingLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.manrope(fontSize: 11, color: muted),
+            ),
         ],
       ),
     );

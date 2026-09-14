@@ -14,11 +14,21 @@ class ThreeJsView extends StatefulWidget {
     super.key,
     required this.scene,
     this.onReady,
+    this.fallback,
   });
 
-  /// Identifiant de scène : welcome | connect | explore | ready
+  /// Identifiant de scène : welcome | auth | connect | explore | ready
   final String scene;
   final VoidCallback? onReady;
+
+  /// Ce qui s'affiche pendant le chargement et si la scène échoue.
+  ///
+  /// Par défaut, un chargeur puis un message d'erreur — ce qu'il faut
+  /// quand la scène **est** l'écran. Derrière un formulaire, elle n'est
+  /// qu'un décor : on passe alors un widget vide, et le dégradé posé
+  /// dessous fait très bien l'affaire sans que personne n'apprenne qu'une
+  /// scène 3D a échoué.
+  final Widget? fallback;
 
   @override
   State<ThreeJsView> createState() => _ThreeJsViewState();
@@ -154,16 +164,17 @@ class _ThreeJsViewState extends State<ThreeJsView> {
   @override
   Widget build(BuildContext context) {
     if (_error != null) {
-      return Center(
-        child: Text(
-          'Impossible de charger la scène 3D',
-          style: Theme.of(context).textTheme.bodyMedium,
-        ),
-      );
+      return widget.fallback ??
+          Center(
+            child: Text(
+              'Impossible de charger la scène 3D',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          );
     }
 
     if (_controller == null) {
-      return const Center(child: FoumbotLoader());
+      return widget.fallback ?? const Center(child: FoumbotLoader());
     }
 
     return AnimatedOpacity(

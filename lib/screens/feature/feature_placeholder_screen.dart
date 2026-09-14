@@ -31,7 +31,7 @@ class FeaturePlaceholderScreen extends StatelessWidget {
               onPressed: themeController.toggleTheme,
               icon: Icon(
                 isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                color: AppColors.red,
+                color: AppColors.orange,
               ),
             ),
           ],
@@ -68,10 +68,10 @@ class FeaturePlaceholderScreen extends StatelessWidget {
                       color:
                           isDark ? AppColors.blackElevated : AppColors.whiteSoft,
                       border: Border.all(
-                        color: AppColors.red.withValues(alpha: 0.4),
+                        color: AppColors.orange.withValues(alpha: 0.4),
                       ),
                     ),
-                    child: Icon(feature.icon, size: 40, color: AppColors.red),
+                    child: Icon(feature.icon, size: 40, color: AppColors.orange),
                   ),
                   const SizedBox(height: 24),
                   Text(

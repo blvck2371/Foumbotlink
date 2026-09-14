@@ -47,7 +47,7 @@ class DemarcheDetailScreen extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: AppColors.red.withValues(alpha: 0.08),
+                  color: AppColors.orange.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: Row(
@@ -75,7 +75,7 @@ class DemarcheDetailScreen extends StatelessWidget {
                             style: GoogleFonts.manrope(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
-                              color: AppColors.red,
+                              color: AppColors.orange,
                             ),
                           ),
                         ],
@@ -182,7 +182,7 @@ class _InfoRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 20, color: AppColors.red),
+          Icon(icon, size: 20, color: AppColors.orange),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -230,7 +230,7 @@ class _SectionTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(icon, size: 22, color: AppColors.red),
+        Icon(icon, size: 22, color: AppColors.orange),
         const SizedBox(width: 10),
         Text(
           title,
@@ -270,7 +270,7 @@ class _BulletItem extends StatelessWidget {
               height: 6,
               decoration: const BoxDecoration(
                 shape: BoxShape.circle,
-                color: AppColors.red,
+                color: AppColors.orange,
               ),
             ),
           ),
@@ -321,7 +321,7 @@ class _StepItem extends StatelessWidget {
                 height: 28,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: AppColors.red.withValues(alpha: 0.15),
+                  color: AppColors.orange.withValues(alpha: 0.15),
                 ),
                 child: Center(
                   child: Text(
@@ -329,7 +329,7 @@ class _StepItem extends StatelessWidget {
                     style: GoogleFonts.spaceGrotesk(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      color: AppColors.red,
+                      color: AppColors.orange,
                     ),
                   ),
                 ),
@@ -339,7 +339,7 @@ class _StepItem extends StatelessWidget {
                   child: Container(
                     width: 2,
                     margin: const EdgeInsets.symmetric(vertical: 4),
-                    color: AppColors.red.withValues(alpha: 0.2),
+                    color: AppColors.orange.withValues(alpha: 0.2),
                   ),
                 ),
             ],

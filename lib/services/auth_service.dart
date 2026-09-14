@@ -91,7 +91,10 @@ class AuthService extends GetxService {
     }
   }
 
-  Future<String?> confirmPhoneCode(String verificationId, String smsCode) async {
+  Future<String?> confirmPhoneCode(
+    String verificationId,
+    String smsCode,
+  ) async {
     try {
       final credential = PhoneAuthProvider.credential(
         verificationId: verificationId,
@@ -112,15 +115,16 @@ class AuthService extends GetxService {
       'Une erreur est survenue. Vérifiez votre connexion et réessayez.';
 
   String _messageFor(FirebaseAuthException e) => switch (e.code) {
-        'invalid-email' => 'Adresse e-mail invalide.',
-        'email-already-in-use' => 'Un compte existe déjà avec cet e-mail.',
-        'weak-password' => 'Mot de passe trop court (6 caractères minimum).',
-        'user-not-found' || 'wrong-password' || 'invalid-credential' =>
-          'E-mail ou mot de passe incorrect.',
-        'invalid-phone-number' => 'Numéro de téléphone invalide.',
-        'invalid-verification-code' => 'Code incorrect.',
-        'too-many-requests' => 'Trop de tentatives, réessayez plus tard.',
-        'network-request-failed' => 'Pas de connexion internet.',
-        _ => e.message ?? _genericError,
-      };
+    'invalid-email' => 'Adresse e-mail invalide.',
+    'email-already-in-use' => 'Un compte existe déjà avec cet e-mail.',
+    'weak-password' => 'Mot de passe trop court (6 caractères minimum).',
+    'user-not-found' ||
+    'wrong-password' ||
+    'invalid-credential' => 'E-mail ou mot de passe incorrect.',
+    'invalid-phone-number' => 'Numéro de téléphone invalide.',
+    'invalid-verification-code' => 'Code incorrect.',
+    'too-many-requests' => 'Trop de tentatives, réessayez plus tard.',
+    'network-request-failed' => 'Pas de connexion internet.',
+    _ => e.message ?? _genericError,
+  };
 }

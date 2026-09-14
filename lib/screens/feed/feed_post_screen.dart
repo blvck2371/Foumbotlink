@@ -11,9 +11,12 @@ import '../../services/auth_service.dart';
 import '../../services/feed_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
-import '../../widgets/feed_image.dart';
 import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
+import '../../widgets/post_actions_menu.dart';
+import '../../widgets/post_media.dart';
+import '../../widgets/repost_banner.dart';
+import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
 
 class FeedPostScreen extends StatefulWidget {
@@ -33,6 +36,11 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
   late String _postId;
   String? _replyToCommentId;
   String? _replyToAuthorName;
+
+  /// Commentaire en cours de modification : le champ du bas sert alors à
+  /// réécrire un texte existant plutôt qu'à en ajouter un nouveau.
+  FeedComment? _editingComment;
+
   final Set<String> _expandedReplies = {};
 
   List<FeedComment> _comments = [];
@@ -41,18 +49,21 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
   bool _loadingPost = true;
 
   StreamSubscription? _commentsSub;
+  StreamSubscription? _postSub;
 
   @override
   void initState() {
     super.initState();
     _postId = Get.arguments as String;
     _loadPost();
+    _watchPost();
     _watchComments();
   }
 
   @override
   void dispose() {
     _commentsSub?.cancel();
+    _postSub?.cancel();
     _commentCtrl.dispose();
     _commentFocus.dispose();
     super.dispose();
@@ -72,8 +83,53 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
       if (mounted) setState(() => _loadingPost = false);
       return;
     }
-    final post = await _feed.getById(_postId, currentUid: _uid);
+    final post = await _feed.getById(
+      _postId,
+      likedByMe: _home.isLikedByMe(_postId),
+    );
     if (mounted) setState(() { _firestorePost = post; _loadingPost = false; });
+  }
+
+  /// Suit le document du post. Il peut être modifié ou supprimé depuis le
+  /// fil, un autre appareil, ou masqué par la modération pendant qu'on le
+  /// lit : dans ce dernier cas on referme l'écran plutôt que d'afficher
+  /// indéfiniment un contenu qui n'existe plus.
+  void _watchPost() {
+    _postSub = _feed.watchPost(
+      _postId,
+      isLikedByMe: _home.isLikedByMe,
+      onData: (post) {
+        if (!mounted) return;
+        if (post == null) {
+          if (Get.currentRoute == AppRoutes.feedPost) Get.back();
+          return;
+        }
+        setState(() {
+          _firestorePost = post;
+          _loadingPost = false;
+        });
+      },
+    );
+  }
+
+  void _startEditComment(FeedComment comment) {
+    setState(() {
+      _editingComment = comment;
+      _replyToCommentId = null;
+      _replyToAuthorName = null;
+      _commentCtrl.text = comment.text;
+      _commentCtrl.selection = TextSelection.collapsed(
+        offset: comment.text.length,
+      );
+    });
+    _commentFocus.requestFocus();
+  }
+
+  void _cancelEditComment() {
+    setState(() {
+      _editingComment = null;
+      _commentCtrl.clear();
+    });
   }
 
   void _watchComments() {
@@ -98,6 +154,8 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
 
   void _startReply(FeedComment comment) {
     setState(() {
+      _editingComment = null;
+      _commentCtrl.clear();
       _replyToCommentId = comment.id;
       _replyToAuthorName = comment.authorName;
       _expandedReplies.add(comment.id);
@@ -115,6 +173,15 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
   Future<void> _submitComment() async {
     final text = _commentCtrl.text;
     if (text.trim().isEmpty) return;
+
+    final editing = _editingComment;
+    if (editing != null) {
+      _cancelEditComment();
+      FocusScope.of(context).unfocus();
+      await _home.editComment(_postId, editing, text);
+      return;
+    }
+
     final parentId = _replyToCommentId;
     final replyName = _replyToAuthorName;
     _commentCtrl.clear();
@@ -167,7 +234,7 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
       }
 
       final badgeColor = switch (post.type) {
-        FeedType.annonce => AppColors.red,
+        FeedType.annonce => AppColors.orange,
         FeedType.info => AppColors.blue,
         FeedType.post => AppColors.blue,
       };
@@ -183,9 +250,10 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
               onPressed: themeController.toggleTheme,
               icon: Icon(
                 isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                color: AppColors.red,
+                color: AppColors.orange,
               ),
             ),
+            PostActionsMenu(post: post, isDark: isDark, iconSize: 22),
           ],
         ),
         body: DecoratedBox(
@@ -212,6 +280,15 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                   children: [
+                    if (post.isRepost &&
+                        post.repostOfAuthorName != null &&
+                        post.repostOfAuthorName!.isNotEmpty)
+                      RepostBanner(
+                        originalAuthorName: post.repostOfAuthorName!,
+                        originalAuthorUid: post.repostOfAuthorUid,
+                        originalAuthorPhotoUrl: post.repostOfAuthorPhotoUrl,
+                        isDark: isDark,
+                      ),
                     Row(
                       children: [
                         GestureDetector(
@@ -223,17 +300,12 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                                     preventDuplicates: false,
                                   ),
                           behavior: HitTestBehavior.opaque,
-                          child: CircleAvatar(
+                          child: UserAvatar(
+                            name: post.authorName,
+                            photoUrl: post.authorPhotoUrl,
+                            radius: 20,
                             backgroundColor: badgeColor.withValues(alpha: 0.15),
-                            child: Text(
-                              post.authorName.isNotEmpty
-                                  ? post.authorName[0].toUpperCase()
-                                  : '?',
-                              style: GoogleFonts.spaceGrotesk(
-                                fontWeight: FontWeight.w700,
-                                color: badgeColor,
-                              ),
-                            ),
+                            foregroundColor: badgeColor,
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -269,7 +341,9 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                                   ],
                                 ),
                                 Text(
-                                  '${post.authorSubtitle} · ${_home.timeAgo(post.publishedAt)}',
+                                  '${post.authorSubtitle} · '
+                                  '${_home.timeAgo(post.publishedAt)}'
+                                  '${post.isEdited ? ' · modifié' : ''}',
                                   style: GoogleFonts.manrope(
                                     fontSize: 12,
                                     color: muted,
@@ -300,27 +374,37 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    Text(
-                      post.title,
-                      style: textTheme.headlineMedium?.copyWith(
-                        color: ink,
-                        height: 1.15,
+                    // Titre et message facultatifs — voir `FeedItem.hasTitle`.
+                    if (post.hasTitle) ...[
+                      Text(
+                        post.title,
+                        style: textTheme.headlineMedium?.copyWith(
+                          color: ink,
+                          height: 1.15,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      post.body,
-                      style: textTheme.bodyLarge?.copyWith(
-                        color: muted,
-                        height: 1.5,
+                      if (post.hasBody) const SizedBox(height: 12),
+                    ],
+                    if (post.hasBody)
+                      Text(
+                        post.body,
+                        style: textTheme.bodyLarge?.copyWith(
+                          color: muted,
+                          height: 1.5,
+                        ),
                       ),
-                    ),
                     if (post.hasImages) ...[
                       const SizedBox(height: 14),
-                      FeedImageCarousel(
+                      PostMedia(
                         imageUrls: post.imageUrls,
                         isDark: isDark,
+                        // Préfixe distinct de celui du fil (`feed_…`) :
+                        // deux écrans qui partagent un tag `Hero` se
+                        // renvoient leurs photos à chaque navigation.
+                        heroPrefix: 'post_${post.id}',
                         borderRadius: 16,
+                        onLike: () => _home.toggleLike(post.id),
+                        alreadyLiked: post.likedByMe,
                       ),
                     ],
                     const SizedBox(height: 18),
@@ -341,7 +425,7 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                                 : Icons.favorite_border,
                             label: 'J’aime',
                             color: post.likedByMe
-                                ? AppColors.red
+                                ? AppColors.orange
                                 : (isDark
                                     ? AppColors.white
                                     : AppColors.black),
@@ -350,10 +434,26 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                         ),
                         Expanded(
                           child: _ActionButton(
-                            icon: Icons.chat_bubble_outline,
-                            label: 'Commenter',
+                            icon: post.commentsDisabled
+                                ? Icons.speaker_notes_off_outlined
+                                : Icons.chat_bubble_outline,
+                            label: post.commentsDisabled
+                                ? 'Commentaires fermés'
+                                : 'Commenter',
+                            color: post.commentsDisabled
+                                ? muted
+                                : (isDark ? AppColors.white : AppColors.black),
+                            onTap: post.commentsDisabled
+                                ? () {}
+                                : () => _commentFocus.requestFocus(),
+                          ),
+                        ),
+                        Expanded(
+                          child: _ActionButton(
+                            icon: Icons.repeat_rounded,
+                            label: 'Republier',
                             color: isDark ? AppColors.white : AppColors.black,
-                            onTap: () => _commentFocus.requestFocus(),
+                            onTap: () => _home.repostPost(post),
                           ),
                         ),
                       ],
@@ -379,6 +479,7 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                     else
                       ..._comments.map(
                         (c) => _CommentNode(
+                          postId: _postId,
                           comment: c,
                           depth: 0,
                           isDark: isDark,
@@ -391,6 +492,8 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                               _home.toggleCommentLike(
                                   _postId, commentId, currentlyLiked),
                           onReply: _startReply,
+                          onEdit: _startEditComment,
+                          canReply: !post.commentsDisabled,
                         ),
                       ),
                   ],
@@ -408,10 +511,73 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                       ),
                     ),
                   ),
-                  child: Column(
+                  // Commentaires fermés par l'auteur : on retire le champ
+                  // plutôt que de le désactiver, et on dit pourquoi.
+                  child: post.commentsDisabled
+                      ? Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.speaker_notes_off_outlined,
+                                size: 18,
+                                color: muted,
+                              ),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  'L’auteur a fermé les commentaires.',
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: muted,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      if (_replyToAuthorName != null)
+                      if (_editingComment != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8, left: 4),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.edit_outlined,
+                                size: 16,
+                                color: AppColors.blue,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Modification du commentaire',
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.blue,
+                                  ),
+                                ),
+                              ),
+                              InkWell(
+                                onTap: _cancelEditComment,
+                                borderRadius: BorderRadius.circular(12),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(4),
+                                  child: Icon(
+                                    Icons.close,
+                                    size: 18,
+                                    color: muted,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else if (_replyToAuthorName != null)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 8, left: 4),
                           child: Row(
@@ -450,9 +616,11 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                               textInputAction: TextInputAction.send,
                               onSubmitted: (_) => _submitComment(),
                               decoration: InputDecoration(
-                                hintText: _replyToAuthorName != null
-                                    ? 'Répondre à $_replyToAuthorName…'
-                                    : 'Écrire un commentaire…',
+                                hintText: _editingComment != null
+                                    ? 'Modifier votre commentaire…'
+                                    : _replyToAuthorName != null
+                                        ? 'Répondre à $_replyToAuthorName…'
+                                        : 'Écrire un commentaire…',
                                 filled: true,
                                 fillColor: isDark
                                     ? AppColors.blackElevated
@@ -472,10 +640,14 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                           IconButton.filled(
                             onPressed: _submitComment,
                             style: IconButton.styleFrom(
-                              backgroundColor: AppColors.red,
+                              backgroundColor: AppColors.orange,
                               foregroundColor: AppColors.white,
                             ),
-                            icon: const Icon(Icons.send_rounded),
+                            icon: Icon(
+                              _editingComment != null
+                                  ? Icons.check_rounded
+                                  : Icons.send_rounded,
+                            ),
                           ),
                         ],
                       ),
@@ -493,6 +665,7 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
 
 class _CommentNode extends StatelessWidget {
   const _CommentNode({
+    required this.postId,
     required this.comment,
     required this.depth,
     required this.isDark,
@@ -503,8 +676,11 @@ class _CommentNode extends StatelessWidget {
     required this.onToggleReplies,
     required this.onLike,
     required this.onReply,
+    required this.onEdit,
+    required this.canReply,
   });
 
+  final String postId;
   final FeedComment comment;
   final int depth;
   final bool isDark;
@@ -515,6 +691,11 @@ class _CommentNode extends StatelessWidget {
   final void Function(String commentId) onToggleReplies;
   final void Function(String commentId, bool currentlyLiked) onLike;
   final void Function(FeedComment comment) onReply;
+  final void Function(FeedComment comment) onEdit;
+
+  /// Faux quand l'auteur du post a fermé les commentaires : les échanges
+  /// existants restent lisibles, mais on ne peut plus y répondre.
+  final bool canReply;
 
   static const double _rootAvatar = 36;
   static const double _replyAvatar = 28;
@@ -539,23 +720,34 @@ class _CommentNode extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircleAvatar(
-                radius: avatarSize / 2,
-                backgroundColor: AppColors.blue.withValues(alpha: 0.15),
-                child: Text(
-                  comment.authorName.isNotEmpty
-                      ? comment.authorName[0].toUpperCase()
-                      : '?',
-                  style: GoogleFonts.manrope(
-                    fontSize: depth == 0 ? 13 : 11,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.blue,
+              // Un commentaire supprimé garde son icône barrée : il n'y a
+              // plus d'auteur à montrer. Sinon, photo de profil quand elle
+              // existe et initiales en secours (UserAvatar) — auparavant
+              // `comment.authorPhotoUrl` était ignoré et seule la première
+              // lettre du nom s'affichait.
+              if (comment.deleted)
+                CircleAvatar(
+                  radius: avatarSize / 2,
+                  backgroundColor: muted.withValues(alpha: 0.15),
+                  child: Icon(
+                    Icons.block,
+                    size: depth == 0 ? 16 : 13,
+                    color: muted,
                   ),
+                )
+              else
+                UserAvatar(
+                  name: comment.authorName,
+                  photoUrl: comment.authorPhotoUrl,
+                  radius: avatarSize / 2,
+                  backgroundColor: AppColors.blue.withValues(alpha: 0.15),
+                  foregroundColor: AppColors.blue,
+                  fontSize: depth == 0 ? 13 : 11,
                 ),
-              ),
               const SizedBox(width: 10),
               Expanded(
                 child: _CommentBody(
+                  postId: postId,
                   comment: comment,
                   isDark: isDark,
                   ink: ink,
@@ -563,6 +755,8 @@ class _CommentNode extends StatelessWidget {
                   timeAgo: timeAgo,
                   onLike: onLike,
                   onReply: onReply,
+                  onEdit: onEdit,
+                  canReply: canReply,
                 ),
               ),
             ],
@@ -609,6 +803,7 @@ class _CommentNode extends StatelessWidget {
                       children: [
                         for (final reply in replies)
                           _CommentNode(
+                            postId: postId,
                             comment: reply,
                             depth: depth + 1,
                             isDark: isDark,
@@ -619,6 +814,8 @@ class _CommentNode extends StatelessWidget {
                             onToggleReplies: onToggleReplies,
                             onLike: onLike,
                             onReply: onReply,
+                            onEdit: onEdit,
+                            canReply: canReply,
                           ),
                       ],
                     ),
@@ -634,6 +831,7 @@ class _CommentNode extends StatelessWidget {
 
 class _CommentBody extends StatelessWidget {
   const _CommentBody({
+    required this.postId,
     required this.comment,
     required this.isDark,
     required this.ink,
@@ -641,8 +839,11 @@ class _CommentBody extends StatelessWidget {
     required this.timeAgo,
     required this.onLike,
     required this.onReply,
+    required this.onEdit,
+    required this.canReply,
   });
 
+  final String postId;
   final FeedComment comment;
   final bool isDark;
   final Color ink;
@@ -650,15 +851,39 @@ class _CommentBody extends StatelessWidget {
   final String Function(DateTime) timeAgo;
   final void Function(String commentId, bool currentlyLiked) onLike;
   final void Function(FeedComment comment) onReply;
+  final void Function(FeedComment comment) onEdit;
+  final bool canReply;
 
   @override
   Widget build(BuildContext context) {
+    // Commentaire vidé par son auteur : il ne subsiste que pour porter ses
+    // réponses (voir FeedService.deleteComment). Ni likes, ni réponse, ni
+    // menu — il n'y a plus de contenu sur quoi agir.
+    if (comment.deleted) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Text(
+          'Commentaire supprimé',
+          style: GoogleFonts.manrope(
+            color: muted,
+            fontSize: 13,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(12, 8, 4, 12),
           decoration: BoxDecoration(
             color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
             borderRadius: BorderRadius.circular(14),
@@ -666,36 +891,50 @@ class _CommentBody extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                comment.authorName,
-                style: GoogleFonts.manrope(
-                  fontWeight: FontWeight.w800,
-                  color: ink,
-                  fontSize: 13,
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      comment.authorName,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.manrope(
+                        fontWeight: FontWeight.w800,
+                        color: ink,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  CommentActionsMenu(
+                    postId: postId,
+                    comment: comment,
+                    isDark: isDark,
+                    onEdit: () => onEdit(comment),
+                  ),
+                ],
               ),
-              const SizedBox(height: 4),
-              Text.rich(
-                TextSpan(
-                  children: [
-                    if (comment.replyToName != null) ...[
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Text.rich(
+                  TextSpan(
+                    children: [
+                      if (comment.replyToName != null)
+                        TextSpan(
+                          text: '@${comment.replyToName} ',
+                          style: GoogleFonts.manrope(
+                            color: AppColors.blue,
+                            fontWeight: FontWeight.w700,
+                            height: 1.35,
+                          ),
+                        ),
                       TextSpan(
-                        text: '@${comment.replyToName} ',
+                        text: comment.text,
                         style: GoogleFonts.manrope(
-                          color: AppColors.blue,
-                          fontWeight: FontWeight.w700,
+                          color: muted,
                           height: 1.35,
                         ),
                       ),
                     ],
-                    TextSpan(
-                      text: comment.text,
-                      style: GoogleFonts.manrope(
-                        color: muted,
-                        height: 1.35,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ],
@@ -707,7 +946,8 @@ class _CommentBody extends StatelessWidget {
           child: Row(
             children: [
               Text(
-                timeAgo(comment.createdAt),
+                '${timeAgo(comment.createdAt)}'
+                '${comment.isEdited ? ' · modifié' : ''}',
                 style: GoogleFonts.manrope(
                   fontSize: 11,
                   color: muted,
@@ -729,7 +969,7 @@ class _CommentBody extends StatelessWidget {
                             ? Icons.favorite
                             : Icons.favorite_border,
                         size: 14,
-                        color: comment.likedByMe ? AppColors.red : muted,
+                        color: comment.likedByMe ? AppColors.orange : muted,
                       ),
                       if (comment.likesCount > 0) ...[
                         const SizedBox(width: 4),
@@ -738,7 +978,7 @@ class _CommentBody extends StatelessWidget {
                           style: GoogleFonts.manrope(
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
-                            color: comment.likedByMe ? AppColors.red : muted,
+                            color: comment.likedByMe ? AppColors.orange : muted,
                           ),
                         ),
                       ],
@@ -746,25 +986,27 @@ class _CommentBody extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 14),
-              InkWell(
-                onTap: () => onReply(comment),
-                borderRadius: BorderRadius.circular(8),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 2,
-                    vertical: 2,
-                  ),
-                  child: Text(
-                    'Répondre',
-                    style: GoogleFonts.manrope(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: muted,
+              if (canReply) ...[
+                const SizedBox(width: 14),
+                InkWell(
+                  onTap: () => onReply(comment),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 2,
+                      vertical: 2,
+                    ),
+                    child: Text(
+                      'Répondre',
+                      style: GoogleFonts.manrope(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: muted,
+                      ),
                     ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
         ),

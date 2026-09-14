@@ -26,8 +26,21 @@
 		<string>$(FLUTTER_BUILD_NUMBER)</string>
 		<key>LSRequiresIPhoneOS</key>
 		<true/>
+		<!-- Appels entrants : réveil par push VoIP/silencieux, audio WebRTC en
+		     arrière-plan. Inactif tant que la clé APNs n'est pas envoyée à
+		     Firebase et que les capabilities Push/Background ne sont pas
+		     activées dans Xcode (compte Apple Developer requis). -->
+		<key>UIBackgroundModes</key>
+		<array>
+			<string>audio</string>
+			<string>voip</string>
+			<string>remote-notification</string>
+			<string>fetch</string>
+		</array>
 		<key>NSMicrophoneUsageDescription</key>
-		<string>Foumbot Link a besoin du micro pour enregistrer des messages vocaux.</string>
+		<string>Foumbot Link a besoin du micro pour enregistrer des messages vocaux et passer des appels.</string>
+		<key>NSCameraUsageDescription</key>
+		<string>Foumbot Link a besoin de la caméra pour les appels vidéo.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>Foumbot Link a besoin d’accéder à vos photos pour les joindre à une publication.</string>
 		<key>UIApplicationSceneManifest</key>
@@ -74,5 +87,15 @@
 		<true/>
 		<key>UIViewControllerBasedStatusBarAppearance</key>
 		<false/>
+		<!-- url_launcher : schémas que l'app doit pouvoir ouvrir depuis le
+		     Marché (appel, SMS, WhatsApp, liens web). -->
+		<key>LSApplicationQueriesSchemes</key>
+		<array>
+			<string>tel</string>
+			<string>sms</string>
+			<string>https</string>
+			<string>http</string>
+			<string>whatsapp</string>
+		</array>
 	</dict>
 </plist>

@@ -13,6 +13,7 @@ class Conversation {
     this.ephemeralSeconds,
     required this.createdAt,
     this.otherUserName,
+    this.otherUserPhotoUrl,
     this.otherUserVerified = false,
     this.unreadCount = 0,
   });
@@ -26,6 +27,12 @@ class Conversation {
   final int? ephemeralSeconds;
   final DateTime createdAt;
   final String? otherUserName;
+
+  /// Photo de profil de l'interlocuteur — absente du document
+  /// `conversations`, hydratée par `ConversationsController._enrich` depuis
+  /// le profil. `null` = pas de photo, l'UI retombe sur les initiales.
+  final String? otherUserPhotoUrl;
+
   final bool otherUserVerified;
   final int unreadCount;
 
@@ -50,6 +57,7 @@ class Conversation {
 
   Conversation copyWith({
     String? otherUserName,
+    String? otherUserPhotoUrl,
     bool? otherUserVerified,
     int? unreadCount,
   }) =>
@@ -63,12 +71,18 @@ class Conversation {
         ephemeralSeconds: ephemeralSeconds,
         createdAt: createdAt,
         otherUserName: otherUserName ?? this.otherUserName,
+        otherUserPhotoUrl: otherUserPhotoUrl ?? this.otherUserPhotoUrl,
         otherUserVerified: otherUserVerified ?? this.otherUserVerified,
         unreadCount: unreadCount ?? this.unreadCount,
       );
 
-  factory Conversation.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+  factory Conversation.fromDoc(
+    DocumentSnapshot<Map<String, dynamic>> doc, {
+    required String myUid,
+  }) {
     final d = doc.data()!;
+    final unreadMap = d['unreadCounts'] as Map<String, dynamic>?;
+    final unread = unreadMap?[myUid];
     return Conversation(
       id: doc.id,
       participants: List<String>.from(d['participants'] ?? []),
@@ -84,6 +98,7 @@ class Conversation {
       ephemeralSeconds: d['ephemeralSeconds'] as int?,
       createdAt:
           (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      unreadCount: unread is int ? unread : (unread as num?)?.toInt() ?? 0,
     );
   }
 }

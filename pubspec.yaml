@@ -42,15 +42,32 @@ dependencies:
   cached_network_image: ^3.4.1
   http: ^1.6.0
   image_picker: ^1.2.3
-  firebase_core: ^4.13.0
-  firebase_auth: ^6.5.7
-  cloud_firestore: ^6.8.0
-  firebase_storage: ^13.4.6
+  firebase_core: ^4.14.0
+  firebase_auth: ^6.6.1
+  cloud_firestore: ^6.9.0
+  firebase_storage: ^13.5.0
   record: ^6.1.2
   audioplayers: ^6.4.0
   file_picker: ^8.3.7
   uuid: ^4.5.1
   intl: ^0.20.2
+  flutter_webrtc: ^1.6.0
+  permission_handler: ^13.0.1
+  # A du code Android natif depuis sa version 2.0.0 — la doc du package
+  # est explicite : il doit être en `dependencies`, pas en
+  # `dev_dependencies`, sinon il est absent du classpath de compilation
+  # d'un build --release (mais présent dans le registrant de plugins
+  # généré, ce qui casse la compilation avec "package ... does not
+  # exist").
+  flutter_native_splash: ^2.4.7
+  firebase_messaging: ^16.6.0
+  flutter_callkit_incoming: ^3.1.5
+  package_info_plus: ^8.1.2
+  share_plus: ^12.0.0
+  url_launcher: ^6.3.1
+  flutter_local_notifications: ^18.0.1
+  # Lecture des statuts vidéo (24 h) — plugin officiel Flutter.
+  video_player: ^2.11.1
 
 dev_dependencies:
   flutter_test:
@@ -62,8 +79,16 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
-  flutter_native_splash: ^2.4.7
   flutter_launcher_icons: ^0.14.4
+
+# permission_handler_android 14.0.0 (résolu automatiquement par
+# permission_handler ^13.0.1) a un build.gradle.kts cassé : il utilise
+# `kotlin { compilerOptions { ... } }` sans jamais appliquer le plugin
+# Kotlin, ce qui casse toute compilation Android ("Unresolved reference:
+# compilerOptions"). Épinglé sur 13.0.1, la dernière version stable
+# précédente, en attendant un correctif upstream.
+dependency_overrides:
+  permission_handler_android: 13.0.1
 
 flutter_launcher_icons:
   android: true
@@ -100,6 +125,9 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/audio/ringback.wav
+    - assets/audio/ringtone.wav
+    - assets/fonts/google_fonts/
     - assets/threejs/three.min.js
     - assets/web/onboarding.html
     - assets/web/map_geometry.js

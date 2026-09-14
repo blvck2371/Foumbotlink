@@ -8,7 +8,7 @@ import '../theme/app_colors.dart';
 /// en séquence avec un halo lumineux — même langage visuel que les
 /// GlowOrb de l'écran d'authentification, décliné en micro-animation.
 class FoumbotLoader extends StatefulWidget {
-  const FoumbotLoader({super.key, this.size = 10.0, this.color = AppColors.red});
+  const FoumbotLoader({super.key, this.size = 10.0, this.color = AppColors.orange});
 
   const FoumbotLoader.button({super.key})
       : size = 6.0,

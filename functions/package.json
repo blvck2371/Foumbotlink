@@ -1,0 +1,33 @@
+{
+  "name": "foumbotlink-functions",
+  "description": "Cloud Functions Foumbot Link — notifications d'appel (FCM), activité sociale, modération et marché",
+  "private": true,
+  "engines": {
+    "node": "22"
+  },
+  "main": "index.js",
+  "scripts": {
+    "serve": "firebase emulators:start --only functions",
+    "logs": "firebase functions:log",
+    "deploy": "firebase deploy --only functions",
+    "migrate:likes": "node scripts/migrate_likes.js",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_likes.js\"",
+    "test:rules:typing": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_typing.js\"",
+    "test:migration": "firebase emulators:exec --only firestore --project demo-migration \"node scripts/test_migrate_likes.js\"",
+    "migrate:market": "node scripts/migrate_market.js",
+    "test:rules:market": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_market.js\"",
+    "test:backfill": "firebase emulators:exec --only firestore --project demo-backfill \"node scripts/test_backfill_market.js\"",
+    "test:rules:statuses": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_statuses.js\"",
+    "test:rules:status": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_status.js\"",
+    "test:rules:dossiers": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_dossiers.js\"",
+    "test:rules:all": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_likes.js && node scripts/test_rules_typing.js && node scripts/test_rules_market.js && node scripts/test_rules_status.js && node scripts/test_rules_dossiers.js && node scripts/test_backfill_market.js\""
+  },
+  "dependencies": {
+    "firebase-admin": "^14.3.0",
+    "firebase-functions": "^7.3.2"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase": "^12.18.0"
+  }
+}

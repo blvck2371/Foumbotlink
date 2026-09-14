@@ -2,6 +2,18 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Un compteur écrit par un tiers ne peut bouger que d'un cran.
+    // `direction` vaut 1 pour un compteur qui ne fait que monter (vues,
+    // contacts), 0 pour un compteur qui monte et descend (favoris :
+    // on met de côté, puis on retire). Un champ non modifié passe
+    // toujours, et un champ absent du document part de 0.
+    function counterStep(before, after, field, direction) {
+      return !after.data.diff(before.data).affectedKeys().hasAny([field])
+        || after.data.get(field, 0) == before.data.get(field, 0) + 1
+        || (direction == 0
+            && after.data.get(field, 0) == before.data.get(field, 0) - 1);
+    }
+
     // -----------------------------------------------------------------
     // Profils utilisateurs
     // -----------------------------------------------------------------
@@ -26,6 +38,42 @@ service cloud.firestore {
                .hasOnly(['followersCount'])
         );
 
+      // Données privées du compte, jamais lisibles par un tiers — en
+      // particulier `push` = { tokens: [...] } (jetons FCM utilisés par les
+      // Cloud Functions pour notifier un appel entrant / un appel manqué).
+      // Les Functions y accèdent via l'Admin SDK, qui ignore ces règles.
+      match /private/{docId} {
+        allow read, write: if request.auth != null
+          && request.auth.uid == uid;
+      }
+
+      // Flux personnel (message reçu, like, commentaire, nouvel abonné,
+      // publication d'un compte suivi, appel manqué...) — jamais visible
+      // par un tiers. Normalement créé par les Cloud Functions (Admin SDK,
+      // ignore ces règles) ; seule exception, la notif de mise à jour
+      // disponible, écrite par le client lui-même après comparaison de
+      // version (voir NotificationService.checkAppUpdate).
+      match /notifications/{notificationId} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow create: if request.auth != null
+          && request.auth.uid == uid
+          && request.resource.data.type == 'appUpdate';
+        // Seul le statut lu/non lu est modifiable par le propriétaire.
+        allow update: if request.auth != null
+          && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['read']);
+      }
+
+      // Liste de blocage — strictement privée à son propriétaire : la
+      // personne bloquée ne doit jamais pouvoir savoir qu'elle l'est.
+      // Sert à filtrer le fil et les commentaires côté client
+      // (ModerationService).
+      match /blocked/{blockedUid} {
+        allow read, write: if request.auth != null
+          && request.auth.uid == uid;
+      }
+
       match /followers/{followerUid} {
         allow read: if request.auth != null;
         allow create, delete: if request.auth != null
@@ -36,6 +84,100 @@ service cloud.firestore {
         allow read: if request.auth != null;
         allow create, delete: if request.auth != null
           && request.auth.uid == uid;
+      }
+
+      // Miroir des posts aimés — `users/{uid}/likes/{postId}`. Doublon
+      // assumé de `posts/{postId}/likes/{uid}` : il permet de charger « ce
+      // que j'ai aimé » en une requête, là où la sous-collection du post
+      // répond à « qui a aimé ce post ». Strictement personnel.
+      match /likes/{postId} {
+        allow read, write: if request.auth != null
+          && request.auth.uid == uid;
+      }
+
+      // Statuts déjà vus — `users/{uid}/statusViews/{statusId}`. Miroir
+      // strictement personnel, calqué sur celui des likes : il sert à
+      // savoir d'une seule requête quels statuts ne doivent plus
+      // apparaître comme neufs.
+      match /statusViews/{statusId} {
+        allow read, write: if request.auth != null
+          && request.auth.uid == uid;
+      }
+
+      // Statuts aimés — `users/{uid}/statusLikes/{statusId}`. Même miroir
+      // personnel : savoir ce que *j'ai* aimé tient en une requête, là où
+      // interroger chaque statut en coûterait une par statut affiché. La
+      // vérité publique reste `statuses/{id}/likes/{uid}`.
+      match /statusLikes/{statusId} {
+        allow read, write: if request.auth != null
+          && request.auth.uid == uid;
+      }
+
+      // Publications mises de côté — `users/{uid}/saved/{postId}`. Même
+      // forme que le miroir des likes ci-dessus, mais sans contrepartie
+      // publique côté post : un enregistrement est privé, personne d'autre
+      // que son auteur n'a à savoir ce qu'il a mis de côté.
+      match /saved/{postId} {
+        allow read, write: if request.auth != null
+          && request.auth.uid == uid;
+      }
+
+      // Annonces mises de côté — même logique que `saved`, côté marché.
+      // Le compteur `favoritesCount` de l'annonce en est le seul reflet
+      // public : personne ne peut savoir *qui* a mis quoi de côté.
+      match /marketFavorites/{itemId} {
+        allow read, write: if request.auth != null
+          && request.auth.uid == uid;
+      }
+
+      // Recherches enregistrées (alertes). Strictement personnelles ; les
+      // Cloud Functions les relisent via l'Admin SDK, qui ignore ces
+      // règles, pour rapprocher chaque nouvelle annonce des critères.
+      match /savedSearches/{searchId} {
+        allow read, write: if request.auth != null
+          && request.auth.uid == uid;
+      }
+
+      // Trace « untel m'a contacté à propos d'une annonce ». Posée par
+      // l'acheteur au moment où il révèle le numéro ou ouvre une
+      // discussion. Elle n'est visible que des deux intéressés, et c'est
+      // elle qui ouvre le droit de laisser un avis (voir plus bas).
+      match /contactedBy/{buyerUid} {
+        allow read: if request.auth != null
+          && (request.auth.uid == uid || request.auth.uid == buyerUid);
+        allow create, update: if request.auth != null
+          && request.auth.uid == buyerUid;
+        allow delete: if false;
+      }
+
+      // Avis sur un vendeur — `users/{uid}/reviews/{reviewerUid}`.
+      //
+      // Rien ne sécurise une transaction dans cette app : pas de
+      // paiement, pas de séquestre, tout se règle en main propre. La
+      // réputation est donc la seule information sur laquelle un
+      // acheteur peut s'appuyer avant de se déplacer, et elle ne vaut
+      // que si elle n'est pas falsifiable :
+      //   - un document par auteur d'avis (l'id *est* son uid), donc
+      //     pas de note répétée pour gonfler ou couler quelqu'un ;
+      //   - on ne se note pas soi-même ;
+      //   - il faut avoir réellement pris contact, ce que prouve
+      //     `contactedBy`.
+      // La moyenne affichée est recalculée côté serveur
+      // (`onSellerReviewWritten`), jamais écrite par le client.
+      match /reviews/{reviewerUid} {
+        allow read: if request.auth != null;
+
+        allow create, update: if request.auth != null
+          && request.auth.uid == reviewerUid
+          && reviewerUid != uid
+          && request.resource.data.rating is int
+          && request.resource.data.rating >= 1
+          && request.resource.data.rating <= 5
+          && request.resource.data.comment.size() <= 400
+          && exists(/databases/$(database)/documents/users/$(uid)/contactedBy/$(request.auth.uid));
+
+        allow delete: if request.auth != null
+          && request.auth.uid == reviewerUid;
       }
     }
 
@@ -48,26 +190,59 @@ service cloud.firestore {
       allow create: if request.auth != null
         && request.resource.data.authorUid == request.auth.uid;
 
-      // L'auteur peut modifier son post librement. Un autre utilisateur
-      // ne peut toucher qu'aux likes (setLike) et au compteur de
-      // commentaires (addComment, appelé par l'auteur du commentaire,
-      // pas forcément celui du post) — jamais au titre, corps ou auteur.
+      // L'auteur peut modifier son post librement. Un autre utilisateur ne
+      // peut toucher qu'au compteur de likes (setLike) ou à celui des
+      // commentaires (addComment, appelé par l'auteur du commentaire, pas
+      // forcément celui du post) — jamais au titre, corps ou auteur.
+      //
+      // `likesCount` n'est plus qu'un résumé : la vérité est l'existence
+      // de `posts/{postId}/likes/{uid}`. Un tiers ne peut donc le décaler
+      // que d'exactement un cran, ce qui interdit d'y écrire un nombre
+      // arbitraire. `likedBy` a disparu du document.
       allow update: if request.auth != null
         && (
           resource.data.authorUid == request.auth.uid
+          || (
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['likesCount'])
+            && (
+              request.resource.data.likesCount
+                == resource.data.get('likesCount', 0) + 1
+              || request.resource.data.likesCount
+                == resource.data.get('likesCount', 0) - 1
+            )
+          )
           || request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['likedBy', 'likesCount', 'commentsCount'])
+               .hasOnly(['commentsCount'])
         );
 
       allow delete: if request.auth != null
         && resource.data.authorUid == request.auth.uid;
 
+      // Un document par personne ayant aimé — c'est *la* source de vérité
+      // du like. Chacun ne peut poser ou retirer que le sien, et jamais le
+      // modifier : un like n'a pas d'état intermédiaire, il existe ou non.
+      match /likes/{likerUid} {
+        allow read: if request.auth != null;
+        allow create, delete: if request.auth != null
+          && request.auth.uid == likerUid;
+        allow update: if false;
+      }
+
       // Commentaires imbriqués
       match /comments/{commentId} {
         allow read: if true;
 
+        // Le `get()` sur le post parent coûte une lecture par commentaire
+        // écrit, mais c'est le seul moyen de faire respecter la fermeture
+        // des commentaires : sans lui, « Fermer les commentaires » ne
+        // serait qu'un masquage d'UI, contournable par n'importe quel
+        // client. `commentsDisabled` est absent des posts créés avant
+        // cette fonctionnalité, d'où le défaut à false.
         allow create: if request.auth != null
-          && request.resource.data.authorUid == request.auth.uid;
+          && request.resource.data.authorUid == request.auth.uid
+          && get(/databases/$(database)/documents/posts/$(postId))
+               .data.get('commentsDisabled', false) == false;
 
         // L'auteur peut modifier son commentaire librement. Un autre
         // utilisateur ne peut toucher qu'aux likes (setCommentLike).
@@ -86,6 +261,208 @@ service cloud.firestore {
     // -----------------------------------------------------------------
     // Conversations (chat)
     // -----------------------------------------------------------------
+    // -----------------------------------------------------------------
+    // Suivi des dossiers déposés au guichet
+    // -----------------------------------------------------------------
+
+    /// Une structure **validée** — c'est-à-dire un compte que l'équipe a
+    /// vérifié. Sans cette condition, n'importe qui pourrait se déclarer
+    /// « structure » à l'inscription et se mettre à créer des dossiers au
+    /// nom d'autrui.
+    function isVerifiedStructure() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid))
+             .data.accountType == 'structure'
+        && get(/databases/$(database)/documents/users/$(request.auth.uid))
+             .data.verified == true;
+    }
+
+    // Annuaire inverse code → habitant. Lisible par les seules structures
+    // validées : c'est ce qui permet au guichet de retrouver quelqu'un à
+    // partir des sept caractères écrits sur sa chemise, et c'est aussi ce
+    // qui empêche n'importe qui de balayer les codes pour dresser la
+    // liste des habitants.
+    // -----------------------------------------------------------------
+    // Statuts éphémères (24 h)
+    //
+    // Lecture réservée aux comptes connectés : un statut n'est pas une
+    // publication du fil, il s'adresse aux gens de l'app, et la liste de
+    // ses spectateurs n'appartient qu'à son auteur.
+    // -----------------------------------------------------------------
+    match /statuses/{statusId} {
+      allow read: if request.auth != null;
+
+      // `viewsCount` doit partir de zéro : sans ça, on pourrait publier un
+      // statut en s'attribuant d'emblée mille vues. Lu avec `get(...,-1)`
+      // plutôt qu'en accès direct : un document sans le champ doit se voir
+      // refusé proprement, là où l'accès direct fait échouer l'évaluation
+      // de la règle elle-même (« Property viewsCount is undefined »).
+      // L'échéance est bornée côté serveur : c'est elle qui décide de ce
+      // qui reste visible et de ce que la purge ramasse. Sans cette borne,
+      // un client bricolé pourrait se donner un statut permanent en
+      // écrivant une date lointaine. 25 h plutôt que 24 pour tolérer
+      // l'écart d'horloge de l'appareil, qui calcule cette date lui-même.
+      // Un repartage doit dire de qui il vient : sans cette exigence, on
+      // pourrait republier le contenu d'un autre en s'en attribuant la
+      // paternité. L'affichage s'appuie sur ces champs pour la mention
+      // « repartagé de … ».
+      allow create: if request.auth != null
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.get('viewsCount', -1) == 0
+        && request.resource.data.get('likesCount', 0) == 0
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt
+             < request.time + duration.value(25, 'h')
+        && (
+          !('repostOfId' in request.resource.data)
+          || (
+            request.resource.data.repostOfId is string
+            && request.resource.data.repostOfAuthorUid is string
+            && request.resource.data.repostOfAuthorUid.size() > 0
+          )
+        );
+
+      // L'auteur reste maître de son statut. Un tiers ne peut toucher
+      // qu'aux deux compteurs, et d'un seul cran — la vérité étant
+      // l'existence de `views/{uid}` et de `likes/{uid}`, ces compteurs
+      // n'en sont que le résumé. Les vues ne font que monter (on ne
+      // « dé-voit » pas un statut) ; les « j'aime » se retirent, d'où la
+      // direction libre pour eux seuls.
+      allow update: if request.auth != null
+        && (
+          resource.data.authorUid == request.auth.uid
+          || (
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['viewsCount', 'likesCount'])
+            && counterStep(resource, request.resource, 'viewsCount', 1)
+            && counterStep(resource, request.resource, 'likesCount', 0)
+          )
+        );
+
+      allow delete: if request.auth != null
+        && resource.data.authorUid == request.auth.uid;
+
+      // Un document par spectateur. Seul l'auteur du statut voit la liste
+      // entière ; chacun peut relire la sienne, ce qui suffit au client
+      // pour savoir s'il a déjà compté sa vue. Ni modification ni
+      // suppression : une vue ne se reprend pas.
+      match /views/{viewerUid} {
+        allow read: if request.auth != null
+          && (
+            request.auth.uid == viewerUid
+            || get(/databases/$(database)/documents/statuses/$(statusId))
+                 .data.authorUid == request.auth.uid
+          );
+        allow create: if request.auth != null
+          && request.auth.uid == viewerUid;
+        allow update, delete: if false;
+      }
+
+      // Un document par personne ayant aimé — c'est *la* source de vérité
+      // du « j'aime ». Chacun ne pose ou ne retire que le sien, et jamais
+      // ne le modifie : un « j'aime » n'a pas d'état intermédiaire, il
+      // existe ou non. Même découpage que `posts/{id}/likes/{uid}`.
+      match /likes/{likerUid} {
+        allow read: if request.auth != null
+          && (
+            request.auth.uid == likerUid
+            || get(/databases/$(database)/documents/statuses/$(statusId))
+                 .data.authorUid == request.auth.uid
+          );
+        allow create, delete: if request.auth != null
+          && request.auth.uid == likerUid;
+        allow update: if false;
+      }
+    }
+
+    // -----------------------------------------------------------------
+    // Démarches publiées par les structures
+    //
+    // Lecture publique : c'est un service au public, consultable sans
+    // compte, comme le fil. L'écriture appartient à la seule structure
+    // propriétaire — et seulement si elle est validée, sinon n'importe
+    // qui se déclarant « structure » pourrait publier des tarifs et des
+    // lieux officiels.
+    // -----------------------------------------------------------------
+    match /demarches/{demarcheId} {
+      allow read: if true;
+
+      allow create: if isVerifiedStructure()
+        && request.resource.data.structureUid == request.auth.uid
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0;
+
+      // `structureUid` est figé : une démarche ne change pas de guichet,
+      // et l'y autoriser permettrait de déposer du contenu sur le compte
+      // d'une autre structure.
+      allow update: if isVerifiedStructure()
+        && resource.data.structureUid == request.auth.uid
+        && request.resource.data.structureUid == resource.data.structureUid;
+
+      allow delete: if isVerifiedStructure()
+        && resource.data.structureUid == request.auth.uid;
+    }
+
+    match /trackingCodes/{code} {
+      allow read: if isVerifiedStructure()
+        || (request.auth != null && resource.data.uid == request.auth.uid);
+
+      // Chacun ne réserve qu'un code pointant sur lui-même, et un code
+      // déjà pris ne peut pas être repris : `create` échoue si le
+      // document existe, ce qui garantit l'unicité sans transaction.
+      allow create: if request.auth != null
+        && request.resource.data.uid == request.auth.uid;
+
+      // Un code attribué ne bouge plus : le réattribuer ferait basculer
+      // les dossiers en cours d'un habitant vers un autre.
+      allow update, delete: if false;
+    }
+
+    match /dossiers/{dossierId} {
+      // Le propriétaire suit son dossier ; la structure qui l'a reçu le
+      // traite. Personne d'autre n'y a accès — un dossier administratif
+      // n'a pas à être public.
+      allow read: if request.auth != null
+        && (request.auth.uid == resource.data.ownerUid
+            || request.auth.uid == resource.data.structureUid);
+
+      // Seule une structure validée réceptionne, et seulement en son
+      // propre nom.
+      //
+      // Surtout : **le dossier ne peut être rattaché qu'au compte
+      // auquel le code appartient réellement.** La règle relit
+      // l'annuaire et compare — sans quoi une structure pourrait
+      // rattacher un dossier à n'importe qui, et cette personne verrait
+      // apparaître une démarche qu'elle n'a jamais déposée.
+      allow create: if isVerifiedStructure()
+        && request.resource.data.structureUid == request.auth.uid
+        && request.resource.data.status == 'receptionne'
+        && request.resource.data.title is string
+        && request.resource.data.trackingCode is string
+        && exists(/databases/$(database)/documents/trackingCodes/$(request.resource.data.trackingCode))
+        && get(/databases/$(database)/documents/trackingCodes/$(request.resource.data.trackingCode))
+             .data.uid == request.resource.data.ownerUid;
+
+      // L'avancement appartient à la structure réceptrice. Le
+      // propriétaire ne peut rien modifier : son dossier est le compte
+      // rendu du service, pas un document qu'il rédige. Ni le
+      // propriétaire, ni la structure, ni la date de dépôt ne changent
+      // jamais.
+      allow update: if request.auth != null
+        && request.auth.uid == resource.data.structureUid
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.structureUid == resource.data.structureUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'updatedAt', 'events', 'reference']);
+
+      // Un dossier ne s'efface pas : il est la trace de ce qu'on a
+      // déposé. Le ménage, s'il en faut un, revient à l'Admin SDK.
+      allow delete: if false;
+    }
+
     match /conversations/{conversationId} {
       allow read: if request.auth != null
         && (resource == null || request.auth.uid in resource.data.participants);
@@ -102,7 +479,7 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly([
                'lastMessage', 'lastMessageType', 'lastMessageAt',
-               'lastMessageSenderUid', 'ephemeralSeconds',
+               'lastMessageSenderUid', 'ephemeralSeconds', 'unreadCounts',
              ]);
 
       match /messages/{messageId} {
@@ -112,12 +489,149 @@ service cloud.firestore {
         allow create: if request.auth != null
           && request.resource.data.senderUid == request.auth.uid;
 
-        // Seul l'accusé de lecture (`readAt`) est modifiable après l'envoi
-        // — jamais le contenu, l'expéditeur ou le type du message.
+        // Après l'envoi, trois modifications seulement, et chacune est
+        // bornée à ce que la personne a le droit de toucher.
+        //
+        // 1. L'accusé de lecture — n'importe quel participant.
+        // 2. Sa propre réaction — la clé modifiée dans la carte
+        //    `reactions` doit être son propre uid, sans quoi on pourrait
+        //    poser une réaction au nom de l'autre.
+        // 3. La suppression douce — l'expéditeur seul, et le contenu doit
+        //    partir avec : `deleted: true` en gardant le texte laisserait
+        //    un message « supprimé » toujours lisible dans la base.
+        //
+        // Jamais l'expéditeur, le type ni la date : ils restent figés.
         allow update: if request.auth != null
           && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants
-          && request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['readAt']);
+          && (
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['readAt'])
+            || (
+              request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['reactions'])
+              && request.resource.data.reactions
+                   .diff(resource.data.get('reactions', {}))
+                   .affectedKeys().hasOnly([request.auth.uid])
+            )
+            || (
+              request.auth.uid == resource.data.senderUid
+              && request.resource.data.diff(resource.data).affectedKeys()
+                   .hasOnly(['deleted', 'content', 'fileName', 'durationMs',
+                             'reactions'])
+              && request.resource.data.deleted == true
+              && request.resource.data.content == ''
+              // Retirer un message à tout le monde n'est offert que
+              // pendant un délai après l'envoi (voir
+              // ChatMessage.deleteForEveryoneWindow). Passé ce délai, il a
+              // été lu, cité, peut-être capturé : l'effacer de l'écran
+              // d'en face donnerait une fausse impression d'effacement.
+              // L'app masque déjà l'option ; la règle est ce qui la rend
+              // vraie.
+              && request.time < resource.data.createdAt + duration.value(60, 'h')
+            )
+            // « Supprimer pour moi » : chacun peut s'ajouter ou se
+            // retirer de `hiddenFor`, personne d'autre. Le message reste
+            // intact pour l'autre participant.
+            || (
+              request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['hiddenFor'])
+              && request.resource.data.hiddenFor.toSet()
+                   .difference(resource.data.get('hiddenFor', []).toSet())
+                   .hasOnly([request.auth.uid])
+              && resource.data.get('hiddenFor', []).toSet()
+                   .difference(request.resource.data.hiddenFor.toSet())
+                   .hasOnly([request.auth.uid])
+            )
+          );
+      }
+
+      // Indicateur "en train d'écrire / d'enregistrer" — chacun ne peut
+      // écrire que son propre document, lisible par l'autre participant.
+      // Lu à la fois par l'en-tête de la discussion et par la liste des
+      // conversations (une écoute par conversation visible), donc par un
+      // client qui n'a pas forcément la discussion ouverte.
+      match /typing/{uid} {
+        allow read: if request.auth != null
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+
+        // Forme du document verrouillée : c'est du contenu écrit par un
+        // tiers que l'app d'en face affiche. Sans ces contraintes, un
+        // participant pourrait y déposer un champ `state` arbitraire ou
+        // une charge utile de taille libre que l'autre télécharge en
+        // continu (rafraîchi toutes les 5 s par le heartbeat).
+        allow create, update: if request.auth != null
+          && request.auth.uid == uid
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants
+          && request.resource.data.keys().hasOnly(['state', 'updatedAt'])
+          && request.resource.data.state in ['idle', 'typing', 'recording'];
+
+        allow delete: if request.auth != null
+          && request.auth.uid == uid;
+      }
+    }
+
+    // -----------------------------------------------------------------
+    // Appels (signalisation WebRTC — offer/answer SDP + candidats ICE ;
+    // le média audio/vidéo ne transite jamais par Firestore)
+    // -----------------------------------------------------------------
+    match /calls/{callId} {
+      // Scindé get/list : pour une requête `list` (CallService._watchIncoming,
+      // filtrée uniquement sur `calleeUid`), Firestore refuse d'évaluer une
+      // règle référençant un champ non contraint par la requête — ici
+      // `callerUid` — avec une erreur "Property callerUid is undefined on
+      // object", et donc "permission-denied" sur toute la requête. `get`
+      // (lecture d'un document précis par id, ex. watchCall) peut en
+      // revanche vérifier les deux champs sans restriction.
+      allow get: if request.auth != null
+        && request.auth.uid in [resource.data.callerUid, resource.data.calleeUid];
+      allow list: if request.auth != null
+        && request.auth.uid == resource.data.calleeUid;
+
+      // Seul l'appelant crée le document, à l'état "ringing".
+      allow create: if request.auth != null
+        && request.auth.uid == request.resource.data.callerUid
+        && request.resource.data.status == 'ringing';
+
+      // Les champs immuables (participants, type, conversation) ne
+      // bougent jamais. Le SDP "offer" n'est écrit que par l'appelant,
+      // "answer" que par l'appelé — chacun ne peut agir que sur son
+      // propre côté de la poignée de main ; le statut peut être mis à
+      // jour par l'un ou l'autre (raccrocher, refuser, accepter).
+      allow update: if request.auth != null
+        && request.auth.uid in [resource.data.callerUid, resource.data.calleeUid]
+        && request.resource.data.callerUid == resource.data.callerUid
+        && request.resource.data.calleeUid == resource.data.calleeUid
+        && request.resource.data.conversationId == resource.data.conversationId
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['offer', 'answer', 'answeredAt', 'status', 'endedAt'])
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['offer'])
+             || request.auth.uid == resource.data.callerUid)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['answer', 'answeredAt'])
+             || request.auth.uid == resource.data.calleeUid);
+
+      // Candidats ICE : chacun ne peut écrire que dans sa propre
+      // sous-collection, lisible par les deux participants de l'appel.
+      match /callerCandidates/{candidateId} {
+        allow read: if request.auth != null
+          && request.auth.uid in [
+               get(/databases/$(database)/documents/calls/$(callId)).data.callerUid,
+               get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid,
+             ];
+        allow create: if request.auth != null
+          && request.auth.uid ==
+               get(/databases/$(database)/documents/calls/$(callId)).data.callerUid;
+      }
+
+      match /calleeCandidates/{candidateId} {
+        allow read: if request.auth != null
+          && request.auth.uid in [
+               get(/databases/$(database)/documents/calls/$(callId)).data.callerUid,
+               get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid,
+             ];
+        allow create: if request.auth != null
+          && request.auth.uid ==
+               get(/databases/$(database)/documents/calls/$(callId)).data.calleeUid;
       }
     }
 
@@ -127,14 +641,87 @@ service cloud.firestore {
     match /market/{itemId} {
       allow read: if true;
 
+      // Le numéro du vendeur n'a rien à faire dans ce document : il est
+      // lisible par tout le monde, connecté ou non, et une seule requête
+      // suffirait à aspirer les numéros de toute la commune. Il vit dans
+      // la sous-collection `contact` ci-dessous, et l'app n'écrit plus
+      // jamais `sellerPhone`.
+      //
+      // La règle ne le refuse pourtant pas à la création, et c'est
+      // délibéré : les versions de l'app déjà installées, elles, l'y
+      // écrivent encore. Les bloquer ici empêcherait purement et
+      // simplement de publier depuis un téléphone non mis à jour. C'est
+      // `onMarketItemCreated` qui déplace le numéro et l'efface du
+      // document public, dans la seconde qui suit la création — reste
+      // une fenêtre de quelques secondes, sans commune mesure avec une
+      // base de numéros lisible en permanence.
       allow create: if request.auth != null
         && request.resource.data.sellerUid == request.auth.uid;
 
+      // Le vendeur modifie son annonce librement. Un tiers ne peut
+      // toucher qu'aux trois compteurs d'intérêt, et d'un seul cran à la
+      // fois : sans cette borne, n'importe qui pourrait inscrire un
+      // nombre de vues arbitraire et fabriquer une popularité.
       allow update: if request.auth != null
-        && resource.data.sellerUid == request.auth.uid;
+        && resource != null
+        && (
+          resource.data.sellerUid == request.auth.uid
+          || (
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['viewsCount', 'contactsCount', 'favoritesCount'])
+            && counterStep(resource, request.resource, 'viewsCount', 1)
+            && counterStep(resource, request.resource, 'contactsCount', 1)
+            && counterStep(resource, request.resource, 'favoritesCount', 0)
+          )
+        );
 
       allow delete: if request.auth != null
         && resource.data.sellerUid == request.auth.uid;
+
+      // Numéro de téléphone du vendeur — réservé aux comptes connectés.
+      // C'est tout l'intérêt de l'avoir sorti du document public : un
+      // visiteur non authentifié voit l'annonce, jamais le numéro, et
+      // l'app enregistre qui a demandé le contact (ce qui conditionne le
+      // droit de laisser un avis, plus bas).
+      match /contact/{docId} {
+        allow read: if request.auth != null;
+        allow write: if request.auth != null
+          && get(/databases/$(database)/documents/market/$(itemId))
+               .data.sellerUid == request.auth.uid;
+      }
+    }
+
+    // -----------------------------------------------------------------
+    // Signalements de contenu (App Store Guideline 1.2 — UGC)
+    //
+    // Écriture seule côté client : personne ne peut relire les
+    // signalements, ni savoir qu'un contenu a été signalé, ni retirer
+    // le sien. L'id est déterministe (`{type}_{cible}_{signaleur}` —
+    // voir ModerationService.report) pour qu'un même utilisateur ne
+    // puisse pas gonfler le compteur en signalant en boucle ; on impose
+    // donc `create` uniquement, jamais `update`, et on vérifie que le
+    // signaleur déclaré est bien l'appelant.
+    //
+    // La modération lit et traite depuis la console / l'Admin SDK, qui
+    // ignore ces règles (voir onReportCreated dans functions/index.js).
+    // -----------------------------------------------------------------
+    match /reports/{reportId} {
+      allow read: if false;
+      allow create: if request.auth != null
+        && request.resource.data.reporterUid == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.targetPath is string
+        && request.resource.data.targetPath.size() < 300;
+      allow update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------
+    // Configuration app — ex. `config/app.latestVersion`, comparée par
+    // NotificationService.checkAppUpdate. Lecture seule côté client,
+    // jamais écrite que depuis la console/l'Admin SDK.
+    // -----------------------------------------------------------------
+    match /config/{docId} {
+      allow read: if request.auth != null;
     }
   }
 }

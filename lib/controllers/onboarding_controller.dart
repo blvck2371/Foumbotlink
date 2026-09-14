@@ -25,10 +25,7 @@ class OnboardingPageData {
 }
 
 class OnboardingHighlight {
-  const OnboardingHighlight({
-    required this.icon,
-    required this.label,
-  });
+  const OnboardingHighlight({required this.icon, required this.label});
 
   final IconData icon;
   final String label;
@@ -49,16 +46,14 @@ class OnboardingController extends GetxController {
       scene: 'welcome',
       eyebrow: 'La ville',
       title: 'Au service de tous',
-      subtitle:
-          'Infos, démarches, annonces et échanges entre habitants.',
+      subtitle: 'Infos, démarches, annonces et échanges entre habitants.',
     ),
     OnboardingPageData(
       visual: OnboardingVisual.civic,
       scene: 'welcome',
       eyebrow: 'Ensemble',
       title: 'Une commune plus proche',
-      subtitle:
-          'Annonces, idées et dialogue avec la mairie — simplement.',
+      subtitle: 'Annonces, idées et dialogue avec la mairie — simplement.',
     ),
   ];
 

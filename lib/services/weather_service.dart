@@ -15,8 +15,10 @@ class WeatherService extends GetxService {
   static const _refreshInterval = Duration(minutes: 20);
 
   final snapshot = Rxn<WeatherSnapshot>();
+
   /// Prévision des 7 prochains jours (aujourd'hui inclus).
   final forecast = RxList<WeatherDay>([]);
+
   /// Prévision heure par heure sur les 7 prochains jours — sert à montrer
   /// à quel moment il pleut ou fait beau, pas seulement un résumé.
   final hourly = RxList<WeatherHour>([]);
@@ -25,10 +27,12 @@ class WeatherService extends GetxService {
   /// Heures de prévision pour une journée donnée (comparaison sur la
   /// date seule, indépendamment de l'heure).
   List<WeatherHour> hoursForDay(DateTime day) => hourly
-      .where((h) =>
-          h.time.year == day.year &&
-          h.time.month == day.month &&
-          h.time.day == day.day)
+      .where(
+        (h) =>
+            h.time.year == day.year &&
+            h.time.month == day.month &&
+            h.time.day == day.day,
+      )
       .toList();
 
   /// Les prochaines heures à partir de maintenant (heure en cours
@@ -91,8 +95,7 @@ class WeatherService extends GetxService {
         for (var i = 0; i < dates.length; i++)
           WeatherDay(
             date: DateTime.parse(dates[i] as String),
-            condition:
-                WeatherCondition.fromWmoCode((codes[i] as num).toInt()),
+            condition: WeatherCondition.fromWmoCode((codes[i] as num).toInt()),
             maxTempC: (maxTemps[i] as num).toDouble(),
             minTempC: (minTemps[i] as num).toDouble(),
             rainChance: (rainChances[i] as num? ?? 0).toInt(),
@@ -109,8 +112,9 @@ class WeatherService extends GetxService {
         for (var i = 0; i < hourTimes.length; i++)
           WeatherHour(
             time: DateTime.parse(hourTimes[i] as String),
-            condition:
-                WeatherCondition.fromWmoCode((hourCodes[i] as num).toInt()),
+            condition: WeatherCondition.fromWmoCode(
+              (hourCodes[i] as num).toInt(),
+            ),
             temperatureC: (hourTemps[i] as num).toDouble(),
             rainChance: (hourRainChances[i] as num? ?? 0).toInt(),
           ),

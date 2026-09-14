@@ -20,13 +20,48 @@
     (function () {
       const C = {
         border: 0xa6a6a6,
-        main: 0xf04424,
-        dash: 0xff5540,
+        main: 0xef6c00,
+        dash: 0xff9838,
         river: 0x2438c8,
         dot: 0x111111,
-        pulse: 0xff5a3d,
-        core: 0xffe0d6,
+        pulse: 0xffa040,
+        core: 0xffe9c9,
       };
+
+      // Localités de la commune, dans l'ordre exact de MAP_GEOMETRY.dots :
+      // LOCALITIES[i] nomme dots[i].
+      //
+      // Position : chaque pastille de la carte du département du Noun a été
+      // rattachée à son point par recalage géométrique (bijection, écart
+      // résiduel 0,017 pour un espacement typique de 0,2 à 2), et non à
+      // l'œil.
+      //
+      // Orthographe : celle du Plan Communal de Développement de Foumbot
+      // (PNDP), qui fait autorité — la carte est trop basse en résolution
+      // pour départager certaines lettres. Quand le PCD hésite, la graphie
+      // majoritaire est retenue (Fochieya 43 contre Focheiya 19).
+      //
+      // La carte pose « Njimbot 2 » sur ce point (le PCD distingue Njimbot 1,
+      // centre urbain, de Njimbot 2), mais l'onboarding n'affiche que
+      // « Njimbot » : le numéro de secteur n'apporte rien ici.
+      const LOCALITIES = [
+        'Baïgom', 'Nkouondja', 'Njimbot', 'Fochieya', 'Mbanjou',
+        'Koundoumbain', 'Njincha', 'Colonie Bororo', 'Compagny', 'Fosset',
+        'Mangoum', 'Mbantou', 'Mahouon', 'Kwetvu', 'Koupka',
+        'Momo', 'Njimbot Fongue', 'Fossang', 'Soukpen', 'Tenjouonoun',
+        'Maka', 'Kouffen',
+      ];
+
+      // Le parcours commence toujours par cette localité.
+      const TOUR_START = 'Koundoumbain';
+
+      // Une localité à la fois : jaillissement, maintien, extinction, souffle.
+      // L'entrée est brève — une étincelle claque, elle ne se fond pas.
+      const LB_IN = 0.2, LB_HOLD = 1.3, LB_OUT = 0.45, LB_GAP = 0.2;
+      const LB_CYCLE = LB_IN + LB_HOLD + LB_OUT + LB_GAP;
+
+      // Gerbe d'étincelles projetée à chaque localité nommée.
+      const SPARKS = 12;
 
       let scene, camera, renderer, clock, group;
       let currentScene = 'welcome';
@@ -46,7 +81,13 @@
           obj.traverse((c) => {
             if (c.geometry) c.geometry.dispose();
             if (c.material) {
-              (Array.isArray(c.material) ? c.material : [c.material]).forEach((m) => m.dispose());
+              (Array.isArray(c.material) ? c.material : [c.material]).forEach((m) => {
+                // `dispose()` d'un matériau ne libère pas sa texture : sans
+                // ça, le canvas de l'étiquette fuit à chaque changement de
+                // scène.
+                if (m.map) m.map.dispose();
+                m.dispose();
+              });
             }
           });
         }
@@ -138,6 +179,7 @@
           pulse: null,
           trail: [],
           roadPulse: null,
+          tour: null,
         };
 
         // Contour
@@ -206,6 +248,58 @@
           map.dotMeshes.push(m);
         });
 
+        // La plaque se pose juste au-dessus de la pastille nommée, donc
+        // exactement à la position de la localité sur la carte.
+        const plate = makeLabelPlate(LOCALITIES);
+        group.add(plate.sprite);
+
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(0.038, 0.055, 24),
+          new THREE.MeshBasicMaterial({
+            color: C.main, transparent: true, opacity: 0, depthWrite: false,
+          })
+        );
+        ring.position.z = 0.055;
+        ring.visible = false;
+        group.add(ring);
+        // Éclat bref au moment où la localité s'allume.
+        const flash = new THREE.Mesh(
+          new THREE.CircleGeometry(0.05, 18),
+          new THREE.MeshBasicMaterial({
+            color: C.core, transparent: true, opacity: 0, depthWrite: false,
+          })
+        );
+        flash.position.z = 0.06;
+        flash.visible = false;
+        group.add(flash);
+
+        const sparks = [];
+        for (let i = 0; i < SPARKS; i++) {
+          const sk = new THREE.Mesh(
+            new THREE.CircleGeometry(0.011, 8),
+            new THREE.MeshBasicMaterial({
+              color: i % 3 === 0 ? C.core : C.pulse,
+              transparent: true, opacity: 0, depthWrite: false,
+            })
+          );
+          sk.visible = false;
+          group.add(sk);
+          sparks.push(sk);
+        }
+
+        const nDots = (g.dots || []).length;
+        const start = Math.max(0, LOCALITIES.indexOf(TOUR_START));
+        map.tour = {
+          i: 0, t: 0, shown: -1,
+          order: shuffledTour(nDots, start),
+          start: start,
+          count: nDots,
+          ring: ring,
+          plate: plate,
+          flash: flash,
+          sparks: sparks,
+        };
+
         // Border “voiture” + trail
         const car = makeBorderCar();
         car.visible = false;
@@ -244,6 +338,103 @@
         group.scale.setScalar(1.0);
         group.position.set(0, 0, 0);
         scene.add(group);
+      }
+
+      // Coins arrondis à la main : `ctx.roundRect` manque encore sur une
+      // partie des WebView Android visées.
+      function roundedRect(ctx, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(r, 0);
+        ctx.lineTo(w - r, 0);
+        ctx.quadraticCurveTo(w, 0, w, r);
+        ctx.lineTo(w, h - r);
+        ctx.quadraticCurveTo(w, h, w - r, h);
+        ctx.lineTo(r, h);
+        ctx.quadraticCurveTo(0, h, 0, h - r);
+        ctx.lineTo(0, r);
+        ctx.quadraticCurveTo(0, 0, r, 0);
+        ctx.closePath();
+      }
+
+      /// Plaque unique portant le nom de la localité en cours.
+      ///
+      /// Une seule étiquette est visible à la fois : plutôt que 22 textures
+      /// (plusieurs mégaoctets de mémoire graphique pour rien), on garde un
+      /// seul canvas qu'on redessine à chaque changement de localité. Le
+      /// sprite reste face à la caméra malgré l'inclinaison de la carte.
+      function makeLabelPlate(names) {
+        const S = 4;                     // suréchantillonnage : texte net
+        const fs = 30 * S, padX = 22 * S, padY = 12 * S;
+        const font = '700 ' + fs + 'px "Helvetica Neue", Helvetica, Arial, sans-serif';
+
+        const cv = document.createElement('canvas');
+        let ctx = cv.getContext('2d');
+        ctx.font = font;
+        // Le canvas est dimensionné sur le nom le plus long : la plaque
+        // garde une échelle fixe, chaque pastille étant dessinée centrée.
+        let widest = 0;
+        names.forEach((n) => {
+          widest = Math.max(widest, ctx.measureText(n.toUpperCase()).width);
+        });
+        cv.width = Math.ceil(widest + padX * 2);
+        cv.height = Math.ceil(fs + padY * 2);
+
+        const tex = new THREE.CanvasTexture(cv);
+        // Dimensions non puissances de 2 : pas de mipmap possible.
+        tex.minFilter = THREE.LinearFilter;
+        tex.generateMipmaps = false;
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: tex,
+          transparent: true,
+          opacity: 0,
+          depthTest: false,
+          depthWrite: false,
+        }));
+        const h = 0.108;                 // hauteur dans le monde
+        sp.scale.set(h * cv.width / cv.height, h, 1);
+        sp.renderOrder = 10;
+        sp.visible = false;
+
+        function draw(text) {
+          const label = text.toUpperCase();
+          // Redimensionner réinitialiserait le contexte : ici la taille ne
+          // bouge pas, on se contente d'effacer.
+          ctx = cv.getContext('2d');
+          ctx.clearRect(0, 0, cv.width, cv.height);
+          ctx.font = font;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const w = ctx.measureText(label).width + padX * 2;
+          ctx.save();
+          ctx.translate((cv.width - w) / 2, 0);
+          roundedRect(ctx, w, cv.height, cv.height / 2);
+          ctx.fillStyle = '#ef6c00';
+          ctx.fill();
+          ctx.restore();
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(label, cv.width / 2, cv.height / 2 + 2 * S);
+          tex.needsUpdate = true;
+        }
+
+        return {
+          sprite: sp,
+          draw: draw,
+          base: { x: h * cv.width / cv.height, y: h },
+        };
+      }
+
+      // Ordre de passage : Koundoumbain d'abord, puis les autres localités
+      // tirées au hasard. Le tirage est refait à chaque tour complet, si
+      // bien que deux passages ne se ressemblent pas — mais l'ouverture ne
+      // change jamais.
+      function shuffledTour(count, start) {
+        const rest = [];
+        for (let i = 0; i < count; i++) if (i !== start) rest.push(i);
+        for (let i = rest.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          const tmp = rest[i]; rest[i] = rest[j]; rest[j] = tmp;
+        }
+        return [start].concat(rest);
       }
 
       function makeBorderCar() {
@@ -387,6 +578,115 @@
         map.roadPulse.mesh.material.opacity = 0.32;
       }
 
+      /// Fait défiler les localités une par une : la nommée apparaît,
+      /// se maintient, disparaît, puis c'est au tour de la suivante. Le
+      /// cycle repart toujours de Koudoumbain.
+      /// Projette la gerbe : chaque étincelle part du point dans une
+      /// direction et sur une distance tirées au hasard, d'où une gerbe
+      /// différente à chaque localité.
+      function igniteSparks(tour, x, y) {
+        tour.sparks.forEach((sk) => {
+          const a = Math.random() * Math.PI * 2;
+          sk.userData.ax = Math.cos(a);
+          sk.userData.ay = Math.sin(a);
+          sk.userData.reach = 0.055 + Math.random() * 0.095;
+          sk.userData.span = 0.42 + Math.random() * 0.33;
+          sk.userData.life = 0;
+          sk.position.set(x, y, 0.07);
+          sk.scale.setScalar(1);
+          sk.visible = true;
+        });
+        tour.flash.position.x = x;
+        tour.flash.position.y = y;
+        tour.flash.visible = true;
+        tour.flashT = 0;
+      }
+
+      function updateSparks(tour, dt, x, y) {
+        tour.sparks.forEach((sk) => {
+          if (!sk.visible) return;
+          sk.userData.life += dt;
+          const u = sk.userData.life / sk.userData.span;
+          if (u >= 1) {
+            sk.visible = false;
+            sk.material.opacity = 0;
+            return;
+          }
+          // Départ vif puis freinage : le trajet d'une escarbille.
+          const e = easeOutCubic(u);
+          sk.position.x = x + sk.userData.ax * sk.userData.reach * e;
+          sk.position.y = y + sk.userData.ay * sk.userData.reach * e;
+          sk.material.opacity = (1 - u) * 0.92;
+          sk.scale.setScalar(1 - 0.6 * u);
+        });
+
+        if (tour.flash.visible) {
+          tour.flashT += dt;
+          const u = tour.flashT / 0.34;
+          if (u >= 1) {
+            tour.flash.visible = false;
+            tour.flash.material.opacity = 0;
+          } else {
+            tour.flash.material.opacity = (1 - u) * 0.55;
+            tour.flash.scale.setScalar(0.35 + 1.5 * easeOutCubic(u));
+          }
+        }
+      }
+
+      function updateTour(dt) {
+        if (!map.introDone || !map.tour) return;
+        const tour = map.tour;
+        tour.t += dt;
+        if (tour.t >= LB_CYCLE) {
+          tour.t -= LB_CYCLE;
+          tour.i += 1;
+          if (tour.i >= tour.order.length) {
+            // Tour complet : on retire au sort, Koundoumbain rouvre.
+            tour.i = 0;
+            tour.order = shuffledTour(tour.count, tour.start);
+          }
+        }
+
+        const t = tour.t;
+        let k;
+        if (t < LB_IN) k = easeOutCubic(t / LB_IN);
+        else if (t < LB_IN + LB_HOLD) k = 1;
+        else if (t < LB_IN + LB_HOLD + LB_OUT) {
+          k = 1 - easeOutCubic((t - LB_IN - LB_HOLD) / LB_OUT);
+        } else k = 0;
+
+        const active = tour.order[tour.i];
+        const dm = map.dotMeshes[active];
+        if (!dm) return;
+
+        // Changement de localité : le nom est redessiné et la gerbe part.
+        if (tour.shown !== active) {
+          tour.shown = active;
+          tour.plate.draw(LOCALITIES[active]);
+          igniteSparks(tour, dm.position.x, dm.position.y);
+        }
+        updateSparks(tour, dt, dm.position.x, dm.position.y);
+
+        // L'étiquette claque : elle arrive légèrement trop grande et se
+        // pose, au lieu de monter en fondu.
+        const pop = 1 + 0.22 * (1 - easeOutCubic(clamp01(t / 0.34)));
+        const base = tour.plate.base;
+        const sp = tour.plate.sprite;
+        sp.scale.set(base.x * pop, base.y * pop, 1);
+        sp.position.set(dm.position.x, dm.position.y + 0.115, 0.09);
+        sp.material.opacity = k;
+        sp.visible = k > 0.01;
+
+        // La pastille nommée se démarque, avec son anneau d'accent.
+        dm.scale.setScalar(1 + 0.8 * k);
+        dm.material.opacity = 1;
+        tour.ring.position.x = dm.position.x;
+        tour.ring.position.y = dm.position.y;
+        tour.ring.visible = k > 0.01;
+        tour.ring.material.opacity = 0.5 * k;
+        tour.ring.scale.setScalar(0.75 + 0.55 * k);
+      }
+
       function updateAmbient(t) {
         map.riverLines.forEach((l, i) => {
           l.material.opacity = 0.72 + 0.1 * Math.sin(t * 0.65 + i * 0.4);
@@ -404,6 +704,9 @@
         else {
           updatePulse(dt);
           updateRoadPulse(dt);
+          // Après `updatePulse`, qui repasse sur toutes les pastilles : le
+          // parcours doit avoir le dernier mot sur celle qu'il nomme.
+          updateTour(dt);
         }
         updateAmbient(t);
         pointer.x = lerp(pointer.x, pointer.tx, 0.08);
@@ -436,11 +739,100 @@
         group.add(mesh); scene.add(group);
       }
 
+      // --- Scène de l'écran de connexion -------------------------------
+      //
+      // Volontairement sobre et peu coûteuse : elle tourne derrière un
+      // formulaire, sur les téléphones modestes visés par l'app, et ne
+      // doit ni distraire ni chauffer l'appareil. Un anneau lent dans
+      // l'orange de la marque, quelques poussières qui dérivent, et rien
+      // de plus — pas de texture, pas d'ombre, peu de polygones.
+      var authMotes = null;
+
+      function buildAuth() {
+        group = new THREE.Group();
+
+        var ringMat = new THREE.MeshStandardMaterial({
+          color: 0xef6c00,
+          transparent: true,
+          opacity: 0.55,
+          roughness: 0.4,
+          metalness: 0.1,
+        });
+        // 90 segments radiaux suffisent à ce que l'anneau paraisse lisse
+        // à cette taille ; au-delà on paie des polygones invisibles.
+        var ring = new THREE.Mesh(
+          new THREE.TorusGeometry(1.35, 0.045, 12, 90),
+          ringMat
+        );
+        ring.rotation.x = 1.15;
+        ring.rotation.z = 0.25;
+        group.add(ring);
+
+        var innerMat = new THREE.MeshStandardMaterial({
+          color: 0xffa040,
+          transparent: true,
+          opacity: 0.35,
+        });
+        var inner = new THREE.Mesh(
+          new THREE.TorusGeometry(0.85, 0.02, 10, 70),
+          innerMat
+        );
+        inner.rotation.x = 1.35;
+        inner.rotation.y = 0.4;
+        group.add(inner);
+
+        // Poussières : une seule géométrie et un seul matériau partagés
+        // par toutes — 28 maillages de 6 faces, négligeable.
+        authMotes = [];
+        var moteGeo = new THREE.SphereGeometry(0.035, 6, 6);
+        var moteMat = new THREE.MeshStandardMaterial({
+          color: 0xffa040,
+          transparent: true,
+          opacity: 0.7,
+        });
+        for (var i = 0; i < 28; i++) {
+          var mote = new THREE.Mesh(moteGeo, moteMat);
+          mote.position.set(
+            (Math.random() - 0.5) * 4.4,
+            (Math.random() - 0.5) * 2.8,
+            (Math.random() - 0.5) * 2.2
+          );
+          // Chaque poussière garde sa hauteur d'origine et sa cadence :
+          // sans ça elles monteraient et descendraient à l'unisson, ce qui
+          // se voit immédiatement.
+          mote.userData.baseY = mote.position.y;
+          mote.userData.speed = 0.25 + Math.random() * 0.5;
+          mote.userData.phase = Math.random() * Math.PI * 2;
+          authMotes.push(mote);
+          group.add(mote);
+        }
+
+        scene.add(group);
+      }
+
+      function animateAuth(t) {
+        if (group) {
+          // Rotation très lente, et léger balancement piloté par le
+          // doigt : la scène répond sans jamais attirer l'attention.
+          group.rotation.y = t * 0.09 + pointer.x * 0.12;
+          group.rotation.x = pointer.y * 0.06;
+        }
+        if (!authMotes) return;
+        for (var i = 0; i < authMotes.length; i++) {
+          var m = authMotes[i];
+          m.position.y =
+            m.userData.baseY +
+            Math.sin(t * m.userData.speed + m.userData.phase) * 0.16;
+        }
+      }
+
       function mountScene(name) {
         clearScene();
         scene.add(new THREE.AmbientLight(0xffffff, 0.95));
         currentScene = name;
+        authMotes = null;
         if (name === 'welcome') buildWelcomeMap();
+        else if (name === 'auth') buildAuth();
         else if (name === 'connect') buildConnect();
         else if (name === 'explore') buildExplore();
         else buildReady();
@@ -452,6 +844,7 @@
         const dt = Math.min(0.05, clock.getDelta());
         const t = clock.elapsedTime;
         if (currentScene === 'welcome') animateWelcome(dt, t);
+        else if (currentScene === 'auth') animateAuth(t);
         else if (group) {
           group.rotation.y = t * 0.22;
           if (mesh) mesh.rotation.y = t * 0.35;

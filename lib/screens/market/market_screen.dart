@@ -9,6 +9,7 @@ import '../../theme/theme_controller.dart';
 import '../../widgets/feed_image.dart';
 import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
+import 'market_filters_sheet.dart';
 
 class MarketScreen extends GetView<MarketController> {
   const MarketScreen({super.key});
@@ -23,27 +24,57 @@ class MarketScreen extends GetView<MarketController> {
       final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
       final items = controller.items;
       final loading = controller.isLoading.value;
-      final loadingMore = controller.isLoadingMore.value;
+      final view = controller.view.value;
 
       return Scaffold(
         backgroundColor: isDark ? AppColors.black : AppColors.white,
         appBar: FoumbotAppBar(
           isDark: isDark,
-          title: 'Vente & Achat',
+          title: switch (view) {
+            MarketView.grille => 'Vente & Achat',
+            MarketView.mesAnnonces => 'Mes annonces',
+            MarketView.favoris => 'Mes favoris',
+          },
           actions: [
+            IconButton(
+              tooltip: 'Mes alertes',
+              onPressed: controller.openSavedSearches,
+              icon: const Icon(
+                Icons.notifications_active_outlined,
+                color: AppColors.orange,
+              ),
+            ),
+            IconButton(
+              tooltip: 'Mes favoris',
+              onPressed: controller.toggleFavoritesView,
+              icon: Icon(
+                view == MarketView.favoris
+                    ? Icons.favorite
+                    : Icons.favorite_border,
+                color: AppColors.orange,
+              ),
+            ),
+            IconButton(
+              tooltip: 'Mes annonces',
+              onPressed: controller.toggleOnlyMine,
+              icon: Icon(
+                view == MarketView.mesAnnonces ? Icons.sell : Icons.sell_outlined,
+                color: AppColors.orange,
+              ),
+            ),
             IconButton(
               tooltip: 'Thème',
               onPressed: themeController.toggleTheme,
               icon: Icon(
                 isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                color: AppColors.red,
+                color: AppColors.orange,
               ),
             ),
           ],
         ),
         floatingActionButton: FloatingActionButton.extended(
           onPressed: controller.openCreateListing,
-          backgroundColor: AppColors.red,
+          backgroundColor: AppColors.orange,
           foregroundColor: AppColors.white,
           elevation: 4,
           icon: const Icon(Icons.add_rounded),
@@ -67,7 +98,7 @@ class MarketScreen extends GetView<MarketController> {
             ),
           ),
           child: RefreshIndicator(
-            color: AppColors.red,
+            color: AppColors.orange,
             backgroundColor: isDark ? AppColors.blackElevated : AppColors.white,
             onRefresh: controller.refreshListings,
             child: CustomScrollView(
@@ -88,12 +119,16 @@ class MarketScreen extends GetView<MarketController> {
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                             letterSpacing: 1.2,
-                            color: AppColors.red,
+                            color: AppColors.orange,
                           ),
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'Marché local',
+                          switch (view) {
+                            MarketView.grille => 'Marché local',
+                            MarketView.mesAnnonces => 'Ce que j’ai publié',
+                            MarketView.favoris => 'Ce que j’ai mis de côté',
+                          },
                           style: GoogleFonts.spaceGrotesk(
                             fontSize: 26,
                             fontWeight: FontWeight.w700,
@@ -102,7 +137,15 @@ class MarketScreen extends GetView<MarketController> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'Vendez, achetez et proposez vos services entre habitants.',
+                          switch (view) {
+                            MarketView.grille =>
+                              'Vendez, achetez et proposez vos services entre '
+                                  'habitants.',
+                            MarketView.mesAnnonces =>
+                              'Modifiez, relancez ou retirez vos annonces.',
+                            MarketView.favoris =>
+                              'Retrouvez les annonces qui vous intéressent.',
+                          },
                           style: GoogleFonts.manrope(
                             fontSize: 14,
                             height: 1.4,
@@ -111,8 +154,8 @@ class MarketScreen extends GetView<MarketController> {
                         ),
                         const SizedBox(height: 14),
                         _SearchBar(isDark: isDark, ink: ink, muted: muted),
-                        const SizedBox(height: 14),
-                        _TypeFilter(isDark: isDark),
+                        const SizedBox(height: 12),
+                        _FilterRow(isDark: isDark),
                         const SizedBox(height: 10),
                         _CategoryFilter(isDark: isDark),
                         const SizedBox(height: 14),
@@ -123,45 +166,40 @@ class MarketScreen extends GetView<MarketController> {
                 if (loading && items.isEmpty)
                   const SliverFillRemaining(
                     hasScrollBody: false,
-                    child: Center(
-                      child: FoumbotLoader(),
-                    ),
+                    child: Center(child: FoumbotLoader()),
                   )
                 else if (!loading && items.isEmpty)
                   SliverFillRemaining(
                     hasScrollBody: false,
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(32),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.storefront_outlined,
-                                size: 48, color: muted),
-                            const SizedBox(height: 14),
-                            Text(
-                              'Aucune annonce trouvée.',
-                              style:
-                                  GoogleFonts.manrope(fontSize: 16, color: muted),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    child: _EmptyState(view: view, muted: muted, ink: ink),
                   )
                 else
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                    sliver: SliverList.separated(
+                    // Grille 2 colonnes façon Leboncoin. `mainAxisExtent`
+                    // (hauteur fixe en pixels, pas un ratio) garantit que les
+                    // deux colonnes restent alignées quelle que soit la
+                    // largeur de l'écran — et que la carte ne peut jamais
+                    // déborder, son contenu étant lui-même à hauteur bornée.
+                    sliver: SliverGrid.builder(
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                        mainAxisExtent: 272,
+                      ),
                       itemCount: items.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 12),
                       itemBuilder: (context, i) {
                         final item = items[i];
-                        return _MarketCard(
+                        return _MarketGridCard(
                           item: item,
                           isDark: isDark,
-                          timeLabel: controller.timeAgo(item.createdAt),
+                          timeLabel: controller.timeAgo(item.bumpedAt),
+                          isFavorite: controller.isFavorite(item.id),
+                          showOwnerState: view == MarketView.mesAnnonces,
                           onTap: () => controller.openListing(item),
+                          onFavorite: () => controller.toggleFavorite(item),
                         );
                       },
                     ),
@@ -170,13 +208,13 @@ class MarketScreen extends GetView<MarketController> {
                   child: Padding(
                     padding: const EdgeInsets.only(bottom: 80, top: 4),
                     child: Center(
-                      child: loadingMore
+                      child: controller.isLoadingMore.value
                           ? const FoumbotLoader()
                           : (!controller.hasMore.value && items.isNotEmpty)
-                              ? Text(
-                                  'Fin des annonces',
-                                  style: GoogleFonts.manrope(
-                                      fontSize: 13, color: muted),
+                              ? _EndOfGrid(
+                                  isDark: isDark,
+                                  muted: muted,
+                                  onReshuffle: controller.reshuffle,
                                 )
                               : const SizedBox(height: 12),
                     ),
@@ -188,6 +226,129 @@ class MarketScreen extends GetView<MarketController> {
         ),
       );
     });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bas de grille
+//
+// « Fin des annonces » était une impasse : dans une commune on fait vite
+// le tour, et le message donnait l'impression d'un marché vide. Comme
+// l'ordre est de toute façon tiré au sort, rebattre les cartes remet
+// d'autres vendeurs devant — sans une seule requête de plus.
+// ---------------------------------------------------------------------------
+
+class _EndOfGrid extends StatelessWidget {
+  const _EndOfGrid({
+    required this.isDark,
+    required this.muted,
+    required this.onReshuffle,
+  });
+
+  final bool isDark;
+  final Color muted;
+  final VoidCallback onReshuffle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          'Vous avez vu toutes les annonces.',
+          style: GoogleFonts.manrope(fontSize: 13, color: muted),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: onReshuffle,
+          icon: const Icon(Icons.shuffle, size: 18),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.orange,
+            side: BorderSide(color: AppColors.orange.withValues(alpha: 0.5)),
+          ),
+          label: const Text('Rebattre les annonces'),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// État vide
+// ---------------------------------------------------------------------------
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({
+    required this.view,
+    required this.muted,
+    required this.ink,
+  });
+
+  final MarketView view;
+  final Color muted;
+  final Color ink;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = Get.find<MarketController>();
+    final (icon, title, subtitle) = switch (view) {
+      MarketView.favoris => (
+          Icons.favorite_border,
+          'Aucun favori pour l’instant.',
+          'Touchez le cœur d’une annonce pour la retrouver ici.',
+        ),
+      MarketView.mesAnnonces => (
+          Icons.sell_outlined,
+          'Vous n’avez pas encore publié.',
+          'Appuyez sur « Publier » pour proposer un article.',
+        ),
+      MarketView.grille => (
+          Icons.storefront_outlined,
+          'Aucune annonce trouvée.',
+          'Essayez d’élargir vos filtres.',
+        ),
+    };
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 48, color: muted),
+            const SizedBox(height: 14),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.manrope(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: ink,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.manrope(fontSize: 14, color: muted),
+            ),
+            if (view == MarketView.grille &&
+                controller.filters.value.activeCount > 0) ...[
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: controller.clearFilters,
+                child: Text(
+                  'Effacer les filtres',
+                  style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.orange,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -223,6 +384,7 @@ class _SearchBar extends StatelessWidget {
             child: TextField(
               controller: controller.searchCtrl,
               style: GoogleFonts.manrope(color: ink),
+              textInputAction: TextInputAction.search,
               onSubmitted: controller.search,
               decoration: InputDecoration(
                 hintText: 'Moto, terrain, maison, service…',
@@ -231,7 +393,7 @@ class _SearchBar extends StatelessWidget {
               ),
             ),
           ),
-          Obx(() => controller.searchQuery.value.isNotEmpty
+          Obx(() => controller.filters.value.query.isNotEmpty
               ? GestureDetector(
                   onTap: controller.clearSearch,
                   child: Icon(Icons.close, size: 18, color: muted),
@@ -244,11 +406,11 @@ class _SearchBar extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Filtres type (Tout / Ventes / Recherches)
+// Ligne « Filtrer · tri · alerte »
 // ---------------------------------------------------------------------------
 
-class _TypeFilter extends StatelessWidget {
-  const _TypeFilter({required this.isDark});
+class _FilterRow extends StatelessWidget {
+  const _FilterRow({required this.isDark});
 
   final bool isDark;
 
@@ -256,32 +418,99 @@ class _TypeFilter extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = Get.find<MarketController>();
     return Obx(() {
-      final selected = controller.selectedType.value;
-      return Row(
-        children: [
-          _Chip(
-            label: 'Tout',
-            selected: selected == null,
-            isDark: isDark,
-            onTap: () => controller.setType(null),
-          ),
-          const SizedBox(width: 8),
-          _Chip(
-            label: 'Ventes',
-            selected: selected == MarketListingType.vente,
-            isDark: isDark,
-            onTap: () => controller.setType(MarketListingType.vente),
-          ),
-          const SizedBox(width: 8),
-          _Chip(
-            label: 'Recherches',
-            selected: selected == MarketListingType.achat,
-            isDark: isDark,
-            onTap: () => controller.setType(MarketListingType.achat),
-          ),
-        ],
+      final filters = controller.filters.value;
+      final count = filters.activeCount;
+      final isRandom = filters.sort == MarketSort.aleatoire;
+
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            _Action(
+              icon: Icons.tune,
+              label: count > 0 ? 'Filtrer ($count)' : 'Filtrer',
+              highlighted: count > 0,
+              isDark: isDark,
+              onTap: showMarketFiltersSheet,
+            ),
+            const SizedBox(width: 8),
+            _Action(
+              icon: isRandom ? Icons.shuffle : Icons.swap_vert,
+              label: filters.sort.label,
+              highlighted: false,
+              isDark: isDark,
+              // Sur l'ordre aléatoire, l'appui rebat les cartes ; sur les
+              // autres tris il n'y a rien à rebattre, on ouvre les
+              // options.
+              onTap: isRandom ? controller.reshuffle : showMarketFiltersSheet,
+            ),
+            const SizedBox(width: 8),
+            _Action(
+              icon: Icons.notification_add_outlined,
+              label: 'Créer une alerte',
+              highlighted: false,
+              isDark: isDark,
+              onTap: controller.saveCurrentSearch,
+            ),
+          ],
+        ),
       );
     });
+  }
+}
+
+class _Action extends StatelessWidget {
+  const _Action({
+    required this.icon,
+    required this.label,
+    required this.highlighted,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool highlighted;
+  final bool isDark;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = isDark ? AppColors.white : AppColors.black;
+    final fg = highlighted ? AppColors.white : ink;
+    return Material(
+      color: highlighted ? AppColors.orange : Colors.transparent,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color:
+                  highlighted ? AppColors.orange : ink.withValues(alpha: 0.25),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 15, color: fg),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: GoogleFonts.manrope(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: fg,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -298,11 +527,18 @@ class _CategoryFilter extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = Get.find<MarketController>();
     return Obx(() {
-      final selected = controller.selectedCategory.value;
+      final selected = controller.filters.value.category;
       return SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
           children: [
+            _Chip(
+              label: 'Toutes',
+              selected: selected == null,
+              isDark: isDark,
+              onTap: () => controller.setCategory(null),
+            ),
+            const SizedBox(width: 8),
             for (final cat in MarketCategory.values) ...[
               _Chip(
                 label: '${cat.icon} ${cat.label}',
@@ -336,7 +572,7 @@ class _Chip extends StatelessWidget {
   Widget build(BuildContext context) {
     final ink = isDark ? AppColors.white : AppColors.black;
     return Material(
-      color: selected ? AppColors.red : Colors.transparent,
+      color: selected ? AppColors.orange : Colors.transparent,
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
         onTap: onTap,
@@ -346,7 +582,7 @@ class _Chip extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: selected ? AppColors.red : ink.withValues(alpha: 0.25),
+              color: selected ? AppColors.orange : ink.withValues(alpha: 0.25),
             ),
           ),
           child: Text(
@@ -364,338 +600,183 @@ class _Chip extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Card adaptative : texte seul, image + texte, image seule
+// Carte grille façon Leboncoin : photo (ou pastille catégorie) en haut, puis
+// prix, titre sur 2 lignes et ligne « lieu · date ». Hauteur totale fixée par
+// `mainAxisExtent` côté grille ; ici on répartit cette hauteur entre une zone
+// photo extensible et un bloc texte de hauteur fixe, pour que les prix et les
+// dates s'alignent proprement d'une carte à l'autre sur les deux colonnes.
 // ---------------------------------------------------------------------------
 
-class _MarketCard extends StatelessWidget {
-  const _MarketCard({
+class _MarketGridCard extends StatelessWidget {
+  const _MarketGridCard({
     required this.item,
     required this.isDark,
     required this.timeLabel,
+    required this.isFavorite,
+    required this.showOwnerState,
     required this.onTap,
+    required this.onFavorite,
   });
 
   final MarketItem item;
   final bool isDark;
   final String timeLabel;
+  final bool isFavorite;
+
+  /// Dans « Mes annonces » on affiche l'état réel (vendu, expirée) — ces
+  /// annonces ne sont plus visibles nulle part ailleurs.
+  final bool showOwnerState;
+
   final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    if (item.isTextOnly) {
-      return _TextOnlyCard(
-          item: item, isDark: isDark, timeLabel: timeLabel, onTap: onTap);
-    }
-    return _ImageCard(
-        item: item, isDark: isDark, timeLabel: timeLabel, onTap: onTap);
-  }
-}
-
-/// Card sans photo : emoji catégorie en grand à gauche, texte à droite.
-class _TextOnlyCard extends StatelessWidget {
-  const _TextOnlyCard({
-    required this.item,
-    required this.isDark,
-    required this.timeLabel,
-    required this.onTap,
-  });
-
-  final MarketItem item;
-  final bool isDark;
-  final String timeLabel;
-  final VoidCallback onTap;
+  final VoidCallback onFavorite;
 
   @override
   Widget build(BuildContext context) {
     final ink = isDark ? AppColors.white : AppColors.black;
     final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
     final isVente = item.listingType == MarketListingType.vente;
-    final accent = isVente ? AppColors.red : AppColors.blue;
+    final accent = isVente ? AppColors.orange : AppColors.blue;
+    final surface = isDark ? AppColors.blackElevated : AppColors.white;
+    final overlay = showOwnerState
+        ? (item.sold ? 'VENDU' : (item.isExpired ? 'EXPIRÉE' : null))
+        : null;
 
     return Material(
-      color: isDark ? AppColors.blackElevated : AppColors.white,
-      borderRadius: BorderRadius.circular(16),
+      color: surface,
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.all(16),
+        child: DecoratedBox(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: accent.withValues(alpha: 0.18)),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: accent.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Center(
-                  child: Text(
-                    item.category.icon,
-                    style: const TextStyle(fontSize: 26),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        _TypeBadge(label: item.typeLabel, color: accent),
-                        const SizedBox(width: 6),
-                        if (item.condition != null) ...[
-                          _ConditionBadge(
-                              label: item.condition!.label, isDark: isDark),
-                          const SizedBox(width: 6),
-                        ],
-                        const Spacer(),
-                        Text(timeLabel,
-                            style: GoogleFonts.manrope(
-                                fontSize: 11, color: muted)),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      item.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.spaceGrotesk(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        height: 1.2,
-                        color: ink,
-                      ),
-                    ),
-                    if (item.hasDescription) ...[
-                      const SizedBox(height: 5),
-                      Text(
-                        item.description,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.manrope(
-                          fontSize: 13,
-                          height: 1.35,
-                          color: muted,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    _PriceRow(item: item, accent: accent, muted: muted),
-                    const SizedBox(height: 6),
-                    _SellerRow(item: item, ink: ink, muted: muted),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Card avec photo(s) : grande image en haut, contenu en dessous.
-class _ImageCard extends StatelessWidget {
-  const _ImageCard({
-    required this.item,
-    required this.isDark,
-    required this.timeLabel,
-    required this.onTap,
-  });
-
-  final MarketItem item;
-  final bool isDark;
-  final String timeLabel;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final ink = isDark ? AppColors.white : AppColors.black;
-    final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
-    final isVente = item.listingType == MarketListingType.vente;
-    final accent = isVente ? AppColors.red : AppColors.blue;
-
-    return Material(
-      color: isDark ? AppColors.blackElevated : AppColors.white,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: accent.withValues(alpha: 0.18)),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: ink.withValues(alpha: 0.08)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Section image
-              ClipRRect(
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(15)),
+              // Zone photo — occupe la hauteur restante de la carte.
+              Expanded(
                 child: Stack(
+                  fit: StackFit.expand,
                   children: [
-                    AspectRatio(
-                      aspectRatio: item.imageUrls.length == 1 ? 16 / 10 : 4 / 3,
-                      child: item.imageUrls.length == 1
-                          ? FeedNetworkImage(
-                              url: item.imageUrls.first, isDark: isDark)
-                          : _MiniGallery(
-                              urls: item.imageUrls, isDark: isDark),
-                    ),
-                    // Badges sur la photo
-                    Positioned(
-                      top: 10,
-                      left: 10,
-                      child: Row(
-                        children: [
-                          _TypeBadgeSolid(
-                              label: item.typeLabel, color: accent),
-                          if (item.condition != null) ...[
-                            const SizedBox(width: 6),
-                            _TypeBadgeSolid(
-                              label: item.condition!.label,
-                              color: Colors.black87,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    // Prix sur la photo
-                    Positioned(
-                      bottom: 10,
-                      right: 10,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: accent,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          item.priceLabel,
-                          style: GoogleFonts.spaceGrotesk(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.white,
+                    if (item.hasImages)
+                      FeedNetworkImage(url: item.imageUrls.first, isDark: isDark)
+                    else
+                      ColoredBox(
+                        color: accent.withValues(alpha: 0.08),
+                        child: Center(
+                          child: Text(
+                            item.category.icon,
+                            style: const TextStyle(fontSize: 40),
                           ),
                         ),
                       ),
+                    Positioned(
+                      top: 8,
+                      left: 8,
+                      child: _Tag(label: item.typeLabel, color: accent),
                     ),
-                    // Nombre de photos
                     if (item.imageUrls.length > 1)
                       Positioned(
-                        top: 10,
-                        right: 10,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.6),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.photo_library_outlined,
-                                  size: 13, color: Colors.white),
-                              const SizedBox(width: 4),
-                              Text(
-                                '${item.imageUrls.length}',
-                                style: const TextStyle(
-                                  color: Colors.white,
+                        top: 8,
+                        right: 40,
+                        child: _PhotoCount(count: item.imageUrls.length),
+                      ),
+                    if (!showOwnerState)
+                      Positioned(
+                        top: 4,
+                        right: 4,
+                        child: _FavoriteButton(
+                          active: isFavorite,
+                          onTap: onFavorite,
+                        ),
+                      ),
+                    if (overlay != null)
+                      Positioned.fill(
+                        child: ColoredBox(
+                          color: Colors.black.withValues(alpha: 0.45),
+                          child: Center(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.8),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                overlay,
+                                style: GoogleFonts.manrope(
                                   fontSize: 12,
-                                  fontWeight: FontWeight.w700,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1,
+                                  color: Colors.white,
                                 ),
                               ),
-                            ],
+                            ),
                           ),
                         ),
                       ),
                   ],
                 ),
               ),
-              // Section texte
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          item.category.icon,
-                          style: const TextStyle(fontSize: 16),
+              // Bloc texte — hauteur fixe pour un alignement net entre cartes.
+              SizedBox(
+                height: 96,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.priceLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.spaceGrotesk(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: ink,
                         ),
-                        const SizedBox(width: 6),
-                        Text(
-                          item.category.label,
+                      ),
+                      const SizedBox(height: 3),
+                      Expanded(
+                        child: Text(
+                          item.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: GoogleFonts.manrope(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: muted,
+                            fontSize: 12.5,
+                            height: 1.25,
+                            fontWeight: FontWeight.w500,
+                            color: ink.withValues(alpha: 0.85),
                           ),
                         ),
-                        if (item.negotiable) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: accent.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(Icons.location_on_outlined,
+                              size: 12, color: muted),
+                          const SizedBox(width: 2),
+                          Expanded(
                             child: Text(
-                              'Négociable',
+                              item.location.isEmpty ? 'Foumbot' : item.location,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: GoogleFonts.manrope(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                color: accent,
-                              ),
+                                  fontSize: 10.5, color: muted),
                             ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            timeLabel,
+                            style: GoogleFonts.manrope(
+                                fontSize: 10.5, color: muted),
                           ),
                         ],
-                        const Spacer(),
-                        Text(timeLabel,
-                            style: GoogleFonts.manrope(
-                                fontSize: 11, color: muted)),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      item.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.spaceGrotesk(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        height: 1.2,
-                        color: ink,
-                      ),
-                    ),
-                    if (item.hasDescription) ...[
-                      const SizedBox(height: 5),
-                      Text(
-                        item.description,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.manrope(
-                          fontSize: 13,
-                          height: 1.35,
-                          color: muted,
-                        ),
                       ),
                     ],
-                    const SizedBox(height: 10),
-                    _SellerRow(item: item, ink: ink, muted: muted),
-                  ],
+                  ),
                 ),
               ),
             ],
@@ -707,253 +788,91 @@ class _ImageCard extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Mini galerie de preview (montre la première photo, indicateur de nombre)
+// Petits composants posés sur la photo
 // ---------------------------------------------------------------------------
 
-class _MiniGallery extends StatefulWidget {
-  const _MiniGallery({required this.urls, required this.isDark});
+class _FavoriteButton extends StatelessWidget {
+  const _FavoriteButton({required this.active, required this.onTap});
 
-  final List<String> urls;
-  final bool isDark;
-
-  @override
-  State<_MiniGallery> createState() => _MiniGalleryState();
-}
-
-class _MiniGalleryState extends State<_MiniGallery> {
-  final _controller = PageController();
-  int _page = 0;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
+  final bool active;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        PageView.builder(
-          controller: _controller,
-          itemCount: widget.urls.length,
-          onPageChanged: (i) => setState(() => _page = i),
-          physics: const BouncingScrollPhysics(),
-          itemBuilder: (context, i) =>
-              FeedNetworkImage(url: widget.urls[i], isDark: widget.isDark),
-        ),
-        Positioned(
-          bottom: 10,
-          left: 0,
-          right: 0,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              for (var i = 0; i < widget.urls.length; i++)
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  margin: const EdgeInsets.symmetric(horizontal: 2.5),
-                  width: i == _page ? 14 : 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: i == _page
-                        ? Colors.white
-                        : Colors.white.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-            ],
+    return Material(
+      color: Colors.black.withValues(alpha: 0.35),
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Icon(
+            active ? Icons.favorite : Icons.favorite_border,
+            size: 18,
+            color: active ? AppColors.orangeSoft : Colors.white,
           ),
         ),
-      ],
+      ),
     );
   }
 }
 
-// ---------------------------------------------------------------------------
-// Petits composants réutilisés dans les cards
-// ---------------------------------------------------------------------------
-
-class _TypeBadge extends StatelessWidget {
-  const _TypeBadge({required this.label, required this.color});
+class _Tag extends StatelessWidget {
+  const _Tag({required this.label, required this.color});
 
   final String label;
   final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        label.toUpperCase(),
-        style: GoogleFonts.manrope(
-          fontSize: 10,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.5,
-          color: color,
-        ),
-      ),
-    );
-  }
-}
-
-class _TypeBadgeSolid extends StatelessWidget {
-  const _TypeBadgeSolid({required this.label, required this.color});
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        label.toUpperCase(),
-        style: GoogleFonts.manrope(
-          fontSize: 10,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.5,
-          color: Colors.white,
-        ),
-      ),
-    );
-  }
-}
-
-class _ConditionBadge extends StatelessWidget {
-  const _ConditionBadge({required this.label, required this.isDark});
-
-  final String label;
-  final bool isDark;
-
-  @override
-  Widget build(BuildContext context) {
-    final ink = isDark ? AppColors.white : AppColors.black;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
-        color: ink.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(8),
+        color: color,
+        borderRadius: BorderRadius.circular(7),
       ),
       child: Text(
-        label,
+        label.toUpperCase(),
         style: GoogleFonts.manrope(
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          color: ink.withValues(alpha: 0.6),
+          fontSize: 9,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.5,
+          color: AppColors.white,
         ),
       ),
     );
   }
 }
 
-class _PriceRow extends StatelessWidget {
-  const _PriceRow({
-    required this.item,
-    required this.accent,
-    required this.muted,
-  });
+class _PhotoCount extends StatelessWidget {
+  const _PhotoCount({required this.count});
 
-  final MarketItem item;
-  final Color accent;
-  final Color muted;
+  final int count;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Text(
-          item.priceLabel,
-          style: GoogleFonts.spaceGrotesk(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: accent,
-          ),
-        ),
-        if (item.negotiable) ...[
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: accent.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              'Négociable',
-              style: GoogleFonts.manrope(
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: accent,
-              ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.photo_library_outlined, size: 11, color: Colors.white),
+          const SizedBox(width: 3),
+          Text(
+            '$count',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
-      ],
-    );
-  }
-}
-
-class _SellerRow extends StatelessWidget {
-  const _SellerRow({
-    required this.item,
-    required this.ink,
-    required this.muted,
-  });
-
-  final MarketItem item;
-  final Color ink;
-  final Color muted;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        CircleAvatar(
-          radius: 11,
-          backgroundColor: AppColors.red.withValues(alpha: 0.12),
-          child: Text(
-            item.sellerName.isNotEmpty
-                ? item.sellerName[0].toUpperCase()
-                : '?',
-            style: GoogleFonts.spaceGrotesk(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: AppColors.red,
-            ),
-          ),
-        ),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            item.sellerName,
-            style: GoogleFonts.manrope(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: ink,
-            ),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Icon(Icons.location_on_outlined, size: 13, color: muted),
-        const SizedBox(width: 3),
-        Flexible(
-          child: Text(
-            item.location,
-            style: GoogleFonts.manrope(fontSize: 12, color: muted),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
+      ),
     );
   }
 }

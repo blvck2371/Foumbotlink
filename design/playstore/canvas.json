@@ -1,0 +1,21 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html",     "x": 0,    "y": 0,    "w": 1024, "h": 500,  "title": "Grand visuel Play Store — 1024×500" },
+    { "file": "Icone.dc.html",    "x": 1144, "y": 0,    "w": 512,  "h": 512,  "title": "Icône haute résolution — 512×512" },
+    { "file": "Capture1.dc.html", "x": 0,    "y": 700,  "w": 1080, "h": 1920, "title": "Capture 1 — Fil d’actualité" },
+    { "file": "Capture2.dc.html", "x": 1200, "y": 700,  "w": 1080, "h": 1920, "title": "Capture 2 — Vente & Achats" },
+    { "file": "Capture3.dc.html", "x": 2400, "y": 700,  "w": 1080, "h": 1920, "title": "Capture 3 — Démarches" },
+    { "file": "Capture4.dc.html", "x": 3600, "y": 700,  "w": 1080, "h": 1920, "title": "Capture 4 — Messages" },
+    { "file": "Flyer.dc.html",    "x": 0,    "y": 2800, "w": 794,  "h": 1123, "title": "Flyer A4 (impression)", "print": "fixed" }
+  ],
+  "annotations": [
+    {
+      "id": "formats",
+      "x": -360,
+      "y": 0,
+      "w": 300,
+      "text": "Formats Play Store\n\n• Grand visuel : 1024×500\n• Icône : 512×512 (PNG sans transparence)\n• Captures : 1080×1920, 2 minimum, 8 maximum\n• Flyer : A4 à 96 ppp — à réexporter en 300 ppp pour l’imprimeur\n\nLe tracé de la carte vient de assets/web/map_geometry.js : c’est la vraie limite communale, avec ses routes et ses cours d’eau."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

@@ -3,7 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../theme/app_colors.dart';
 
-/// AppBar Foumbot — rouge / blanc / noir, titre Space Grotesk.
+/// AppBar Foumbot — orange / blanc / noir, titre Space Grotesk.
 class FoumbotAppBar extends StatelessWidget implements PreferredSizeWidget {
   const FoumbotAppBar({
     super.key,

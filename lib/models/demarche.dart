@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 enum DemarcheCategory {
   etatCivil,
   identite,
@@ -22,9 +24,137 @@ enum DemarcheCategory {
       };
 }
 
+/// Une démarche telle qu'une structure la publie.
+///
+/// Le contenu n'est plus figé dans l'application : chaque structure
+/// validée décrit **ses** démarches, avec ses pièces, ses tarifs et ses
+/// délais. Une mairie, une préfecture et une sous-préfecture n'ont ni les
+/// mêmes guichets ni les mêmes prix, et une liste unique codée en dur
+/// donnait forcément tort à quelqu'un.
+///
+/// Stocké dans `demarches/{id}` — lecture publique (c'est un service au
+/// public), écriture réservée à la structure propriétaire.
 class Demarche {
   const Demarche({
     required this.id,
+    required this.structureUid,
+    required this.structureName,
+    required this.category,
+    required this.title,
+    required this.description,
+    required this.documents,
+    required this.lieu,
+    required this.cout,
+    required this.delai,
+    required this.etapes,
+    this.createdAt,
+    this.updatedAt,
+  });
+
+  final String id;
+
+  /// Compte structure qui publie la démarche — seul habilité à la
+  /// modifier, et affiché à l'habitant pour qu'il sache à quel guichet
+  /// il s'adresse.
+  final String structureUid;
+  final String structureName;
+
+  final DemarcheCategory category;
+  final String title;
+  final String description;
+  final List<String> documents;
+  final String lieu;
+  final String cout;
+  final String delai;
+  final List<String> etapes;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
+  factory Demarche.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final d = doc.data() ?? const <String, dynamic>{};
+    return Demarche(
+      id: doc.id,
+      structureUid: d['structureUid'] as String? ?? '',
+      structureName: d['structureName'] as String? ?? 'Structure',
+      category: _categoryFrom(d['category'] as String?),
+      title: d['title'] as String? ?? '',
+      description: d['description'] as String? ?? '',
+      documents: _stringList(d['documents']),
+      lieu: d['lieu'] as String? ?? '',
+      cout: d['cout'] as String? ?? '',
+      delai: d['delai'] as String? ?? '',
+      etapes: _stringList(d['etapes']),
+      createdAt: (d['createdAt'] as Timestamp?)?.toDate(),
+      updatedAt: (d['updatedAt'] as Timestamp?)?.toDate(),
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+    'structureUid': structureUid,
+    'structureName': structureName,
+    'category': category.name,
+    'title': title,
+    'description': description,
+    'documents': documents,
+    'lieu': lieu,
+    'cout': cout,
+    'delai': delai,
+    'etapes': etapes,
+  };
+
+  Demarche copyWith({
+    String? structureName,
+    DemarcheCategory? category,
+    String? title,
+    String? description,
+    List<String>? documents,
+    String? lieu,
+    String? cout,
+    String? delai,
+    List<String>? etapes,
+  }) {
+    return Demarche(
+      id: id,
+      structureUid: structureUid,
+      structureName: structureName ?? this.structureName,
+      category: category ?? this.category,
+      title: title ?? this.title,
+      description: description ?? this.description,
+      documents: documents ?? this.documents,
+      lieu: lieu ?? this.lieu,
+      cout: cout ?? this.cout,
+      delai: delai ?? this.delai,
+      etapes: etapes ?? this.etapes,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
+  }
+
+  /// Une catégorie inconnue (ajoutée par une version plus récente de
+  /// l'app) ne doit pas faire disparaître la démarche : elle retombe sur
+  /// « État civil » plutôt que de lever.
+  static DemarcheCategory _categoryFrom(String? name) =>
+      DemarcheCategory.values.firstWhere(
+        (c) => c.name == name,
+        orElse: () => DemarcheCategory.etatCivil,
+      );
+
+  static List<String> _stringList(Object? raw) => switch (raw) {
+    final List<dynamic> list =>
+      list.map((e) => e.toString()).where((e) => e.isNotEmpty).toList(),
+    _ => const <String>[],
+  };
+}
+
+/// Modèle de démarche prêt à l'emploi.
+///
+/// Ce sont les démarches courantes de l'administration camerounaise,
+/// conservées **uniquement comme point de départ** : une structure peut
+/// les importer d'un geste puis corriger ses propres tarifs, lieux et
+/// délais. Rien ici n'est affiché à l'habitant tant qu'une structure ne
+/// l'a pas repris à son compte.
+class DemarcheModele {
+  const DemarcheModele({
     required this.category,
     required this.title,
     required this.description,
@@ -35,7 +165,6 @@ class Demarche {
     required this.etapes,
   });
 
-  final String id;
   final DemarcheCategory category;
   final String title;
   final String description;
@@ -45,9 +174,9 @@ class Demarche {
   final String delai;
   final List<String> etapes;
 
-  static final all = <Demarche>[
-    const Demarche(
-      id: 'acte-naissance',
+  static const catalogue = <DemarcheModele>[
+
+    DemarcheModele(
       category: DemarcheCategory.etatCivil,
       title: 'Acte de naissance',
       description:
@@ -69,8 +198,7 @@ class Demarche {
         'Retirer l’acte de naissance au guichet',
       ],
     ),
-    const Demarche(
-      id: 'acte-mariage',
+    DemarcheModele(
       category: DemarcheCategory.etatCivil,
       title: 'Acte de mariage',
       description:
@@ -94,8 +222,7 @@ class Demarche {
         'Délivrance de l’acte de mariage',
       ],
     ),
-    const Demarche(
-      id: 'acte-deces',
+    DemarcheModele(
       category: DemarcheCategory.etatCivil,
       title: 'Acte de décès',
       description:
@@ -116,8 +243,7 @@ class Demarche {
         'Retirer l’acte de décès',
       ],
     ),
-    const Demarche(
-      id: 'certificat-residence',
+    DemarcheModele(
       category: DemarcheCategory.etatCivil,
       title: 'Certificat de résidence',
       description:
@@ -137,8 +263,7 @@ class Demarche {
         'Retirer le certificat',
       ],
     ),
-    const Demarche(
-      id: 'cni',
+    DemarcheModele(
       category: DemarcheCategory.identite,
       title: 'Carte nationale d’identité',
       description:
@@ -162,8 +287,7 @@ class Demarche {
         'Retirer la CNI au commissariat',
       ],
     ),
-    const Demarche(
-      id: 'passeport',
+    DemarcheModele(
       category: DemarcheCategory.identite,
       title: 'Passeport',
       description:
@@ -188,8 +312,7 @@ class Demarche {
         'Retrait du passeport après notification',
       ],
     ),
-    const Demarche(
-      id: 'certificat-nationalite',
+    DemarcheModele(
       category: DemarcheCategory.identite,
       title: 'Certificat de nationalité',
       description:
@@ -213,8 +336,7 @@ class Demarche {
         'Retirer le certificat au greffe',
       ],
     ),
-    const Demarche(
-      id: 'legalisation',
+    DemarcheModele(
       category: DemarcheCategory.justice,
       title: 'Légalisation de documents',
       description:
@@ -235,8 +357,7 @@ class Demarche {
         'Le document est légalisé et tamponné',
       ],
     ),
-    const Demarche(
-      id: 'casier-judiciaire',
+    DemarcheModele(
       category: DemarcheCategory.justice,
       title: 'Casier judiciaire (bulletin n°3)',
       description:
@@ -258,8 +379,7 @@ class Demarche {
         'Retirer le bulletin au greffe',
       ],
     ),
-    const Demarche(
-      id: 'permis-batir',
+    DemarcheModele(
       category: DemarcheCategory.urbanisme,
       title: 'Permis de bâtir',
       description:
@@ -282,8 +402,7 @@ class Demarche {
         'Délivrance du permis après approbation',
       ],
     ),
-    const Demarche(
-      id: 'titre-foncier',
+    DemarcheModele(
       category: DemarcheCategory.urbanisme,
       title: 'Titre foncier',
       description:
@@ -306,8 +425,7 @@ class Demarche {
         'Délivrance du titre foncier',
       ],
     ),
-    const Demarche(
-      id: 'bourse-scolaire',
+    DemarcheModele(
       category: DemarcheCategory.education,
       title: 'Bourse scolaire',
       description:
@@ -331,7 +449,4 @@ class Demarche {
       ],
     ),
   ];
-
-  static List<Demarche> byCategory(DemarcheCategory cat) =>
-      all.where((d) => d.category == cat).toList();
 }

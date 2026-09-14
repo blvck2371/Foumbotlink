@@ -42,7 +42,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   /// Au repos : carte centrée.
   /// 0↔1 : parallax + skew + fondu
-  /// 1↔2 : dissolve cinématique (profondeur, voile rouge, parallax)
+  /// 1↔2 : dissolve cinématique (profondeur, voile orange, parallax)
   _SwipeFx _fxFor(double page) {
     final p = page.clamp(0.0, 2.0);
     final nearest = p.roundToDouble();
@@ -186,7 +186,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                                       ),
                                       radius: 1.15,
                                       colors: [
-                                        AppColors.red.withValues(
+                                        AppColors.orange.withValues(
                                           alpha: fx.accentVeil,
                                         ),
                                         (isDark
@@ -321,7 +321,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                             width: i == index ? 28 : 10,
                             decoration: BoxDecoration(
                               color: i == index
-                                  ? AppColors.red
+                                  ? AppColors.orange
                                   : ink.withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(4),
                             ),
@@ -497,7 +497,7 @@ class _OnboardingBackdrop extends StatelessWidget {
               alignment: Alignment(1.15 + shift, -0.2),
               child: _GlowOrb(
                 size: 240,
-                color: AppColors.red.withValues(alpha: isDark ? 0.18 : 0.10),
+                color: AppColors.orange.withValues(alpha: isDark ? 0.18 : 0.10),
               ),
             ),
           ],
@@ -513,7 +513,7 @@ class _OnboardingBackdrop extends StatelessWidget {
               alignment: Alignment(-0.95 + shift, 0.1),
               child: _GlowOrb(
                 size: 180,
-                color: AppColors.red.withValues(alpha: isDark ? 0.12 : 0.07),
+                color: AppColors.orange.withValues(alpha: isDark ? 0.12 : 0.07),
               ),
             ),
           ],
@@ -578,7 +578,7 @@ class _TopBar extends StatelessWidget {
             onPressed: onToggleTheme,
             icon: Icon(
               isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-              color: AppColors.red,
+              color: AppColors.orange,
             ),
           ),
           if (!isLast)
@@ -698,7 +698,7 @@ class _CtaButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: AppColors.red,
+      color: AppColors.orange,
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onPressed,

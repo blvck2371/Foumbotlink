@@ -30,5 +30,9 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Foumbot Link a besoin du micro pour les appels.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Foumbot Link a besoin de la caméra pour les appels vidéo.</string>
 </dict>
 </plist>

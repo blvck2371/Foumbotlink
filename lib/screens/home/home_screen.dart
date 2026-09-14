@@ -11,9 +11,16 @@ import '../../services/auth_service.dart';
 import '../../services/user_profile_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
+import '../../widgets/expandable_text.dart';
 import '../../widgets/feed_image.dart';
+import '../../widgets/feed_skeleton.dart';
+import '../../widgets/post_media.dart';
 import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
+import '../../widgets/status_bar.dart';
+import '../../widgets/post_actions_menu.dart';
+import '../../widgets/repost_banner.dart';
+import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
 import '../../widgets/weather_badge.dart';
 
@@ -24,15 +31,14 @@ class HomeScreen extends GetView<HomeController> {
   Widget build(BuildContext context) {
     final themeController = Get.find<ThemeController>();
 
+    // `Obx` volontairement resserré au thème seul : la coque (Scaffold,
+    // AppBar, drawer, dégradé) ne se reconstruit que sur bascule de thème.
+    // Le fil et le badge de notifications ont chacun leur propre `Obx` plus
+    // bas — sans ça, chaque post/like/notif reconstruisait tout l'écran.
     return Obx(() {
       final isDark = themeController.isDarkMode;
       final ink = isDark ? AppColors.white : AppColors.black;
       final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
-      final unread = controller.unreadNotifications.value;
-      final items = controller.items;
-      final loading = controller.isLoading.value;
-      final loadingMore = controller.isLoadingMore.value;
-      final filter = controller.filter.value;
 
       return Scaffold(
         backgroundColor: isDark ? AppColors.black : AppColors.white,
@@ -42,26 +48,29 @@ class HomeScreen extends GetView<HomeController> {
             IconButton(
               tooltip: 'Notifications',
               onPressed: controller.openNotifications,
-              icon: Badge(
-                isLabelVisible: unread > 0,
-                label: Text(
-                  '$unread',
-                  style: GoogleFonts.manrope(
-                    color: AppColors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
+              icon: Obx(() {
+                final unread = controller.unreadNotifications.value;
+                return Badge(
+                  isLabelVisible: unread > 0,
+                  label: Text(
+                    '$unread',
+                    style: GoogleFonts.manrope(
+                      color: AppColors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-                backgroundColor: AppColors.red,
-                child: Icon(Icons.notifications_outlined, color: ink),
-              ),
+                  backgroundColor: AppColors.orange,
+                  child: Icon(Icons.notifications_outlined, color: ink),
+                );
+              }),
             ),
             IconButton(
               tooltip: 'Thème',
               onPressed: controller.toggleTheme,
               icon: Icon(
                 isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                color: AppColors.red,
+                color: AppColors.orange,
               ),
             ),
             WeatherBadge(isDark: isDark),
@@ -94,124 +103,124 @@ class HomeScreen extends GetView<HomeController> {
             ),
           ),
           child: RefreshIndicator(
-            color: AppColors.red,
+            color: AppColors.orange,
             backgroundColor: isDark ? AppColors.blackElevated : AppColors.white,
             onRefresh: controller.refreshFeed,
-            child: CustomScrollView(
-              controller: controller.scrollController,
-              physics: const AlwaysScrollableScrollPhysics(
-                parent: BouncingScrollPhysics(),
-              ),
-              slivers: [
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'COMMUNE DE FOUMBOT',
-                          style: GoogleFonts.manrope(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 1.2,
-                            color: AppColors.red,
+            child: Obx(() {
+              final items = controller.items;
+              final loading = controller.isLoading.value;
+              final loadingMore = controller.isLoadingMore.value;
+              final filter = controller.filter.value;
+              return CustomScrollView(
+                controller: controller.scrollController,
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
+                ),
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'COMMUNE DE FOUMBOT',
+                            style: GoogleFonts.manrope(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.2,
+                              color: AppColors.orange,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Fil d’actualité',
-                          style: GoogleFonts.spaceGrotesk(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w700,
-                            color: ink,
+                          const SizedBox(height: 8),
+                          Text(
+                            'Fil d’actualité',
+                            style: GoogleFonts.spaceGrotesk(
+                              fontSize: 28,
+                              fontWeight: FontWeight.w700,
+                              color: ink,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Infos, annonces et publications des habitants — likez et commentez.',
-                          style: GoogleFonts.manrope(
-                            fontSize: 16,
-                            height: 1.45,
-                            color: muted,
+                          const SizedBox(height: 6),
+                          Text(
+                            'Infos, annonces et publications des habitants — likez et commentez.',
+                            style: GoogleFonts.manrope(
+                              fontSize: 16,
+                              height: 1.45,
+                              color: muted,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        _ComposerEntry(
-                          isDark: isDark,
-                          onTap: controller.openCompose,
-                        ),
-                        const SizedBox(height: 16),
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            children: [
-                              _FilterChip(
-                                label: 'Tout',
-                                selected: filter == FeedFilter.all,
-                                isDark: isDark,
-                                onTap: () =>
-                                    controller.setFilter(FeedFilter.all),
-                              ),
-                              const SizedBox(width: 8),
-                              _FilterChip(
-                                label: 'Infos',
-                                selected: filter == FeedFilter.infos,
-                                isDark: isDark,
-                                onTap: () =>
-                                    controller.setFilter(FeedFilter.infos),
-                              ),
-                              const SizedBox(width: 8),
-                              _FilterChip(
-                                label: 'Annonces',
-                                selected: filter == FeedFilter.annonces,
-                                isDark: isDark,
-                                onTap: () =>
-                                    controller.setFilter(FeedFilter.annonces),
-                              ),
-                              const SizedBox(width: 8),
-                              _FilterChip(
-                                label: 'Population',
-                                selected: filter == FeedFilter.population,
-                                isDark: isDark,
-                                onTap: () => controller
-                                    .setFilter(FeedFilter.population),
-                              ),
-                              const SizedBox(width: 8),
-                              _FilterChip(
-                                label: 'Vente & Achats',
-                                selected: filter == FeedFilter.venteAchat,
-                                isDark: isDark,
-                                onTap: () => controller
-                                    .setFilter(FeedFilter.venteAchat),
-                              ),
-                            ],
+                          const SizedBox(height: 16),
+                          _ComposerEntry(
+                            isDark: isDark,
+                            onTap: controller.openCompose,
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 16),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                _FilterChip(
+                                  label: 'Tout',
+                                  selected: filter == FeedFilter.all,
+                                  isDark: isDark,
+                                  onTap: () =>
+                                      controller.setFilter(FeedFilter.all),
+                                ),
+                                const SizedBox(width: 8),
+                                _FilterChip(
+                                  label: 'Population',
+                                  selected: filter == FeedFilter.population,
+                                  isDark: isDark,
+                                  onTap: () => controller.setFilter(
+                                    FeedFilter.population,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                _FilterChip(
+                                  label: 'Vente & Achats',
+                                  selected: filter == FeedFilter.venteAchat,
+                                  isDark: isDark,
+                                  onTap: () => controller.setFilter(
+                                    FeedFilter.venteAchat,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                if (controller.isMarketMode) ...[
-                  ..._buildMarketSliver(
-                    controller: controller,
-                    isDark: isDark,
-                    muted: muted,
-                    loading: loading,
-                    loadingMore: loadingMore,
-                  ),
-                ] else ...[
-                  ..._buildFeedSliver(
-                    controller: controller,
-                    items: items,
-                    isDark: isDark,
-                    muted: muted,
-                    loading: loading,
-                    loadingMore: loadingMore,
-                  ),
+                  // Barre de statuts, hors de l'en-tête pour qu'elle
+                  // défile d'un bord à l'autre : enfermée dans la marge
+                  // de 20 px du titre, on ne pouvait pas la faire glisser
+                  // jusqu'au bord de l'écran. Réservée au fil : l'onglet
+                  // « Vente & Achats » montre des annonces, pas l'humeur
+                  // du jour.
+                  if (!controller.isMarketMode)
+                    SliverToBoxAdapter(child: StatusBar(isDark: isDark)),
+                  if (controller.isMarketMode) ...[
+                    ..._buildMarketSliver(
+                      controller: controller,
+                      isDark: isDark,
+                      muted: muted,
+                      loading: loading,
+                      loadingMore: loadingMore,
+                    ),
+                  ] else ...[
+                    ..._buildFeedSliver(
+                      controller: controller,
+                      items: items,
+                      isDark: isDark,
+                      muted: muted,
+                      loading: loading,
+                      loadingMore: loadingMore,
+                    ),
+                  ],
                 ],
-              ],
-            ),
+              );
+            }),
           ),
         ),
       );
@@ -229,9 +238,17 @@ List<Widget> _buildFeedSliver({
 }) {
   return [
     if (loading && items.isEmpty)
-      const SliverFillRemaining(
-        hasScrollBody: false,
-        child: Center(child: FoumbotLoader()),
+      // Trois cartes fantômes plutôt qu'une roue centrée : la mise en page
+      // du fil est déjà là quand le contenu arrive, au lieu d'un écran
+      // vide qui bascule d'un coup.
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        sliver: SliverList.separated(
+          itemCount: 3,
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
+          itemBuilder: (_, i) =>
+              FeedCardSkeleton(isDark: isDark, hasImage: i == 1),
+        ),
       )
     else if (!loading && items.isEmpty)
       SliverFillRemaining(
@@ -252,12 +269,14 @@ List<Widget> _buildFeedSliver({
           itemBuilder: (context, i) {
             final item = items[i];
             return _FeedCard(
+              key: ValueKey(item.id),
               item: item,
               isDark: isDark,
               timeLabel: controller.timeAgo(item.publishedAt),
               onOpen: () => controller.openPost(item),
               onLike: () => controller.toggleLike(item.id),
               onComment: () => controller.openPost(item),
+              onRepost: () => controller.repostPost(item),
             );
           },
         ),
@@ -269,15 +288,86 @@ List<Widget> _buildFeedSliver({
           child: loadingMore
               ? const FoumbotLoader()
               : (!controller.hasMore.value && items.isNotEmpty)
-                  ? Text(
-                      'Fin du fil d’actualité',
-                      style: GoogleFonts.manrope(fontSize: 13, color: muted),
-                    )
-                  : const SizedBox(height: 12),
+              ? _FeedEndCard(
+                  isDark: isDark,
+                  muted: muted,
+                  onReshuffle: controller.reshuffleFeed,
+                )
+              : const SizedBox(height: 12),
         ),
       ),
     ),
   ];
+}
+
+/// Bas du fil.
+///
+/// Dans une commune, on a vite fait le tour des publications : un simple
+/// « Fin du fil d'actualité » donne l'impression d'une app vide. On
+/// propose plutôt de rebattre l'ordre — les publications déjà chargées
+/// reviennent dans un autre agencement, sans une seule requête de plus.
+class _FeedEndCard extends StatelessWidget {
+  const _FeedEndCard({
+    required this.isDark,
+    required this.muted,
+    required this.onReshuffle,
+  });
+
+  final bool isDark;
+  final Color muted;
+  final VoidCallback onReshuffle;
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = isDark ? AppColors.white : AppColors.black;
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        children: [
+          const Icon(
+            Icons.check_circle_outline,
+            size: 28,
+            color: AppColors.orange,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Vous êtes à jour',
+            style: GoogleFonts.spaceGrotesk(
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              color: ink,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            'Vous avez vu toutes les publications récentes.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.manrope(
+              fontSize: 13.5,
+              height: 1.4,
+              color: muted,
+            ),
+          ),
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+            onPressed: onReshuffle,
+            icon: const Icon(Icons.shuffle, size: 18),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.orange,
+              side: BorderSide(color: AppColors.orange.withValues(alpha: 0.5)),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+            ),
+            label: const Text('Revoir le fil autrement'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 List<Widget> _buildMarketSliver({
@@ -290,9 +380,14 @@ List<Widget> _buildMarketSliver({
   final items = controller.marketItems;
   return [
     if (loading && items.isEmpty)
-      const SliverFillRemaining(
-        hasScrollBody: false,
-        child: Center(child: FoumbotLoader()),
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        sliver: SliverList.separated(
+          itemCount: 3,
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
+          itemBuilder: (_, i) =>
+              FeedCardSkeleton(isDark: isDark, hasImage: i != 2),
+        ),
       )
     else if (!loading && items.isEmpty)
       SliverFillRemaining(
@@ -329,17 +424,17 @@ List<Widget> _buildMarketSliver({
         ),
       ),
     SliverToBoxAdapter(
+      // Pas de mention de fin ici : sous cet onglet, les annonces sont
+      // servies en une fenêtre unique (`MarketService.fetchWindow`), donc
+      // `hasMore` est faux dès le premier affichage. Un « Fin des
+      // annonces » collé sous trois articles laisserait croire que la
+      // commune n'a rien de plus à proposer.
       child: Padding(
         padding: const EdgeInsets.only(bottom: 28, top: 4),
         child: Center(
           child: loadingMore
               ? const FoumbotLoader()
-              : (!controller.hasMore.value && items.isNotEmpty)
-                  ? Text(
-                      'Fin des annonces',
-                      style: GoogleFonts.manrope(fontSize: 13, color: muted),
-                    )
-                  : const SizedBox(height: 12),
+              : const SizedBox(height: 12),
         ),
       ),
     ),
@@ -374,8 +469,8 @@ class _ComposerEntry extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 18,
-                backgroundColor: AppColors.red.withValues(alpha: 0.15),
-                child: Icon(Icons.person_outline, color: AppColors.red),
+                backgroundColor: AppColors.orange.withValues(alpha: 0.15),
+                child: Icon(Icons.person_outline, color: AppColors.orange),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -395,7 +490,7 @@ class _ComposerEntry extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              Icon(Icons.add_circle, color: AppColors.red, size: 26),
+              Icon(Icons.add_circle, color: AppColors.orange, size: 26),
             ],
           ),
         ),
@@ -421,7 +516,7 @@ class _FilterChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final ink = isDark ? AppColors.white : AppColors.black;
     return Material(
-      color: selected ? AppColors.red : Colors.transparent,
+      color: selected ? AppColors.orange : Colors.transparent,
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
         onTap: onTap,
@@ -431,9 +526,7 @@ class _FilterChip extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: selected
-                  ? AppColors.red
-                  : ink.withValues(alpha: 0.25),
+              color: selected ? AppColors.orange : ink.withValues(alpha: 0.25),
             ),
           ),
           child: Text(
@@ -452,12 +545,14 @@ class _FilterChip extends StatelessWidget {
 
 class _FeedCard extends StatelessWidget {
   const _FeedCard({
+    super.key,
     required this.item,
     required this.isDark,
     required this.timeLabel,
     required this.onOpen,
     required this.onLike,
     required this.onComment,
+    required this.onRepost,
   });
 
   final FeedItem item;
@@ -466,13 +561,14 @@ class _FeedCard extends StatelessWidget {
   final VoidCallback onOpen;
   final VoidCallback onLike;
   final VoidCallback onComment;
+  final VoidCallback onRepost;
 
   @override
   Widget build(BuildContext context) {
     final ink = isDark ? AppColors.white : AppColors.black;
     final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
     final badgeColor = switch (item.type) {
-      FeedType.annonce => AppColors.red,
+      FeedType.annonce => AppColors.orange,
       FeedType.info => AppColors.blue,
       FeedType.post => AppColors.blue,
     };
@@ -487,9 +583,7 @@ class _FeedCard extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: badgeColor.withValues(alpha: 0.2),
-            ),
+            border: Border.all(color: badgeColor.withValues(alpha: 0.2)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -500,23 +594,17 @@ class _FeedCard extends StatelessWidget {
                     onTap: item.authorUid.isEmpty
                         ? null
                         : () => Get.toNamed(
-                              AppRoutes.userProfile,
-                              arguments: item.authorUid,
-                              preventDuplicates: false,
-                            ),
+                            AppRoutes.userProfile,
+                            arguments: item.authorUid,
+                            preventDuplicates: false,
+                          ),
                     behavior: HitTestBehavior.opaque,
-                    child: CircleAvatar(
+                    child: UserAvatar(
+                      name: item.authorName,
+                      photoUrl: item.authorPhotoUrl,
                       radius: 20,
                       backgroundColor: badgeColor.withValues(alpha: 0.15),
-                      child: Text(
-                        item.authorName.isNotEmpty
-                            ? item.authorName[0].toUpperCase()
-                            : '?',
-                        style: GoogleFonts.spaceGrotesk(
-                          fontWeight: FontWeight.w700,
-                          color: badgeColor,
-                        ),
-                      ),
+                      foregroundColor: badgeColor,
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -525,10 +613,10 @@ class _FeedCard extends StatelessWidget {
                       onTap: item.authorUid.isEmpty
                           ? null
                           : () => Get.toNamed(
-                                AppRoutes.userProfile,
-                                arguments: item.authorUid,
-                                preventDuplicates: false,
-                              ),
+                              AppRoutes.userProfile,
+                              arguments: item.authorUid,
+                              preventDuplicates: false,
+                            ),
                       behavior: HitTestBehavior.opaque,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -552,7 +640,8 @@ class _FeedCard extends StatelessWidget {
                             ],
                           ),
                           Text(
-                            '${item.authorSubtitle} · $timeLabel',
+                            '${item.authorSubtitle} · $timeLabel'
+                            '${item.isEdited ? ' · modifié' : ''}',
                             style: GoogleFonts.manrope(
                               fontSize: 12,
                               color: muted,
@@ -581,44 +670,63 @@ class _FeedCard extends StatelessWidget {
                       ),
                     ),
                   ),
+                  _SaveButton(post: item, muted: muted),
+                  PostActionsMenu(post: item, isDark: isDark),
                 ],
               ),
+              if (item.isRepost &&
+                  item.repostOfAuthorName != null &&
+                  item.repostOfAuthorName!.isNotEmpty)
+                RepostBanner(
+                  originalAuthorName: item.repostOfAuthorName!,
+                  originalAuthorUid: item.repostOfAuthorUid,
+                  originalAuthorPhotoUrl: item.repostOfAuthorPhotoUrl,
+                  isDark: isDark,
+                ),
               const SizedBox(height: 12),
-              Text(
-                item.title,
-                style: GoogleFonts.spaceGrotesk(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  height: 1.2,
-                  color: ink,
+              // Titre et message sont facultatifs l'un comme l'autre : une
+              // publication peut n'être qu'une photo. On n'insère le bloc —
+              // et son espacement — que s'il porte quelque chose.
+              if (item.hasTitle) ...[
+                Text(
+                  item.title,
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                    color: ink,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                item.body,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.manrope(
-                  fontSize: 14,
-                  height: 1.4,
-                  color: muted,
+                if (item.hasBody) const SizedBox(height: 6),
+              ],
+              if (item.hasBody)
+                ExpandableText(
+                  text: item.body,
+                  linkColor: badgeColor,
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    height: 1.4,
+                    color: muted,
+                  ),
                 ),
-              ),
               if (item.hasImages) ...[
                 const SizedBox(height: 10),
-                FeedImageCarousel(
+                PostMedia(
                   imageUrls: item.imageUrls,
                   isDark: isDark,
+                  // Préfixe propre au fil : l'écran de détail emploie
+                  // `post_…`, sinon ouvrir une publication ferait voler
+                  // ses photos d'un écran à l'autre.
+                  heroPrefix: 'feed_${item.id}',
                   borderRadius: 12,
+                  onLike: onLike,
+                  alreadyLiked: item.likedByMe,
                 ),
               ],
               const SizedBox(height: 10),
               Text(
                 '${item.likesCount} J’aime · ${item.commentsCount} commentaires',
-                style: GoogleFonts.manrope(
-                  fontSize: 12,
-                  color: muted,
-                ),
+                style: GoogleFonts.manrope(fontSize: 12, color: muted),
               ),
               const Divider(height: 18),
               Row(
@@ -629,18 +737,28 @@ class _FeedCard extends StatelessWidget {
                           ? Icons.favorite
                           : Icons.favorite_border,
                       label: 'J’aime',
-                      color: item.likedByMe
-                          ? AppColors.red
-                          : ink,
+                      color: item.likedByMe ? AppColors.orange : ink,
                       onTap: onLike,
                     ),
                   ),
                   Expanded(
                     child: _FeedAction(
-                      icon: Icons.chat_bubble_outline,
-                      label: 'Commenter',
+                      icon: item.commentsDisabled
+                          ? Icons.speaker_notes_off_outlined
+                          : Icons.chat_bubble_outline,
+                      label: item.commentsDisabled ? 'Fermés' : 'Commenter',
+                      color: item.commentsDisabled
+                          ? muted.withValues(alpha: 0.6)
+                          : ink,
+                      onTap: item.commentsDisabled ? onOpen : onComment,
+                    ),
+                  ),
+                  Expanded(
+                    child: _FeedAction(
+                      icon: Icons.repeat_rounded,
+                      label: 'Republier',
                       color: ink,
-                      onTap: onComment,
+                      onTap: onRepost,
                     ),
                   ),
                   Expanded(
@@ -648,7 +766,7 @@ class _FeedCard extends StatelessWidget {
                       icon: Icons.menu_book_outlined,
                       label: 'Lire',
                       color: item.type == FeedType.annonce
-                          ? AppColors.red
+                          ? AppColors.orange
                           : AppColors.blue,
                       onTap: onOpen,
                     ),
@@ -660,6 +778,37 @@ class _FeedCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Signet d'une publication. Lit l'état directement sur le contrôleur dans
+/// son propre `Obx` : « enregistré » ne voyage pas dans le [FeedItem], il
+/// vit dans `HomeController.savedPostIds` et doit pouvoir se rafraîchir
+/// sans reconstruire toute la carte.
+class _SaveButton extends StatelessWidget {
+  const _SaveButton({required this.post, required this.muted});
+
+  final FeedItem post;
+  final Color muted;
+
+  @override
+  Widget build(BuildContext context) {
+    final home = Get.find<HomeController>();
+    return Obx(() {
+      final saved = home.isSavedByMe(post.id);
+      return IconButton(
+        tooltip: saved ? 'Retirer des enregistrements' : 'Enregistrer',
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+        icon: Icon(
+          saved ? Icons.bookmark : Icons.bookmark_border,
+          size: 20,
+          color: saved ? AppColors.orange : muted,
+        ),
+        onPressed: () => home.toggleSave(post),
+      );
+    });
   }
 }
 
@@ -682,16 +831,19 @@ class _FeedAction extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 18, color: color),
-            const SizedBox(width: 6),
+            Icon(icon, size: 20, color: color),
+            const SizedBox(height: 3),
             Text(
               label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
               style: GoogleFonts.manrope(
-                fontSize: 13,
+                fontSize: 10,
                 fontWeight: FontWeight.w700,
                 color: color,
               ),
@@ -721,7 +873,7 @@ class _MarketFeedCard extends StatelessWidget {
     final ink = isDark ? AppColors.white : AppColors.black;
     final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
     final isVente = item.listingType == MarketListingType.vente;
-    final accent = isVente ? AppColors.red : AppColors.blue;
+    final accent = isVente ? AppColors.orange : AppColors.blue;
 
     return Material(
       color: isDark ? AppColors.blackElevated : AppColors.white,
@@ -748,8 +900,10 @@ class _MarketFeedCard extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Center(
-                      child: Text(item.category.icon,
-                          style: const TextStyle(fontSize: 20)),
+                      child: Text(
+                        item.category.icon,
+                        style: const TextStyle(fontSize: 20),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -760,19 +914,25 @@ class _MarketFeedCard extends StatelessWidget {
                         Text(
                           item.sellerName,
                           style: GoogleFonts.manrope(
-                              fontWeight: FontWeight.w800, color: ink),
+                            fontWeight: FontWeight.w800,
+                            color: ink,
+                          ),
                         ),
                         Text(
                           '${item.location} · $timeLabel',
                           style: GoogleFonts.manrope(
-                              fontSize: 12, color: muted),
+                            fontSize: 12,
+                            color: muted,
+                          ),
                         ),
                       ],
                     ),
                   ),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: accent.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(20),
@@ -807,8 +967,11 @@ class _MarketFeedCard extends StatelessWidget {
                   item.description,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style:
-                      GoogleFonts.manrope(fontSize: 14, height: 1.4, color: muted),
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    height: 1.4,
+                    color: muted,
+                  ),
                 ),
               ],
               if (item.hasImages) ...[
@@ -841,7 +1004,9 @@ class _MarketFeedCard extends StatelessWidget {
                     const Spacer(),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
                         color: ink.withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(8),
@@ -849,9 +1014,10 @@ class _MarketFeedCard extends StatelessWidget {
                       child: Text(
                         item.condition!.label,
                         style: GoogleFonts.manrope(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: muted),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: muted,
+                        ),
                       ),
                     ),
                   ],
@@ -911,7 +1077,7 @@ class _HomeDrawer extends StatelessWidget {
                       isDark
                           ? Icons.light_mode_outlined
                           : Icons.dark_mode_outlined,
-                      color: AppColors.red,
+                      color: AppColors.orange,
                     ),
                   ),
                 ],
@@ -931,7 +1097,9 @@ class _HomeDrawer extends StatelessWidget {
                       // Les notifications ont déjà leur propre icône dans
                       // l'AppBar — pas besoin de les dupliquer ici.
                       features: features.where(
-                        (f) => f.section == section && f.id != AppFeatureId.notifications,
+                        (f) =>
+                            f.section == section &&
+                            f.id != AppFeatureId.notifications,
                       ),
                       ink: ink,
                       muted: muted,
@@ -940,6 +1108,7 @@ class _HomeDrawer extends StatelessWidget {
                 ],
               ),
             ),
+            _SignOutButton(isDark: isDark, muted: muted),
           ],
         ),
       ),
@@ -951,6 +1120,78 @@ class _HomeDrawer extends StatelessWidget {
     AppFeatureSection.municipalServices: 'Services municipaux',
     AppFeatureSection.account: 'Votre compte',
   };
+}
+
+/// Déconnexion, en pied de tiroir.
+///
+/// Elle vivait dans une icône sans libellé, coincée dans la carte du
+/// compte en haut : personne ne la trouvait. En bas et nommée, elle est
+/// là où l'on va la chercher — et elle disparaît pour qui n'est pas
+/// connecté, où elle n'aurait aucun sens.
+class _SignOutButton extends StatelessWidget {
+  const _SignOutButton({required this.isDark, required this.muted});
+
+  final bool isDark;
+  final Color muted;
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = Get.find<AuthService>();
+    final profiles = Get.find<UserProfileService>();
+
+    return Obx(() {
+      if (!auth.isSignedIn || profiles.profile.value == null) {
+        return const SizedBox.shrink();
+      }
+
+      return SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Divider(color: muted.withValues(alpha: 0.18), height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    // Le tiroir se referme d'abord : le laisser ouvert
+                    // sur un compte qui n'existe plus donnerait à voir un
+                    // menu à moitié vide le temps de la bascule.
+                    Get.back();
+                    Get.find<HomeController>().signOut();
+                  },
+                  icon: const Icon(
+                    Icons.logout_rounded,
+                    size: 18,
+                    color: AppColors.danger,
+                  ),
+                  label: Text(
+                    'Se déconnecter',
+                    style: GoogleFonts.manrope(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.danger,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(
+                      color: AppColors.danger.withValues(alpha: 0.4),
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    });
+  }
 }
 
 /// Un groupe du tiroir : en-tête + ses modules — rend la hiérarchie du
@@ -995,10 +1236,13 @@ class _DrawerSection extends StatelessWidget {
           ),
           for (final f in items)
             ListTile(
-              leading: Icon(f.icon, color: AppColors.red),
+              leading: Icon(f.icon, color: AppColors.orange),
               title: Text(
                 f.title,
-                style: GoogleFonts.manrope(fontWeight: FontWeight.w700, color: ink),
+                style: GoogleFonts.manrope(
+                  fontWeight: FontWeight.w700,
+                  color: ink,
+                ),
               ),
               subtitle: Text(
                 f.subtitle,
@@ -1021,7 +1265,11 @@ class _DrawerSection extends StatelessWidget {
 /// Identité connectée (nom, type de compte) + déconnexion, ou invitation
 /// à se connecter si aucune session active.
 class _AccountSection extends StatelessWidget {
-  const _AccountSection({required this.isDark, required this.ink, required this.muted});
+  const _AccountSection({
+    required this.isDark,
+    required this.ink,
+    required this.muted,
+  });
 
   final bool isDark;
   final Color ink;
@@ -1045,18 +1293,10 @@ class _AccountSection extends StatelessWidget {
         child: signedIn
             ? Row(
                 children: [
-                  CircleAvatar(
+                  UserAvatar(
+                    name: profile.displayName,
+                    photoUrl: profile.photoUrl,
                     radius: 18,
-                    backgroundColor: AppColors.red.withValues(alpha: 0.15),
-                    child: Text(
-                      profile.displayName.isNotEmpty
-                          ? profile.displayName[0].toUpperCase()
-                          : '?',
-                      style: GoogleFonts.spaceGrotesk(
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.red,
-                      ),
-                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -1072,7 +1312,10 @@ class _AccountSection extends StatelessWidget {
                         ),
                         Text(
                           profile.authorSubtitle,
-                          style: GoogleFonts.manrope(fontSize: 12, color: muted),
+                          style: GoogleFonts.manrope(
+                            fontSize: 12,
+                            color: muted,
+                          ),
                         ),
                         if (!profile.canPublish) ...[
                           const SizedBox(height: 3),
@@ -1099,14 +1342,6 @@ class _AccountSection extends StatelessWidget {
                       ],
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Se déconnecter',
-                    onPressed: () {
-                      Get.back();
-                      Get.find<HomeController>().signOut();
-                    },
-                    icon: Icon(Icons.logout_rounded, color: muted),
-                  ),
                 ],
               )
             : InkWell(
@@ -1117,7 +1352,7 @@ class _AccountSection extends StatelessWidget {
                 },
                 child: Row(
                   children: [
-                    Icon(Icons.person_outline, color: AppColors.red),
+                    Icon(Icons.person_outline, color: AppColors.orange),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(

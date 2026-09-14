@@ -39,5 +39,17 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+
+    # permission_handler ne compile le code natif de vérification/demande
+    # d'une permission que si la macro correspondante est définie — sans
+    # ça, Permission.microphone/camera.request() sur iOS ne déclenche pas
+    # correctement la boîte de dialogue système et peut renvoyer un statut
+    # incohérent, ce qui expliquait le comportement erratique de l'écran
+    # d'appel (audio ET vidéo, les deux passant par _ensurePermissions()).
+    target.build_configurations.each do |config|
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= ['$(inherited)']
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] << 'PERMISSION_MICROPHONE=1'
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] << 'PERMISSION_CAMERA=1'
+    end
   end
 end

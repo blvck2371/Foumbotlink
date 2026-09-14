@@ -2,12 +2,11 @@ import 'package:flutter/material.dart';
 
 /// Modules principaux de Foumbot Link.
 enum AppFeatureId {
-  infos,
   venteAchat,
   demarches,
   communaute,
   messages,
-  idees,
+  enregistres,
   notifications,
   profil,
   parametres,
@@ -44,13 +43,6 @@ class AppFeature {
 
   static const all = <AppFeature>[
     AppFeature(
-      id: AppFeatureId.infos,
-      title: 'Infos & annonces',
-      subtitle: 'Actualités et alertes de la commune',
-      icon: Icons.campaign_outlined,
-      section: AppFeatureSection.community,
-    ),
-    AppFeature(
       id: AppFeatureId.communaute,
       title: 'Communauté',
       subtitle: 'Échanger entre habitants',
@@ -65,10 +57,10 @@ class AppFeature {
       section: AppFeatureSection.community,
     ),
     AppFeature(
-      id: AppFeatureId.idees,
-      title: 'Idées & initiatives',
-      subtitle: 'Partager et soutenir des projets',
-      icon: Icons.lightbulb_outline,
+      id: AppFeatureId.enregistres,
+      title: 'Enregistrés',
+      subtitle: 'Vos publications mises de côté',
+      icon: Icons.bookmark_border,
       section: AppFeatureSection.community,
     ),
     AppFeature(
@@ -108,6 +100,5 @@ class AppFeature {
     ),
   ];
 
-  static AppFeature byId(AppFeatureId id) =>
-      all.firstWhere((f) => f.id == id);
+  static AppFeature byId(AppFeatureId id) => all.firstWhere((f) => f.id == id);
 }

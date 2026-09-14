@@ -3,47 +3,122 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     // Images des publications — lecture publique, écriture réservée à
-    // l'auteur. feed_service.dart uploade les images avant de créer le
-    // document Firestore (docRef.id généré côté client), donc le
-    // document n'existe pas encore au premier upload : on l'autorise
-    // dans ce cas précis, puis on verrouille sur `authorUid` dès que le
-    // post existe — empêche un tiers de réécrire les images d'un post
-    // existant en devinant son id (public, lisible depuis le fil).
-    match /posts/{postId}/{fileName} {
+    // l'auteur, **reconnu depuis le chemin**.
+    //
+    // Le propriétaire tenait auparavant dans une consultation Firestore
+    // (`firestore.exists` / `firestore.get` sur `posts/{postId}`). Or les
+    // photos partent *avant* la création du document : la règle était
+    // évaluée alors que `posts/{postId}` n'existait pas encore, l'appel
+    // inter-services échouait et l'envoi était refusé « unauthorized » —
+    // le même piège qui avait déjà cassé le premier média d'une nouvelle
+    // conversation (voir /chat plus bas). Mettre l'uid dans le chemin
+    // supprime la dépendance : plus aucun aller-retour vers Firestore, et
+    // la règle ne peut plus échouer parce qu'un document manque.
+    match /posts/{authorUid}/{postId}/{fileName} {
       allow read: if true;
-      allow write: if request.auth != null
+
+      allow create, update: if request.auth != null
+        && request.auth.uid == authorUid
         && request.resource.size < 10 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*')
-        && (
-          !firestore.exists(/databases/(default)/documents/posts/$(postId))
-          || firestore.get(/databases/(default)/documents/posts/$(postId)).data.authorUid == request.auth.uid
-        );
+        && request.resource.contentType.matches('image/.*');
+
+      allow delete: if request.auth != null && request.auth.uid == authorUid;
     }
 
-    // Images du marché — même logique que les posts, verrouillée sur
-    // `sellerUid` dès que l'annonce existe.
+    // Ancien emplacement, `posts/{postId}/{fileName}` : les photos
+    // publiées avant le changement de chemin y restent. Lecture publique
+    // pour qu'elles s'affichent toujours dans le fil, et suppression
+    // encore permise à l'auteur — il doit pouvoir retirer une vieille
+    // photo en éditant son post. Ici la consultation Firestore est sûre :
+    // à la suppression, le document existe forcément. Plus aucune
+    // écriture n'arrive sur ce chemin.
+    match /posts/{postId}/{fileName} {
+      allow read: if true;
+
+      allow delete: if request.auth != null
+        && firestore.exists(/databases/(default)/documents/posts/$(postId))
+        && firestore.get(/databases/(default)/documents/posts/$(postId)).data.authorUid == request.auth.uid;
+    }
+
+    // Images du marché — même principe que les publications ci-dessus :
+    // le vendeur est lu dans le chemin, jamais dans Firestore.
+    match /market/{sellerUid}/{itemId}/{fileName} {
+      allow read: if true;
+
+      allow create, update: if request.auth != null
+        && request.auth.uid == sellerUid
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+
+      allow delete: if request.auth != null && request.auth.uid == sellerUid;
+    }
+
+    // Ancien emplacement des photos d'annonces — voir le commentaire du
+    // chemin hérité des publications.
     match /market/{itemId}/{fileName} {
       allow read: if true;
-      allow write: if request.auth != null
-        && request.resource.size < 10 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*')
-        && (
-          !firestore.exists(/databases/(default)/documents/market/$(itemId))
-          || firestore.get(/databases/(default)/documents/market/$(itemId)).data.sellerUid == request.auth.uid
-        );
+
+      allow delete: if request.auth != null
+        && firestore.exists(/databases/(default)/documents/market/$(itemId))
+        && firestore.get(/databases/(default)/documents/market/$(itemId)).data.sellerUid == request.auth.uid;
     }
 
     // Pièces jointes de chat (vocal, image, document) — réservées aux
-    // participants de la conversation (le conversationId est prévisible :
-    // `uid1_uid2` triés — sans cette vérification, n'importe quel compte
-    // connaissant les deux uids pourrait lire/écrire les fichiers d'une
-    // conversation qui n'est pas la sienne).
+    // participants de la conversation. Le conversationId est `uid1_uid2`
+    // (uids triés, joints par `_` — voir Conversation.buildId) et les UID
+    // Firebase ne contiennent jamais de `_` : on vérifie l'appartenance
+    // directement depuis le chemin plutôt que via firestore.get() sur le
+    // document de conversation. Ce dernier est créé de façon asynchrone
+    // (ChatController._ensureConversation, non attendu) : s'appuyer dessus
+    // faisait échouer l'upload du premier média d'une nouvelle
+    // conversation (firestore.get renvoie null → règle en erreur → refus
+    // "unauthorized").
     match /chat/{conversationId}/{allPaths=**} {
       allow read: if request.auth != null
-        && request.auth.uid in firestore.get(/databases/(default)/documents/conversations/$(conversationId)).data.participants;
+        && request.auth.uid in conversationId.split('_');
       allow write: if request.auth != null
         && request.resource.size < 20 * 1024 * 1024
-        && request.auth.uid in firestore.get(/databases/(default)/documents/conversations/$(conversationId)).data.participants;
+        && request.auth.uid in conversationId.split('_');
+    }
+
+    // Photos des statuts éphémères — `statuses/{authorUid}/{statusId}.jpg`.
+    // L'uid vit dans le chemin, comme pour les publications : la photo
+    // part avant que le document Firestore n'existe, une règle qui
+    // consulterait `statuses/{statusId}` échouerait donc à la création.
+    //
+    // Le ménage des fichiers dont le statut a expiré revient à
+    // `onStatusDeleted` (Admin SDK), pas au client.
+    match /statuses/{authorUid}/{fileName} {
+      allow read: if true;
+
+      // Photo ou vidéo, avec deux plafonds distincts : une vidéo de
+      // quelques secondes pèse légitimement plus lourd qu'une image, mais
+      // un seul plafond haut ouvrirait la porte à des « photos » de 60 Mo.
+      allow create, update: if request.auth != null
+        && request.auth.uid == authorUid
+        && (
+          (
+            request.resource.contentType.matches('image/.*')
+            && request.resource.size < 10 * 1024 * 1024
+          )
+          || (
+            request.resource.contentType.matches('video/.*')
+            && request.resource.size < 60 * 1024 * 1024
+          )
+        );
+
+      allow delete: if request.auth != null && request.auth.uid == authorUid;
+    }
+
+    // Photos de profil — lecture publique, écriture limitée au propriétaire
+    // (fichier unique `avatar.jpg`, redimensionné côté client avant upload).
+    match /profiles/{uid}/{fileName} {
+      allow read: if true;
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size < 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null && request.auth.uid == uid;
     }
   }
 }
