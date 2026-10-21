@@ -61,11 +61,17 @@ class UserProfile {
   /// besoin de validation.
   bool get canPublish => accountType == AccountType.personal || verified;
 
+  /// Ce qui est écrit sur `users/{uid}` — **document lisible par tout
+  /// compte connecté** (les profils publics et les publications en
+  /// dépendent).
+  ///
+  /// Ni [email] ni [phoneNumber] n'y figurent : une seule requête aurait
+  /// suffi à aspirer le numéro et l'adresse de chaque habitant de la
+  /// commune. Ils vivent dans `users/{uid}/private/contact`, que seul
+  /// leur propriétaire peut lire (voir [UserProfileService.saveContact]).
   Map<String, dynamic> toMap() => {
     'accountType': accountType.name,
     'displayName': displayName,
-    'email': email,
-    'phoneNumber': phoneNumber,
     'createdAt': createdAt.toIso8601String(),
     'verified': verified,
     'followersCount': followersCount,

@@ -9,6 +9,29 @@ import 'package:uuid/uuid.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
 
+/// Vidéo refusée avant même de partir, parce qu'elle dépasse le plafond
+/// de [ChatService.maxVideoBytes].
+///
+/// Un type à part plutôt qu'un message brut : `_uploadAndSend` remonte
+/// `toString()` tel quel dans l'alerte d'échec, et « Vidéo de 78 Mo »
+/// se comprend là où un `unauthorized` de Storage n'apprend rien.
+class ChatVideoTooLarge implements Exception {
+  const ChatVideoTooLarge({required this.bytes, required this.maxBytes});
+
+  final int bytes;
+  final int maxBytes;
+
+  static String _mb(int bytes) => (bytes / (1024 * 1024)).toStringAsFixed(0);
+
+  String get sizeLabel => '${_mb(bytes)} Mo';
+  String get maxLabel => '${_mb(maxBytes)} Mo';
+
+  @override
+  String toString() =>
+      'Vidéo de $sizeLabel : le maximum est $maxLabel. Filmez plus court, '
+      'ou envoyez-la en document depuis un autre appareil.';
+}
+
 /// État affiché en direct à l'autre participant, façon WhatsApp — écrit
 /// dans `conversations/{id}/typing/{uid}` (voir [ChatService.setActivity]
 /// et [ChatService.watchActivity]).
@@ -101,6 +124,8 @@ class ChatService {
     required String content,
     String? fileName,
     int? durationMs,
+    String? thumbUrl,
+    bool viewOnce = false,
     int? ephemeralSeconds,
     String? replyToId,
     String? replyToSenderUid,
@@ -119,6 +144,8 @@ class ChatService {
       content: content,
       fileName: fileName,
       durationMs: durationMs,
+      thumbUrl: thumbUrl,
+      viewOnce: viewOnce,
       createdAt: DateTime.now(),
       expiresAt: expiresAt,
       replyToId: replyToId,
@@ -134,9 +161,14 @@ class ChatService {
         ? (statusRef.isLike
             ? '❤️ A aimé votre statut'
             : '💬 ${content.length > 70 ? '${content.substring(0, 70)}…' : content}')
+        : viewOnce && msg.supportsViewOnce
+        // Un message à vue unique ne livre pas son contenu à la liste des
+        // conversations : elle se lit sans l'ouvrir.
+        ? msg.shortPreview
         : switch (type) {
             MessageType.voice => '🎤 Message vocal',
             MessageType.image => '📷 Photo',
+            MessageType.video => '🎥 Vidéo',
             MessageType.document => fileName ?? '📎 Document',
             MessageType.sticker => content,
             MessageType.text =>
@@ -307,6 +339,71 @@ class ChatService {
   /// L'effacer pour de bon laisserait un trou dans les réponses qui le
   /// citent et dans l'aperçu de la conversation. Le fichier joint, lui,
   /// est bel et bien retiré de Storage — c'est tout l'intérêt de pouvoir
+  /// Marque un message à vue unique comme ouvert, et lui retire son
+  /// contenu.
+  ///
+  /// Les deux vont ensemble mais ne protègent pas la même chose :
+  /// `viewOnceOpenedAt` interdit une seconde ouverture — c'est lui que
+  /// l'app regarde — tandis que vider `content` retire l'URL de la base,
+  /// pour qu'elle ne soit plus lisible par qui saurait aller l'y chercher.
+  ///
+  /// Le fichier lui-même part plus tard ([deleteViewOnceFile]), une fois
+  /// la visionneuse refermée : le supprimer maintenant couperait l'image
+  /// sous les yeux de qui vient de l'ouvrir.
+  Future<void> consumeViewOnce({
+    required String conversationId,
+    required String messageId,
+  }) async {
+    await _msgRef(conversationId).doc(messageId).update({
+      'viewOnceOpenedAt': FieldValue.serverTimestamp(),
+      'content': '',
+      'thumbUrl': FieldValue.delete(),
+    });
+  }
+
+  /// Signale que le destinataire a capturé l'écran pendant l'affichage.
+  ///
+  /// Écrit une fois, par celui qui a capturé. On ne peut pas l'empêcher —
+  /// iOS ne prévient qu'après coup — mais l'expéditeur a le droit de le
+  /// savoir : c'est la seule chose qu'une détection puisse apporter.
+  ///
+  /// L'échec est avalé : une capture non signalée reste préférable à une
+  /// alerte d'erreur en pleine consultation.
+  Future<void> reportScreenshot({
+    required String conversationId,
+    required String messageId,
+  }) async {
+    try {
+      await _msgRef(conversationId).doc(messageId).update({
+        'screenshotAt': FieldValue.serverTimestamp(),
+      });
+    } on FirebaseException catch (e) {
+      developer.log(
+        'Signalement de capture d’écran',
+        name: 'ChatService',
+        error: e,
+      );
+    }
+  }
+
+  /// Retire de Storage le fichier d'un message à vue unique déjà consommé.
+  ///
+  /// Au mieux : si l'app meurt entre l'ouverture et la fermeture, le
+  /// fichier reste — mais le message, lui, est déjà marqué ouvert et ne
+  /// se rouvrira pas. Le ménage manqué coûte de l'espace, pas le secret.
+  Future<void> deleteViewOnceFile(String url) async {
+    if (!url.startsWith('http')) return;
+    try {
+      await _storage.refFromURL(url).delete();
+    } on FirebaseException catch (e) {
+      developer.log(
+        'Ménage du fichier à vue unique',
+        name: 'ChatService',
+        error: e,
+      );
+    }
+  }
+
   /// supprimer une photo envoyée par erreur.
   Future<void> deleteMessage({
     required String conversationId,
@@ -330,11 +427,27 @@ class ChatService {
       }
     }
 
+    // La vignette d'une vidéo est un second fichier : la laisser derrière
+    // ferait de l'espace occupé par un message qui n'existe plus.
+    final thumb = message.thumbUrl;
+    if (thumb != null && thumb.startsWith('http')) {
+      try {
+        await _storage.refFromURL(thumb).delete();
+      } on FirebaseException catch (e) {
+        developer.log(
+          'Suppression de la vignette',
+          name: 'ChatService',
+          error: e,
+        );
+      }
+    }
+
     await _msgRef(conversationId).doc(message.id).update({
       'deleted': true,
       'content': '',
       'fileName': FieldValue.delete(),
       'durationMs': FieldValue.delete(),
+      'thumbUrl': FieldValue.delete(),
       'reactions': <String, String>{},
     });
   }
@@ -488,6 +601,73 @@ class ChatService {
     // comme un fichier binaire (téléchargement) par tout ce qui n'est pas
     // l'app elle-même. ImagePicker recompresse en JPEG (voir
     // `ChatController.pickImage`).
+    await ref.putFile(
+      File(filePath),
+      SettableMetadata(
+        contentType: 'image/jpeg',
+        cacheControl: 'public, max-age=31536000, immutable',
+      ),
+    );
+    return ref.getDownloadURL();
+  }
+
+  /// Plafond d'une vidéo envoyée en discussion. Aligné sur celui des
+  /// statuts (`StatusService.maxVideoBytes`) et sur la règle Storage : au
+  /// même endroit, un seul chiffre à retenir. Les autres pièces jointes
+  /// restent à 20 Mo — c'est déjà beaucoup pour une photo ou un document,
+  /// et une vidéo est le seul fichier qui pèse légitimement plus lourd.
+  static const maxVideoBytes = 60 * 1024 * 1024;
+
+  /// Le type réel du fichier, pas un type supposé : sur iOS, la galerie
+  /// rend le plus souvent un `.mov` (QuickTime). L'annoncer en `video/mp4`
+  /// passerait la règle Storage, mais tromperait tout ce qui lit l'objet
+  /// ensuite — navigateur, CDN, lecteur. Même raisonnement que
+  /// `StatusService._videoMetadataFor`.
+  static SettableMetadata _videoMetadataFor(String path) {
+    final type = switch (path.toLowerCase().split('.').last) {
+      'mov' || 'qt' => 'video/quicktime',
+      'm4v' => 'video/x-m4v',
+      'webm' => 'video/webm',
+      _ => 'video/mp4',
+    };
+    return SettableMetadata(
+      contentType: type,
+      cacheControl: 'public, max-age=31536000, immutable',
+    );
+  }
+
+  /// Vidéo de discussion. La taille est vérifiée **avant** de commencer
+  /// l'envoi : la règle Storage refuserait de toute façon, mais après
+  /// avoir fait grimper tout le fichier sur le réseau de la personne, et
+  /// avec un « unauthorized » qui ne dit pas pourquoi.
+  Future<String> uploadVideo(String filePath, String conversationId) async {
+    final file = File(filePath);
+    final bytes = await file.length();
+    if (bytes >= maxVideoBytes) {
+      throw ChatVideoTooLarge(bytes: bytes, maxBytes: maxVideoBytes);
+    }
+    // L'extension de l'original est conservée : un `.mov` stocké sous
+    // `.mp4` se lirait mal côté Android.
+    final extension = filePath.toLowerCase().split('.').last;
+    final safeExtension = RegExp(r'^[a-z0-9]{2,5}$').hasMatch(extension)
+        ? extension
+        : 'mp4';
+    final ref = _storage.ref(
+      'chat/$conversationId/videos/${_uuid.v4()}.$safeExtension',
+    );
+    await ref.putFile(file, _videoMetadataFor(filePath));
+    return ref.getDownloadURL();
+  }
+
+  /// Vignette d'une vidéo. Une image parmi d'autres côté Storage : même
+  /// type, même cache, même règle de taille que les photos.
+  Future<String> uploadVideoThumb(
+    String filePath,
+    String conversationId,
+  ) async {
+    final ref = _storage.ref(
+      'chat/$conversationId/videos/${_uuid.v4()}_thumb.jpg',
+    );
     await ref.putFile(
       File(filePath),
       SettableMetadata(

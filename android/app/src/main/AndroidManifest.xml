@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Rapprochement du répertoire : lecture seule, jamais d'écriture.
+         Les numéros ne quittent pas l'appareil — seules leurs empreintes
+         SHA-256 partent au serveur (voir ContactMatchService). -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Requis par flutter_webrtc pour les appels audio/vidéo en direct. -->
     <uses-permission android:name="android.permission.CAMERA"/>

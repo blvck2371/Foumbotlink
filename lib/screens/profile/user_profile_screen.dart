@@ -348,6 +348,12 @@ class _ProfileHeader extends GetView<ProfileController> {
 
             const SizedBox(height: 20),
 
+            // Sur son propre profil : son numéro et les contacts à
+            // retrouver. Le profil personnel n'avait jusqu'ici aucune
+            // zone d'action — les boutons ci-dessous ne concernent que
+            // les profils d'autrui.
+            if (isOwn) const _OwnProfileContacts(),
+
             // Action buttons — TikTok style
             if (!isOwn)
               Row(
@@ -556,6 +562,82 @@ class _ProfileHeader extends GetView<ProfileController> {
 }
 
 enum _ProfileAction { report, block }
+
+/// Bloc « mes contacts » du profil personnel : le numéro du compte, et
+/// l'accès au rapprochement du répertoire.
+///
+/// Les deux vont de pair. Enregistrer son numéro ne sert pas à
+/// l'afficher — il n'apparaît sur aucun profil — mais à ce que les
+/// habitants qui vous ont déjà dans leur téléphone puissent vous
+/// retrouver. La formulation le dit, sans quoi personne ne comprendrait
+/// pourquoi l'app réclame un numéro qu'elle ne montre pas.
+class _OwnProfileContacts extends StatelessWidget {
+  const _OwnProfileContacts();
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Get.find<ThemeController>().isDarkMode;
+    final ink = isDark ? AppColors.white : AppColors.black;
+    final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Material(
+        color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => Get.toNamed(AppRoutes.contactSuggestions),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.orange.withValues(alpha: 0.12),
+                  ),
+                  child: const Icon(
+                    Icons.contacts_outlined,
+                    color: AppColors.orange,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Mon numéro et mes contacts',
+                        style: GoogleFonts.manrope(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                          color: ink,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Retrouvez les habitants de votre répertoire',
+                        style: GoogleFonts.manrope(
+                          fontSize: 12.5,
+                          color: muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded, color: muted),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _ProfileModerationMenu extends StatelessWidget {
   const _ProfileModerationMenu({required this.isDark, required this.ink});

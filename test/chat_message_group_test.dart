@@ -248,4 +248,187 @@ void main() {
       expect(updated.hiddenFor, ['moi']);
     });
   });
+  group('vidéo', () {
+    ChatMessage video({Duration offset = Duration.zero, int? durationMs}) =>
+        ChatMessage(
+          id: 'v',
+          senderUid: 'moi',
+          type: MessageType.video,
+          content: 'https://exemple.test/v.mp4',
+          durationMs: durationMs,
+          createdAt: base.add(offset),
+        );
+
+    test('une vidéo ne rejoint pas un album de photos', () {
+      final groups = groupChatMessages([
+        msg('a'),
+        video(offset: const Duration(seconds: 1)),
+        msg('b', offset: const Duration(seconds: 2)),
+      ]);
+
+      expect(groups.map((g) => g.map((m) => m.id).toList()), [
+        ['a'],
+        ['v'],
+        ['b'],
+      ]);
+    });
+
+    test('la bulle vidéo se dessine comme une photo, bord à bord', () {
+      expect(video().isMediaBubble, true);
+      expect(msg('a').isMediaBubble, true);
+      expect(msg('t', type: MessageType.text).isMediaBubble, false);
+      expect(msg('d', type: MessageType.document).isMediaBubble, false);
+    });
+
+    test('l’aperçu d’une ligne annonce une vidéo', () {
+      expect(video().shortPreview, '🎥 Vidéo');
+    });
+
+    test('une vidéo supprimée n’annonce plus son type', () {
+      final removed = ChatMessage(
+        id: 'v',
+        senderUid: 'moi',
+        type: MessageType.video,
+        content: '',
+        createdAt: base,
+        deleted: true,
+      );
+      expect(removed.shortPreview, 'Message supprimé');
+    });
+
+    test('la durée se lit en m:ss, et vaut 0:00 sans durée connue', () {
+      expect(video(durationMs: 42000).durationLabel, '0:42');
+      expect(video(durationMs: 95000).durationLabel, '1:35');
+      expect(video().durationLabel, '0:00');
+    });
+  });
+
+  group('vue unique', () {
+    ChatMessage sealed({
+      MessageType type = MessageType.image,
+      String sender = 'moi',
+      DateTime? openedAt,
+      bool deleted = false,
+    }) => ChatMessage(
+      id: 'u',
+      senderUid: sender,
+      type: type,
+      content: openedAt == null ? 'https://exemple.test/u.jpg' : '',
+      viewOnce: true,
+      viewOnceOpenedAt: openedAt,
+      deleted: deleted,
+      createdAt: base,
+    );
+
+    test('seul le destinataire peut ouvrir, et une seule fois', () {
+      expect(sealed().canOpenViewOnce('autre'), true);
+      expect(sealed().canOpenViewOnce('moi'), false, reason: 'l’expéditeur');
+      expect(sealed(openedAt: base).canOpenViewOnce('autre'), false);
+      expect(sealed(deleted: true).canOpenViewOnce('autre'), false);
+    });
+
+    test('un message ordinaire ne s’ouvre pas comme une vue unique', () {
+      expect(msg('a').canOpenViewOnce('autre'), false);
+    });
+
+    test('l’aperçu tait le contenu, avant comme après ouverture', () {
+      expect(sealed().shortPreview, '👁 Photo · vue unique');
+      expect(sealed(openedAt: base).shortPreview, '👁 Photo ouvert');
+      expect(
+        sealed(type: MessageType.voice).shortPreview,
+        '👁 Message vocal · vue unique',
+      );
+      expect(sealed(type: MessageType.video).shortPreview, '👁 Vidéo · vue unique');
+    });
+
+    test('seuls les types qui s’ouvrent acceptent la vue unique', () {
+      expect(sealed(type: MessageType.image).supportsViewOnce, true);
+      expect(sealed(type: MessageType.video).supportsViewOnce, true);
+      expect(sealed(type: MessageType.voice).supportsViewOnce, true);
+      expect(msg('t', type: MessageType.text).supportsViewOnce, false);
+      expect(msg('d', type: MessageType.document).supportsViewOnce, false);
+    });
+
+    test('la bulle reste une ligne de texte, pas un média bord à bord', () {
+      expect(sealed().isMediaBubble, false);
+      expect(sealed(type: MessageType.video).isMediaBubble, false);
+    });
+
+    test('une photo à vue unique ne rejoint pas un album', () {
+      final groups = groupChatMessages([
+        msg('a'),
+        sealed(),
+        msg('b', offset: const Duration(seconds: 2)),
+      ]);
+      expect(groups.map((g) => g.length), [1, 1, 1]);
+    });
+
+    test('copyWith conserve la vue unique et la vignette', () {
+      final pending = ChatMessage(
+        id: 'v',
+        senderUid: 'moi',
+        type: MessageType.video,
+        content: '/tmp/v.mp4',
+        thumbUrl: '/tmp/v.jpg',
+        viewOnce: true,
+        createdAt: base,
+        status: MessageDeliveryStatus.sending,
+      ).copyWith(status: MessageDeliveryStatus.failed);
+
+      expect(pending.viewOnce, true);
+      expect(pending.thumbUrl, '/tmp/v.jpg');
+      expect(pending.status, MessageDeliveryStatus.failed);
+    });
+
+    test('le drapeau et la vignette font l’aller-retour par toMap', () {
+      final map = ChatMessage(
+        id: 'v',
+        senderUid: 'moi',
+        type: MessageType.video,
+        content: 'https://exemple.test/v.mp4',
+        thumbUrl: 'https://exemple.test/v.jpg',
+        viewOnce: true,
+        createdAt: base,
+      ).toMap();
+
+      expect(map['viewOnce'], true);
+      expect(map['thumbUrl'], 'https://exemple.test/v.jpg');
+      // Un message ordinaire n'écrit ni l'un ni l'autre : inutile de
+      // porter `viewOnce: false` sur chaque message de la base.
+      final plain = msg('a').toMap();
+      expect(plain.containsKey('viewOnce'), false);
+      expect(plain.containsKey('thumbUrl'), false);
+    });
+  });
+
+  group('capture d’écran signalée', () {
+    ChatMessage shot({DateTime? at}) => ChatMessage(
+      id: 'u',
+      senderUid: 'moi',
+      type: MessageType.image,
+      content: '',
+      viewOnce: true,
+      viewOnceOpenedAt: base,
+      screenshotAt: at,
+      createdAt: base,
+    );
+
+    test('le drapeau suit la présence de l’horodatage', () {
+      expect(shot().wasScreenshotted, false);
+      expect(shot(at: base).wasScreenshotted, true);
+    });
+
+    test('copyWith ne perd pas le signalement', () {
+      final updated = shot(
+        at: base,
+      ).copyWith(status: MessageDeliveryStatus.sent);
+      expect(updated.screenshotAt, base);
+      expect(updated.wasScreenshotted, true);
+    });
+
+    test('rien n’est écrit à l’envoi : c’est le destinataire qui pose', () {
+      expect(shot(at: base).toMap().containsKey('screenshotAt'), false);
+    });
+  });
+
 }

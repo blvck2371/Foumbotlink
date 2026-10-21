@@ -2,7 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 	<dict>
-		<key>CADisableMinimumFrameDurationOnPhone</key>
+		<key>NSContactsUsageDescription</key>
+	<string>Foumbot Link compare votre répertoire pour vous proposer les habitants que vous connaissez déjà. Vos numéros ne quittent pas votre téléphone : seules des empreintes chiffrées sont comparées.</string>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
 		<true/>
 		<key>CFBundleDevelopmentRegion</key>
 		<string>$(DEVELOPMENT_LANGUAGE)</string>

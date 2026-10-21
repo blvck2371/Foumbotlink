@@ -3,12 +3,15 @@ import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:get_thumbnail_video/index.dart';
+import 'package:get_thumbnail_video/video_thumbnail.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:video_player/video_player.dart';
 
 import '../models/call.dart';
 import '../models/chat_message.dart';
@@ -39,6 +42,25 @@ class ChatController extends GetxController {
   final isRecording = false.obs;
   final recordDuration = 0.obs;
   final ephemeralSeconds = Rxn<int>();
+
+  /// « Le prochain média part à vue unique ».
+  ///
+  /// Armé le temps d'un envoi, puis désarmé tout seul : laissé actif, on
+  /// enverrait à vue unique sans s'en rendre compte, et c'est le genre
+  /// d'erreur qu'on ne peut pas rattraper. Contrairement au réglage
+  /// éphémère, qui vaut pour la conversation et se négocie à deux, celui-ci
+  /// est local à qui envoie et ne quitte jamais l'appareil.
+  final viewOnceArmed = false.obs;
+
+  void toggleViewOnce() => viewOnceArmed.value = !viewOnceArmed.value;
+
+  /// Lit l'armement **et le retire**. Appelé une fois par geste d'envoi —
+  /// une rafale de photos choisies ensemble compte pour un seul geste.
+  bool _consumeViewOnceArm() {
+    final armed = viewOnceArmed.value;
+    viewOnceArmed.value = false;
+    return armed;
+  }
   final showStickers = false.obs;
 
   /// Avertissement anti-arnaque déclenché par le dernier message reçu,
@@ -588,9 +610,13 @@ class ChatController extends GetxController {
   ///
   /// Le contenu est recopié tel quel — pour une photo ou un document,
   /// c'est l'URL déjà en ligne qui repart, sans nouvel envoi de fichier.
-  /// Un message supprimé ne se transfère pas.
+  /// Ni un message supprimé ni un message à vue unique ne se transfèrent.
   Future<bool> forwardMessage(ChatMessage message, String toUid) async {
     if (message.deleted || toUid.isEmpty || toUid == myUid) return false;
+    // Un message à vue unique ne se fait pas suivre : la copie vivrait
+    // dans une autre conversation, hors de portée de la consommation —
+    // « vue unique » n'y voudrait plus rien dire.
+    if (message.viewOnce) return false;
     final targetId = Conversation.buildId(myUid, toUid);
     try {
       await _chat.getOrCreateConversation(myUid, toUid);
@@ -810,6 +836,8 @@ class ChatController extends GetxController {
     required String content,
     String? fileName,
     int? durationMs,
+    String? thumbUrl,
+    bool viewOnce = false,
     ChatMessage? replyTo,
   }) {
     final eph = ephemeralSeconds.value;
@@ -823,6 +851,8 @@ class ChatController extends GetxController {
       content: content,
       fileName: fileName,
       durationMs: durationMs,
+      thumbUrl: thumbUrl,
+      viewOnce: viewOnce,
       createdAt: DateTime.now(),
       expiresAt: expiresAt,
       status: MessageDeliveryStatus.sending,
@@ -903,7 +933,7 @@ class ChatController extends GetxController {
     }
   }
 
-  /// Upload (voix/image/document) puis écriture Firestore. `localPath`
+  /// Upload (voix/image/vidéo/document) puis écriture Firestore. `localPath`
   /// reste le contenu affiché tant que l'envoi n'est pas confirmé — la
   /// bulle lit directement le fichier local le temps de l'upload (voir
   /// _MessageBubble._buildImage / _togglePlayVoice côté UI).
@@ -913,6 +943,8 @@ class ChatController extends GetxController {
     required String localPath,
     int? durationMs,
     String? fileName,
+    String? thumbPath,
+    bool viewOnce = false,
     ChatMessage? replyTo,
   }) async {
     try {
@@ -925,6 +957,10 @@ class ChatController extends GetxController {
           localPath,
           _conversationId,
         ),
+        MessageType.video => await _chat.uploadVideo(
+          localPath,
+          _conversationId,
+        ),
         MessageType.document => await _chat.uploadDocument(
           localPath,
           _conversationId,
@@ -933,6 +969,22 @@ class ChatController extends GetxController {
         MessageType.text ||
         MessageType.sticker => throw StateError('unsupported upload type'),
       };
+      // La vignette part après la vidéo : si l'envoi du gros fichier
+      // échoue, on n'a pas laissé une image orpheline dans Storage.
+      // Son échec à elle, en revanche, ne doit pas emporter le message —
+      // une vidéo sans aperçu vaut mieux que pas de vidéo.
+      String? thumbUrl;
+      if (thumbPath != null) {
+        try {
+          thumbUrl = await _chat.uploadVideoThumb(thumbPath, _conversationId);
+        } on Exception catch (e) {
+          developer.log(
+            'Vignette non envoyée pour $id',
+            name: 'ChatController',
+            error: e,
+          );
+        }
+      }
       await _chat.sendMessage(
         conversationId: _conversationId,
         messageId: id,
@@ -942,6 +994,8 @@ class ChatController extends GetxController {
         content: url,
         fileName: fileName,
         durationMs: durationMs,
+        thumbUrl: thumbUrl,
+        viewOnce: viewOnce,
         ephemeralSeconds: ephemeralSeconds.value,
         replyToId: replyTo?.id,
         replyToSenderUid: replyTo?.senderUid,
@@ -1052,11 +1106,14 @@ class ChatController extends GetxController {
 
     if (cancel || path == null || recordDuration.value < 1) {
       _safeDeleteFile(path);
+      // Enregistrement annulé : l'armement n'a rien consommé, il reste
+      // en place pour le prochain envoi.
       return;
     }
 
     final replyTo = replyingTo.value;
     replyingTo.value = null;
+    final viewOnce = _consumeViewOnceArm();
 
     final durationMs = recordDuration.value * 1000;
     final id = _chat.newMessageId(_conversationId);
@@ -1066,6 +1123,7 @@ class ChatController extends GetxController {
         type: MessageType.voice,
         content: path,
         durationMs: durationMs,
+        viewOnce: viewOnce,
         replyTo: replyTo,
       ),
     );
@@ -1074,6 +1132,7 @@ class ChatController extends GetxController {
       type: MessageType.voice,
       localPath: path!,
       durationMs: durationMs,
+      viewOnce: viewOnce,
       replyTo: replyTo,
     );
     await _retryActions[id]!();
@@ -1093,12 +1152,15 @@ class ChatController extends GetxController {
       imageQuality: 80,
     );
     if (picked.isEmpty) return;
+    // Une sélection multiple reste **un** geste : l'armement vaut pour
+    // toutes les photos choisies ensemble, pas seulement la première.
+    final viewOnce = _consumeViewOnceArm();
     // `limit` n'est qu'une indication sur certaines galeries Android : on
     // retronque nous-mêmes.
     for (final file in picked.take(maxImagesPerSend)) {
       // Un envoi après l'autre : chaque photo est un message, et l'ordre
       // d'affichage doit suivre l'ordre de sélection.
-      await sendImageFile(file.path);
+      await sendImageFile(file.path, viewOnce: viewOnce);
     }
   }
 
@@ -1109,10 +1171,10 @@ class ChatController extends GetxController {
       imageQuality: 80,
     );
     if (xfile == null) return;
-    await sendImageFile(xfile.path);
+    await sendImageFile(xfile.path, viewOnce: _consumeViewOnceArm());
   }
 
-  Future<void> sendImageFile(String path) async {
+  Future<void> sendImageFile(String path, {bool viewOnce = false}) async {
     final replyTo = replyingTo.value;
     replyingTo.value = null;
 
@@ -1122,6 +1184,7 @@ class ChatController extends GetxController {
         id: id,
         type: MessageType.image,
         content: path,
+        viewOnce: viewOnce,
         replyTo: replyTo,
       ),
     );
@@ -1129,6 +1192,116 @@ class ChatController extends GetxController {
       id: id,
       type: MessageType.image,
       localPath: path,
+      viewOnce: viewOnce,
+      replyTo: replyTo,
+    );
+    await _retryActions[id]!();
+  }
+
+  /// Durée maximale d'une vidéo **filmée depuis la discussion**.
+  ///
+  /// `maxDuration` ne borne que la prise de vue : une vidéo choisie dans
+  /// la galerie n'est pas coupée par le sélecteur, quel que soit
+  /// l'appareil. C'est le plafond de poids côté service
+  /// ([ChatService.maxVideoBytes]) qui tient ce rôle-là — les deux sont
+  /// nécessaires, aucun ne remplace l'autre.
+  static const maxVideoRecording = Duration(minutes: 2);
+
+  /// Ouvre la galerie (ou la caméra) et envoie la vidéo choisie.
+  Future<void> pickAndSendVideo(ImageSource source) async {
+    final XFile? picked;
+    try {
+      picked = await ImagePicker().pickVideo(
+        source: source,
+        maxDuration: maxVideoRecording,
+      );
+    } on Exception catch (e) {
+      _reportSendError('pickVideo failed', e);
+      return;
+    }
+    if (picked == null) return;
+    await sendVideoFile(picked.path, viewOnce: _consumeViewOnceArm());
+  }
+
+  /// Extrait l'image d'aperçu de la vidéo, dans le dossier temporaire.
+  ///
+  /// Prise à 1 s plutôt qu'à 0 : la toute première image d'une vidéo
+  /// filmée au téléphone est souvent noire ou floue, le temps que
+  /// l'exposition se fasse. Une vidéo plus courte retombe sur l'origine.
+  ///
+  /// Un échec n'empêche rien : la vidéo part sans vignette, la bulle
+  /// retombe sur sa tuile.
+  Future<String?> _extractVideoThumb(String path, int? durationMs) async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final thumb = await VideoThumbnail.thumbnailFile(
+        video: path,
+        thumbnailPath: dir.path,
+        imageFormat: ImageFormat.JPEG,
+        timeMs: (durationMs != null && durationMs < 1000) ? 0 : 1000,
+        maxWidth: 480,
+        quality: 70,
+      );
+      return thumb.path;
+    } on Exception catch (e) {
+      developer.log('Vignette de la vidéo', name: 'ChatController', error: e);
+      return null;
+    }
+  }
+
+  /// Durée de la vidéo, lue sur le fichier local avant l'envoi.
+  ///
+  /// La bulle affiche « 0:42 » dès la première image, sans attendre que
+  /// quelqu'un appuie sur lecture — et l'information part avec le message,
+  /// donc le destinataire l'a aussi sans télécharger la vidéo.
+  ///
+  /// Un échec ici n'empêche rien : la vidéo part sans sa durée, la bulle
+  /// s'en passe.
+  Future<int?> _probeVideoDuration(String path) async {
+    final probe = VideoPlayerController.file(File(path));
+    try {
+      await probe.initialize();
+      final value = probe.value.duration;
+      return value > Duration.zero ? value.inMilliseconds : null;
+    } on Exception catch (e) {
+      developer.log('Durée de la vidéo', name: 'ChatController', error: e);
+      return null;
+    } finally {
+      await probe.dispose();
+    }
+  }
+
+  Future<void> sendVideoFile(String path, {bool viewOnce = false}) async {
+    final durationMs = await _probeVideoDuration(path);
+    // Pas de vignette pour une vidéo à vue unique : elle en montrerait le
+    // contenu dans la conversation, ce qui est exactement ce qu'on cherche
+    // à éviter.
+    final thumbPath = viewOnce
+        ? null
+        : await _extractVideoThumb(path, durationMs);
+
+    final replyTo = replyingTo.value;
+    replyingTo.value = null;
+
+    final id = _chat.newMessageId(_conversationId);
+    _addLocalMessage(
+      _pendingMessage(
+        id: id,
+        type: MessageType.video,
+        content: path,
+        durationMs: durationMs,
+        thumbUrl: thumbPath,
+        viewOnce: viewOnce,
+        replyTo: replyTo,
+      ),
+    );
+    _retryActions[id] = () => _uploadAndSend(
+      id: id,
+      type: MessageType.video,
+      localPath: path,
+      durationMs: durationMs,
+      thumbPath: thumbPath,
+      viewOnce: viewOnce,
       replyTo: replyTo,
     );
     await _retryActions[id]!();
@@ -1187,6 +1360,44 @@ class ChatController extends GetxController {
       },
     );
   }
+
+  /// Ouvre un message à vue unique et le consomme.
+  ///
+  /// Marqué ouvert **avant** que la visionneuse s'affiche : si l'app
+  /// meurt pendant qu'on regarde, le message reste consommé plutôt que de
+  /// se rouvrir. L'URL est rendue à l'appelant, qui l'affiche depuis la
+  /// mémoire — elle ne sera plus dans la base une seconde après.
+  ///
+  /// Rend `null` si le message n'est pas ouvrable (déjà vu, ou c'est le
+  /// nôtre) : la bulle ne devrait pas le proposer, mais deux appuis
+  /// rapides passeraient tous les deux ici.
+  Future<String?> openViewOnce(ChatMessage message) async {
+    if (!message.canOpenViewOnce(myUid)) return null;
+    final url = message.content;
+    if (url.isEmpty) return null;
+    try {
+      await _chat.consumeViewOnce(
+        conversationId: _conversationId,
+        messageId: message.id,
+      );
+    } on Exception catch (e) {
+      _reportSendError('consumeViewOnce failed for ${message.id}', e);
+      return null;
+    }
+    return url;
+  }
+
+  /// Dit à l'expéditeur qu'on vient de capturer l'écran de son message.
+  void reportScreenshot(String messageId) => unawaited(
+    _chat.reportScreenshot(
+      conversationId: _conversationId,
+      messageId: messageId,
+    ),
+  );
+
+  /// Efface le fichier d'un message à vue unique, une fois refermé.
+  void releaseViewOnce(String url) =>
+      unawaited(_chat.deleteViewOnceFile(url));
 
   Future<void> setEphemeral(int? seconds) async {
     ephemeralSeconds.value = seconds;

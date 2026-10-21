@@ -1201,6 +1201,10 @@ PODS:
     - Firebase/Firestore (= 12.18.0)
     - firebase_core
     - Flutter
+  - cloud_functions (6.4.0):
+    - Firebase/Functions (= 12.18.0)
+    - firebase_core
+    - Flutter
   - CryptoSwift (1.10.0)
   - DKImagePickerController/Core (4.3.9):
     - DKImagePickerController/ImageDataManager
@@ -1244,6 +1248,9 @@ PODS:
   - Firebase/Firestore (12.18.0):
     - Firebase/CoreOnly
     - FirebaseFirestore (~> 12.18.0)
+  - Firebase/Functions (12.18.0):
+    - Firebase/CoreOnly
+    - FirebaseFunctions (~> 12.18.0)
   - Firebase/Messaging (12.18.0):
     - Firebase/CoreOnly
     - FirebaseMessaging (~> 12.18.0)
@@ -1304,6 +1311,14 @@ PODS:
     - gRPC-Core (~> 1.69.0)
     - leveldb-library (~> 1.22)
     - nanopb (~> 3.30910.0)
+  - FirebaseFunctions (12.18.0):
+    - FirebaseAppCheckInterop (~> 12.18.0)
+    - FirebaseAuthInterop (~> 12.18.0)
+    - FirebaseCore (~> 12.18.0)
+    - FirebaseCoreExtension (~> 12.18.0)
+    - FirebaseMessagingInterop (~> 12.18.0)
+    - FirebaseSharedSwift (~> 12.18.0)
+    - GTMSessionFetcher/Core (< 6.0, >= 3.4)
   - FirebaseInstallations (12.18.0):
     - FirebaseCore (~> 12.18.0)
     - GoogleUtilities/Environment (~> 8.1)
@@ -1318,6 +1333,7 @@ PODS:
     - GoogleUtilities/Reachability (~> 8.1)
     - GoogleUtilities/UserDefaults (~> 8.1)
     - nanopb (~> 3.30910.0)
+  - FirebaseMessagingInterop (12.18.0)
   - FirebaseSharedSwift (12.18.0)
   - FirebaseStorage (12.18.0):
     - FirebaseAppCheckInterop (~> 12.18.0)
@@ -1330,6 +1346,8 @@ PODS:
   - flutter_callkit_incoming (0.0.1):
     - CryptoSwift
     - Flutter
+  - flutter_contacts (0.0.1):
+    - Flutter
   - flutter_local_notifications (0.0.1):
     - Flutter
   - flutter_native_splash (2.4.3):
@@ -1337,6 +1355,9 @@ PODS:
   - flutter_webrtc (1.6.0):
     - Flutter
     - WebRTC-SDK (= 144.7559.09)
+  - get_thumbnail_video (0.0.1):
+    - Flutter
+    - libwebp
   - GoogleDataTransport (10.1.1):
     - nanopb (~> 3.30910.0)
     - PromisesObjC (~> 2.4)
@@ -1460,6 +1481,18 @@ PODS:
   - image_picker_ios (0.0.1):
     - Flutter
   - leveldb-library (1.22.6)
+  - libwebp (1.6.0):
+    - libwebp/demux (= 1.6.0)
+    - libwebp/mux (= 1.6.0)
+    - libwebp/sharpyuv (= 1.6.0)
+    - libwebp/webp (= 1.6.0)
+  - libwebp/demux (1.6.0):
+    - libwebp/webp
+  - libwebp/mux (1.6.0):
+    - libwebp/demux
+  - libwebp/sharpyuv (1.6.0)
+  - libwebp/webp (1.6.0):
+    - libwebp/sharpyuv
   - nanopb (3.30910.0):
     - nanopb/decode (= 3.30910.0)
     - nanopb/encode (= 3.30910.0)
@@ -1498,6 +1531,7 @@ PODS:
 DEPENDENCIES:
   - audioplayers_darwin (from `.symlinks/plugins/audioplayers_darwin/darwin`)
   - cloud_firestore (from `.symlinks/plugins/cloud_firestore/ios`)
+  - cloud_functions (from `.symlinks/plugins/cloud_functions/ios`)
   - file_picker (from `.symlinks/plugins/file_picker/ios`)
   - firebase_auth (from `.symlinks/plugins/firebase_auth/ios`)
   - firebase_core (from `.symlinks/plugins/firebase_core/ios`)
@@ -1505,9 +1539,11 @@ DEPENDENCIES:
   - firebase_storage (from `.symlinks/plugins/firebase_storage/ios`)
   - Flutter (from `Flutter`)
   - flutter_callkit_incoming (from `.symlinks/plugins/flutter_callkit_incoming/ios`)
+  - flutter_contacts (from `.symlinks/plugins/flutter_contacts/ios`)
   - flutter_local_notifications (from `.symlinks/plugins/flutter_local_notifications/ios`)
   - flutter_native_splash (from `.symlinks/plugins/flutter_native_splash/ios`)
   - flutter_webrtc (from `.symlinks/plugins/flutter_webrtc/ios`)
+  - get_thumbnail_video (from `.symlinks/plugins/get_thumbnail_video/ios`)
   - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
   - package_info_plus (from `.symlinks/plugins/package_info_plus/ios`)
   - permission_handler_apple (from `.symlinks/plugins/permission_handler_apple/ios`)
@@ -1535,8 +1571,10 @@ SPEC REPOS:
     - FirebaseCoreInternal
     - FirebaseFirestore
     - FirebaseFirestoreInternal
+    - FirebaseFunctions
     - FirebaseInstallations
     - FirebaseMessaging
+    - FirebaseMessagingInterop
     - FirebaseSharedSwift
     - FirebaseStorage
     - GoogleDataTransport
@@ -1545,6 +1583,7 @@ SPEC REPOS:
     - gRPC-Core
     - GTMSessionFetcher
     - leveldb-library
+    - libwebp
     - nanopb
     - PromisesObjC
     - RecaptchaInterop
@@ -1557,6 +1596,8 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/audioplayers_darwin/darwin"
   cloud_firestore:
     :path: ".symlinks/plugins/cloud_firestore/ios"
+  cloud_functions:
+    :path: ".symlinks/plugins/cloud_functions/ios"
   file_picker:
     :path: ".symlinks/plugins/file_picker/ios"
   firebase_auth:
@@ -1571,12 +1612,16 @@ EXTERNAL SOURCES:
     :path: Flutter
   flutter_callkit_incoming:
     :path: ".symlinks/plugins/flutter_callkit_incoming/ios"
+  flutter_contacts:
+    :path: ".symlinks/plugins/flutter_contacts/ios"
   flutter_local_notifications:
     :path: ".symlinks/plugins/flutter_local_notifications/ios"
   flutter_native_splash:
     :path: ".symlinks/plugins/flutter_native_splash/ios"
   flutter_webrtc:
     :path: ".symlinks/plugins/flutter_webrtc/ios"
+  get_thumbnail_video:
+    :path: ".symlinks/plugins/get_thumbnail_video/ios"
   image_picker_ios:
     :path: ".symlinks/plugins/image_picker_ios/ios"
   package_info_plus:
@@ -1603,6 +1648,7 @@ SPEC CHECKSUMS:
   audioplayers_darwin: 835ced6edd4c9fc8ebb0a7cc9e294a91d99917d5
   BoringSSL-GRPC: dded2a44897e45f28f08ae87a55ee4bcd19bc508
   cloud_firestore: 3f0a8af2d865cade8f7db11bc2a419bd66a7237e
+  cloud_functions: 15154e139688f19b75ac4d7b254f16583f3b9a0f
   CryptoSwift: e2e7776512f250e66205955da748e7a4e4abffe0
   DKImagePickerController: 946cec48c7873164274ecc4624d19e3da4c1ef3c
   DKPhotoGallery: b3834fecb755ee09a593d7c9e389d8b5d6deed60
@@ -1620,15 +1666,19 @@ SPEC CHECKSUMS:
   FirebaseCoreInternal: 93b2d5f9e184c6818a04433891c358b0720a6a38
   FirebaseFirestore: a319a7476f34b7f6a0c9e7b123e0506681cc1f1f
   FirebaseFirestoreInternal: fb923514fda3f48f61ffe588d662bc37a5c60bb2
+  FirebaseFunctions: 1b8bc185cb14cc10f6244b2430bcd806ec1a8e7e
   FirebaseInstallations: 933b2747e8594084c9117b65e8358fce29d7ced7
   FirebaseMessaging: 422bb80cbf8ff83e69e50bea4d4984fc4704f665
+  FirebaseMessagingInterop: 2bc0ddbf26a3552c61a2efbecc8b8a3b68d383e4
   FirebaseSharedSwift: 9d9404eea60b650d3e549898bfebbb8f665fe601
   FirebaseStorage: 6dc90a86bf2a8f1dc54a6ca659ae9898465e10a0
   Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
   flutter_callkit_incoming: a143995975818a3717524decd3566d5ca7a8c608
+  flutter_contacts: 2ec1d6b62ca2869c3bbb3871bd74d4e3ef157135
   flutter_local_notifications: 395056b3175ba4f08480a7c5de30cd36d69827e4
   flutter_native_splash: c32d145d68aeda5502d5f543ee38c192065986cf
   flutter_webrtc: f952258e6fa67477d481cfbad2885a4f117922a7
+  get_thumbnail_video: 1a754d46b860dffefcc57b7290a43089cd5d7e58
   GoogleDataTransport: a24e58982ab3ba2f64d79613e027fe7f57e88539
   GoogleUtilities: 4e0c2ad9fa0d0d18b5c4df8bf57b461cba35b0bb
   "gRPC-C++": cc207623316fb041a7a3e774c252cf68a058b9e8
@@ -1636,6 +1686,7 @@ SPEC CHECKSUMS:
   GTMSessionFetcher: a6d2b2aa203485893d4511ff64642dc811f7c09f
   image_picker_ios: e0ece4aa2a75771a7de3fa735d26d90817041326
   leveldb-library: cc8b8f8e013647a295ad3f8cd2ddf49a6f19be19
+  libwebp: af5937a13536ef73f3784d69cc342b98961acf33
   nanopb: fad817b59e0457d11a5dfbde799381cd727c1275
   package_info_plus: af8e2ca6888548050f16fa2f1938db7b5a5df499
   permission_handler_apple: 92d754bbaa7361d436db2d6c3c1c2a0fdcec462e

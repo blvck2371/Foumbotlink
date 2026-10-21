@@ -68,6 +68,10 @@ dependencies:
   flutter_local_notifications: ^18.0.1
   # Lecture des statuts vidéo (24 h) — plugin officiel Flutter.
   video_player: ^2.11.1
+  get_thumbnail_video: ^0.7.3
+  flutter_contacts: ^2.5.0
+  crypto: ^3.0.7
+  cloud_functions: ^6.4.0
 
 dev_dependencies:
   flutter_test:

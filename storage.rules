@@ -73,11 +73,37 @@ service firebase.storage {
     // faisait échouer l'upload du premier média d'une nouvelle
     // conversation (firestore.get renvoie null → règle en erreur → refus
     // "unauthorized").
+    //
+    // Deux plafonds, comme pour les statuts : une vidéo de quelques
+    // dizaines de secondes pèse légitimement plus lourd qu'une photo ou
+    // qu'un document, mais un plafond unique à 60 Mo ouvrirait la porte à
+    // des « photos » de 60 Mo. Le plafond vidéo est tenu en double côté
+    // client (ChatService.maxVideoBytes) pour refuser le fichier avant de
+    // le faire monter pour rien.
+    // `create, update` et `delete` sont séparés à dessein :
+    // `request.resource` est **nul** sur une suppression, si bien qu'une
+    // règle unique parlant de `request.resource.size` refusait toute
+    // suppression — c'est ce qui faisait échouer en silence le ménage des
+    // fichiers joints de `ChatService.deleteMessage`, et ce dont dépend
+    // désormais la consommation d'un message à vue unique.
     match /chat/{conversationId}/{allPaths=**} {
       allow read: if request.auth != null
         && request.auth.uid in conversationId.split('_');
-      allow write: if request.auth != null
-        && request.resource.size < 20 * 1024 * 1024
+
+      allow create, update: if request.auth != null
+        && request.auth.uid in conversationId.split('_')
+        && (
+          (
+            request.resource.contentType.matches('video/.*')
+            && request.resource.size < 60 * 1024 * 1024
+          )
+          || request.resource.size < 20 * 1024 * 1024
+        );
+
+      // Supprimer revient à l'un ou l'autre participant : l'expéditeur
+      // qui retire son message, le destinataire qui vient de consommer un
+      // média à vue unique.
+      allow delete: if request.auth != null
         && request.auth.uid in conversationId.split('_');
     }
 

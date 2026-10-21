@@ -4,6 +4,10 @@ import UserNotifications
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+  /// Retenu par l'AppDelegate : il porte le gestionnaire du canal et les
+  /// observateurs de capture, qui mourraient avec lui.
+  private var screenGuard: ScreenGuard?
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -18,5 +22,8 @@ import UserNotifications
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    screenGuard = ScreenGuard(
+      messenger: engineBridge.applicationRegistrar.messenger()
+    )
   }
 }

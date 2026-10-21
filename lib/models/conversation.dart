@@ -44,6 +44,7 @@ class Conversation {
     return switch (lastMessageType) {
       MessageType.voice => '🎤 Message vocal',
       MessageType.image => '📷 Photo',
+      MessageType.video => '🎥 Vidéo',
       MessageType.document => '📎 ${lastMessage!}',
       MessageType.sticker => lastMessage!,
       _ => lastMessage!,

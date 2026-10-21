@@ -420,6 +420,49 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // -----------------------------------------------------------------
+    // Annuaire d'empreintes de téléphone
+    // -----------------------------------------------------------------
+    //
+    // Permet de retrouver quelqu'un à partir d'un numéro de son
+    // répertoire, sans qu'aucun numéro ne circule en clair : la clé du
+    // document est l'empreinte SHA-256 du numéro (voir PhoneContact).
+    //
+    // **Personne ne peut lire cette collection.** Ni le propriétaire, ni
+    // un tiers, ni même un compte validé. Il n'y a que quelques dizaines
+    // de millions de numéros camerounais possibles : lisible, l'annuaire
+    // se reconstituerait par force brute en générant les empreintes de
+    // tous les numéros. La comparaison se fait dans `matchContacts`, une
+    // Cloud Function qui passe par l'Admin SDK et borne le nombre
+    // d'empreintes par appel.
+    // Décompte journalier des recherches de contacts, tenu par la Cloud
+    // Function `matchContacts`.
+    //
+    // Fermé des deux côtés : lisible par personne, modifiable par
+    // personne. Le laisser accessible à son propriétaire lui permettrait
+    // de remettre son compteur à zéro depuis l'app, ce qui viderait la
+    // protection de son sens.
+    match /contactMatchQuota/{uid} {
+      allow read, write: if false;
+    }
+
+    match /phoneDirectory/{hash} {
+      allow read: if false;
+
+      // Chacun n'inscrit qu'une empreinte pointant sur lui-même. Il n'a
+      // pas à prouver qu'il possède le numéro — l'app le lui a fait
+      // saisir — mais il ne peut pas en revendiquer un pour le compte
+      // d'autrui.
+      allow create, update: if request.auth != null
+        && request.resource.data.uid == request.auth.uid;
+
+      // Suppression réservée à celui qui l'a inscrite : retirer son
+      // numéro doit le rendre introuvable, et personne ne doit pouvoir
+      // rendre quelqu'un d'autre introuvable.
+      allow delete: if request.auth != null
+        && resource.data.uid == request.auth.uid;
+    }
+
     match /dossiers/{dossierId} {
       // Le propriétaire suit son dossier ; la structure qui l'a reçu le
       // traite. Personne d'autre n'y a accès — un dossier administratif
@@ -517,7 +560,7 @@ service cloud.firestore {
               request.auth.uid == resource.data.senderUid
               && request.resource.data.diff(resource.data).affectedKeys()
                    .hasOnly(['deleted', 'content', 'fileName', 'durationMs',
-                             'reactions'])
+                             'thumbUrl', 'reactions'])
               && request.resource.data.deleted == true
               && request.resource.data.content == ''
               // Retirer un message à tout le monde n'est offert que
@@ -528,6 +571,37 @@ service cloud.firestore {
               // L'app masque déjà l'option ; la règle est ce qui la rend
               // vraie.
               && request.time < resource.data.createdAt + duration.value(60, 'h')
+            )
+            // Consommation d'un message à vue unique. C'est le
+            // **destinataire** qui écrit, et seulement lui : l'expéditeur
+            // brûlerait son propre message avant que l'autre l'ait vu.
+            //
+            // Une seule fois — `viewOnceOpenedAt` doit être absent avant
+            // l'écriture — et le contenu part dans le même geste, pour que
+            // l'URL ne reste pas lisible dans la base à qui saurait l'y
+            // chercher. Voir ChatService.consumeViewOnce.
+            || (
+              resource.data.get('viewOnce', false) == true
+              && !resource.data.keys().hasAny(['viewOnceOpenedAt'])
+              && request.auth.uid != resource.data.senderUid
+              && request.resource.data.diff(resource.data).affectedKeys()
+                   .hasOnly(['viewOnceOpenedAt', 'content', 'thumbUrl'])
+              && request.resource.data.viewOnceOpenedAt == request.time
+              && request.resource.data.content == ''
+              && !request.resource.data.keys().hasAny(['thumbUrl'])
+            )
+            // Signalement d'une capture d'écran sur un message à vue
+            // unique. Écrit par le destinataire, une seule fois, et lu
+            // par l'expéditeur. On ne peut pas empêcher la capture sur
+            // iOS — le système ne prévient qu'après —, mais celui qui a
+            // envoyé a le droit de l'apprendre.
+            || (
+              resource.data.get('viewOnce', false) == true
+              && !resource.data.keys().hasAny(['screenshotAt'])
+              && request.auth.uid != resource.data.senderUid
+              && request.resource.data.diff(resource.data).affectedKeys()
+                   .hasOnly(['screenshotAt'])
+              && request.resource.data.screenshotAt == request.time
             )
             // « Supprimer pour moi » : chacun peut s'ajouter ou se
             // retirer de `hiddenFor`, personne d'autre. Le message reste

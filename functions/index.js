@@ -25,6 +25,7 @@ const {getFirestore, FieldValue} = require("firebase-admin/firestore");
 const {getMessaging} = require("firebase-admin/messaging");
 const {getStorage} = require("firebase-admin/storage");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
+const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const logger = require("firebase-functions/logger");
 const {marketKeywords, backfillListing} =
   require("./market_backfill");
@@ -272,6 +273,7 @@ exports.onCallUpdated = onDocumentUpdated("calls/{callId}", async (event) => {
 const MESSAGE_PREVIEWS = {
   voice: "🎤 Message vocal",
   image: "📷 Photo",
+  video: "🎥 Vidéo",
   sticker: null, // le contenu est déjà l'emoji lui-même
 };
 
@@ -290,9 +292,19 @@ exports.onMessageCreated = onDocumentCreated(
       if (!recipient) return;
 
       const senderName = await displayName(msg.senderUid, "Quelqu'un");
-      const body = msg.type === "document" ?
-        (msg.fileName || "📎 Document") :
-        (MESSAGE_PREVIEWS[msg.type] || preview(msg.content));
+      // Un message à vue unique ne livre pas son type au-delà du
+      // nécessaire, et surtout pas son contenu : la notification se lit
+      // sur un écran verrouillé, sans que personne l'ait ouvert.
+      const viewOnceNouns = {
+        voice: "Message vocal",
+        video: "Vidéo",
+        image: "Photo",
+      };
+      const body = msg.viewOnce && viewOnceNouns[msg.type] ?
+        `👁 ${viewOnceNouns[msg.type]} · vue unique` :
+        msg.type === "document" ?
+          (msg.fileName || "📎 Document") :
+          (MESSAGE_PREVIEWS[msg.type] || preview(msg.content));
 
       await notifyUser(recipient, {
         type: "message",
@@ -309,6 +321,173 @@ exports.onMessageCreated = onDocumentCreated(
 // Publications — like, commentaire/réponse, nouvelle publication (aux
 // abonnés de l'auteur).
 // ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// Rapprochement du répertoire téléphonique
+// ---------------------------------------------------------------------
+
+/**
+ * Nombre d'empreintes acceptées par appel.
+ *
+ * Un répertoire ordinaire compte quelques centaines de numéros. Le
+ * plafond n'est pas là pour eux : il est là pour qu'on ne puisse pas se
+ * servir de cette fonction pour balayer l'espace des numéros
+ * camerounais. Un répertoire plus gros est découpé côté app.
+ */
+const MAX_CONTACT_HASHES = 500;
+
+/**
+ * Plafonds journaliers par compte.
+ *
+ * Le plafond par appel ralentit un balayage, il ne l'interdit pas :
+ * rien n'empêchait d'appeler la fonction en boucle, 500 empreintes à la
+ * fois, pour tester des numéros générés. Ces deux bornes le rendent sans
+ * intérêt — 5 000 numéros testables par jour, là où un seul préfixe
+ * d'opérateur en compte un million.
+ *
+ * Calibrés large pour les usages réels : un répertoire bien fourni
+ * compte quelques centaines de numéros, soit un ou deux appels, et on
+ * peut relancer la recherche plusieurs fois par jour sans jamais s'en
+ * approcher.
+ */
+const MAX_CONTACT_HASHES_PER_DAY = 5000;
+const MAX_CONTACT_CALLS_PER_DAY = 20;
+
+/**
+ * Jour courant à Foumbot, au format `AAAA-MM-JJ`.
+ *
+ * Le quota doit se remettre à zéro à minuit **ici**, pas à Londres :
+ * sinon il repartirait à neuf en pleine journée. Le Cameroun est à
+ * UTC+1 toute l'année, sans heure d'été — un simple décalage suffit.
+ */
+function douaLaDayKey(now = new Date()) {
+  const shifted = new Date(now.getTime() + 60 * 60 * 1000);
+  return shifted.toISOString().slice(0, 10);
+}
+
+/**
+ * Décompte l'appel, ou refuse s'il dépasse le quota du jour.
+ *
+ * Le compteur vit dans `contactMatchQuota/{uid}`, une collection
+ * qu'aucun client ne peut ni lire ni écrire : la remettre à zéro depuis
+ * l'app viderait la protection de son sens. La transaction évite que
+ * plusieurs appels simultanés passent chacun sous le plafond.
+ */
+async function consumeContactQuota(uid, hashCount) {
+  const ref = db.doc(`contactMatchQuota/${uid}`);
+  const today = douaLaDayKey();
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.exists ? snap.data() : {};
+    // Un nouveau jour repart de zéro, sans qu'aucun ménage n'ait à
+    // tourner : le jour stocké fait foi.
+    const sameDay = data.day === today;
+    const calls = sameDay ? (data.calls || 0) : 0;
+    const hashes = sameDay ? (data.hashes || 0) : 0;
+
+    if (calls + 1 > MAX_CONTACT_CALLS_PER_DAY ||
+        hashes + hashCount > MAX_CONTACT_HASHES_PER_DAY) {
+      throw new HttpsError(
+          "resource-exhausted",
+          "Vous avez atteint la limite de recherches pour aujourd'hui. " +
+          "Réessayez demain.",
+      );
+    }
+
+    tx.set(ref, {
+      day: today,
+      calls: calls + 1,
+      hashes: hashes + hashCount,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+}
+
+/**
+ * Retrouve, parmi les empreintes envoyées, celles qui correspondent à un
+ * compte de l'application.
+ *
+ * L'app n'envoie **jamais** de numéros : elle envoie des empreintes
+ * SHA-256, et ne reçoit en retour que les comptes trouvés — jamais
+ * l'information « ce numéro-là n'existe pas », qui suffirait à
+ * transformer la fonction en annuaire inversé.
+ *
+ * La collection `phoneDirectory` n'est lisible par aucun client (voir
+ * firestore.rules) : c'est ici, avec les droits de l'Admin SDK, que la
+ * comparaison a lieu.
+ */
+exports.matchContacts = onCall(async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) {
+    throw new HttpsError(
+        "unauthenticated",
+        "Connectez-vous pour retrouver vos contacts.",
+    );
+  }
+
+  const hashes = Array.isArray(request.data && request.data.hashes) ?
+    request.data.hashes :
+    [];
+  if (!hashes.length) return {matches: []};
+  if (hashes.length > MAX_CONTACT_HASHES) {
+    throw new HttpsError(
+        "invalid-argument",
+        `Envoyez au plus ${MAX_CONTACT_HASHES} empreintes par appel.`,
+    );
+  }
+
+  // Une empreinte SHA-256 fait 64 caractères hexadécimaux : tout le
+  // reste est écarté sans même être cherché.
+  const valid = hashes
+      .filter((h) => typeof h === "string" && /^[0-9a-f]{64}$/.test(h));
+  if (!valid.length) return {matches: []};
+
+  // Décompté avant toute lecture de l'annuaire : un appel refusé ne doit
+  // rien apprendre, pas même que l'annuaire a été consulté.
+  await consumeContactQuota(uid, valid.length);
+
+  // `getAll` accepte une centaine de références par appel ; on découpe.
+  const refs = valid.map((h) => db.doc(`phoneDirectory/${h}`));
+  const found = new Set();
+  for (let i = 0; i < refs.length; i += 100) {
+    const snaps = await db.getAll(...refs.slice(i, i + 100));
+    for (const snap of snaps) {
+      if (!snap.exists) continue;
+      const owner = snap.data().uid;
+      // On ne se propose pas à soi-même.
+      if (owner && owner !== uid) found.add(owner);
+    }
+  }
+  if (!found.size) return {matches: []};
+
+  // Les comptes déjà suivis n'ont rien à faire dans une liste de
+  // suggestions : la personne les a déjà trouvés.
+  const following = new Set();
+  const followingSnap = await db.collection(`users/${uid}/following`).get();
+  followingSnap.forEach((doc) => following.add(doc.id));
+
+  const matches = [];
+  for (const owner of found) {
+    if (following.has(owner)) continue;
+    const userSnap = await db.doc(`users/${owner}`).get();
+    if (!userSnap.exists) continue;
+    const data = userSnap.data();
+    matches.push({
+      uid: owner,
+      displayName: data.displayName || "Habitant",
+      photoUrl: data.photoUrl || null,
+      accountType: data.accountType || "personal",
+      verified: data.verified === true,
+    });
+  }
+
+  logger.info(
+      `matchContacts : ${valid.length} empreinte(s) pour ${uid}, ` +
+      `${matches.length} suggestion(s).`,
+  );
+  return {matches};
+});
 
 // ---------------------------------------------------------------------
 // Suivi des dossiers déposés au guichet

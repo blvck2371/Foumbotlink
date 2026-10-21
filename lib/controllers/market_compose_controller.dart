@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'dart:developer' as developer;
 
 import 'package:flutter/widgets.dart';
@@ -59,17 +61,23 @@ class MarketComposeController extends GetxController {
     if (args is MarketItem) {
       _loadForEdit(args);
     } else {
-      _prefillPhoneFromProfile();
+      unawaited(_prefillPhoneFromProfile());
     }
   }
 
   /// Le numéro du profil est proposé par défaut : à Foumbot c'est le même
   /// dans 99 % des cas, et le saisir à chaque annonce est la première
   /// raison d'abandonner un formulaire.
-  void _prefillPhoneFromProfile() {
-    final profile = Get.find<UserProfileService>().profile.value;
-    final phone = profile?.phoneNumber?.trim() ?? '';
-    if (phone.isNotEmpty) phoneCtrl.text = phone;
+  ///
+  /// Lu dans les coordonnées privées, pas sur le profil public : le
+  /// numéro n'y figure plus, il aurait suffi d'une requête pour aspirer
+  /// celui de toute la commune.
+  Future<void> _prefillPhoneFromProfile() async {
+    final contact = await Get.find<UserProfileService>().loadContact();
+    final phone = contact.phoneNumber?.trim() ?? '';
+    // L'écran a pu être quitté, ou quelque chose déjà saisi, pendant la
+    // lecture : dans les deux cas on ne touche à rien.
+    if (phone.isNotEmpty && phoneCtrl.text.isEmpty) phoneCtrl.text = phone;
   }
 
   Future<void> _loadForEdit(MarketItem item) async {

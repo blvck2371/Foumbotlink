@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
@@ -7,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart' show ImageSource;
 import 'package:intl/intl.dart';
 
 import '../../controllers/chat_controller.dart';
@@ -14,15 +16,18 @@ import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
 import '../../routes/app_routes.dart';
 import '../../services/chat_service.dart' show ChatActivity, ChatService;
+import '../../services/screen_guard.dart';
 import '../../services/user_profile_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/feed_image.dart';
 import '../../widgets/safety_notice.dart';
 import '../../widgets/chat_activity_line.dart';
+import '../../widgets/chat_video_viewer.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/foumbot_loader.dart';
 import '../../widgets/post_image_viewer.dart';
+import '../../widgets/sealed_image_viewer.dart';
 import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
 
@@ -1061,8 +1066,25 @@ class _MessageBubbleState extends State<_MessageBubble> {
   bool _playing = false;
   bool _playerInit = false;
 
+  /// URL d'un message à vue unique en cours de lecture.
+  ///
+  /// Une fois consommé, le message n'a plus d'URL dans la base — la
+  /// bulle se reconstruit avec un `content` vide. Le vocal, lui,
+  /// continue de jouer : on garde donc l'adresse ici, le temps de
+  /// l'écoute, et la bulle affiche sa forme d'onde plutôt que « ouvert ».
+  String? _viewOnceUrl;
+
+  /// Écoute des captures d'écran pendant la lecture d'un vocal à vue
+  /// unique. Les deux autres types la tiennent dans leur propre portée,
+  /// le vocal seul survit au retour de [_openViewOnce].
+  StreamSubscription<void>? _viewOnceShots;
+
   @override
   void dispose() {
+    // Avant le player : l'écoute d'un vocal à vue unique tient une
+    // protection d'écran, qu'il faut rendre même si on sort de l'écran
+    // en plein milieu.
+    _endViewOnceVoice();
     _player?.dispose();
     super.dispose();
   }
@@ -1115,7 +1137,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
               ],
             ),
             child: Container(
-              padding: msg.type == MessageType.image
+              padding: msg.isMediaBubble
                   ? const EdgeInsets.all(4)
                   : const EdgeInsets.fromLTRB(14, 10, 14, 6),
               child: Column(
@@ -1126,9 +1148,9 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   if (msg.isReply)
                     Padding(
                       padding: EdgeInsets.only(
-                        top: msg.type == MessageType.image ? 8 : 0,
-                        left: msg.type == MessageType.image ? 8 : 0,
-                        right: msg.type == MessageType.image ? 8 : 0,
+                        top: msg.isMediaBubble ? 8 : 0,
+                        left: msg.isMediaBubble ? 8 : 0,
+                        right: msg.isMediaBubble ? 8 : 0,
                         bottom: 6,
                       ),
                       child: _QuotedReply(
@@ -1158,14 +1180,14 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   _buildContent(msg, textColor, isDark),
                   if (msg.reactions.isNotEmpty)
                     Padding(
-                      padding: msg.type == MessageType.image
+                      padding: msg.isMediaBubble
                           ? const EdgeInsets.only(left: 8, right: 8, top: 6)
                           : const EdgeInsets.only(top: 6),
                       child: _buildReactions(msg, colors),
                     ),
                   const SizedBox(height: 4),
                   Padding(
-                    padding: msg.type == MessageType.image
+                    padding: msg.isMediaBubble
                         ? const EdgeInsets.only(right: 8, bottom: 4)
                         : EdgeInsets.zero,
                     child: _buildStatusRow(msg, time, timeColor, colors),
@@ -1268,20 +1290,25 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   Navigator.of(sheetContext).pop();
                 },
               ),
-            ListTile(
-              leading: Icon(Icons.forward_rounded, color: ink),
-              title: Text(
-                'Transférer',
-                style: GoogleFonts.manrope(
-                  fontWeight: FontWeight.w600,
-                  color: ink,
+            // Un message à vue unique ne se transfère pas : la copie
+            // vivrait ailleurs, hors de portée de la consommation.
+            // `ChatController.forwardMessage` le refuse aussi — ici, on
+            // évite simplement de proposer ce qui n'aboutira pas.
+            if (!msg.viewOnce)
+              ListTile(
+                leading: Icon(Icons.forward_rounded, color: ink),
+                title: Text(
+                  'Transférer',
+                  style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w600,
+                    color: ink,
+                  ),
                 ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _showForwardPicker(context, msg);
+                },
               ),
-              onTap: () {
-                Navigator.of(sheetContext).pop();
-                _showForwardPicker(context, msg);
-              },
-            ),
             // Retirer de son propre affichage : toujours offert, quel que
             // soit l'expéditeur et l'âge du message.
             ListTile(
@@ -1594,6 +1621,14 @@ class _MessageBubbleState extends State<_MessageBubble> {
         ],
       );
     }
+    // Un message à vue unique ne montre rien tant qu'on ne l'a pas ouvert
+    // — y compris à qui l'a envoyé, qui le consommerait sinon avant que
+    // l'autre l'ait vu. Le vocal fait exception le temps qu'il joue :
+    // `_viewOnceUrl` porte alors l'adresse récupérée à l'ouverture.
+    if (msg.viewOnce && msg.supportsViewOnce && _viewOnceUrl == null) {
+      return _buildViewOnce(msg, textColor);
+    }
+
     return switch (msg.type) {
       MessageType.text => Text(
         msg.content,
@@ -1606,8 +1641,107 @@ class _MessageBubbleState extends State<_MessageBubble> {
       MessageType.voice => _buildVoice(msg, textColor),
       MessageType.image =>
         widget.album.length > 1 ? _buildAlbum(widget.album) : _buildImage(msg),
+      MessageType.video => _buildVideo(msg),
       MessageType.document => _buildDocument(msg, textColor),
     };
+  }
+
+  /// Bulle d'un message à vue unique : un cachet, pas un contenu.
+  ///
+  /// Trois états, et un seul est ouvrable :
+  /// * déjà ouvert — il n'en reste que la trace, pour personne ;
+  /// * reçu et intact — appuyer l'ouvre, une fois ;
+  /// * envoyé et intact — visible mais fermé, car l'ouvrir le
+  ///   consommerait avant que le destinataire l'ait vu.
+  Widget _buildViewOnce(ChatMessage msg, Color textColor) {
+    final noun = switch (msg.type) {
+      MessageType.voice => 'Message vocal',
+      MessageType.video => 'Vidéo',
+      _ => 'Photo',
+    };
+    final consumed = msg.viewOnceConsumed;
+    // `isMine` suffit : le seul autre participant d'une conversation est
+    // le destinataire, et lui seul peut ouvrir.
+    final canOpen = !consumed && !widget.isMine && !msg.deleted;
+
+    final tint = textColor.withValues(alpha: consumed ? 0.45 : 1);
+    final label = consumed
+        ? '$noun ouvert'
+        : canOpen
+        ? '$noun · appuyer pour voir'
+        : '$noun · vue unique';
+
+    final body = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: tint.withValues(alpha: 0.5), width: 1.4),
+          ),
+          child: Icon(
+            consumed
+                ? Icons.visibility_off_outlined
+                : Icons.looks_one_outlined,
+            size: 19,
+            color: tint,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text(
+            label,
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              fontWeight: consumed ? FontWeight.w400 : FontWeight.w600,
+              fontStyle: consumed ? FontStyle.italic : FontStyle.normal,
+              color: tint,
+            ),
+          ),
+        ),
+      ],
+    );
+
+    // La capture est signalée à qui a envoyé, pas à qui l'a prise : c'est
+    // lui que ça concerne, et il n'y a rien à apprendre à l'autre.
+    final withNotice = (widget.isMine && msg.wasScreenshotted)
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              body,
+              const SizedBox(height: 8),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.screenshot_monitor_outlined,
+                    size: 15,
+                    color: textColor.withValues(alpha: 0.7),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Capture d’écran',
+                    style: GoogleFonts.manrope(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: textColor.withValues(alpha: 0.7),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          )
+        : body;
+
+    if (!canOpen) return withNotice;
+    return GestureDetector(
+      onTap: () => _openViewOnce(msg),
+      behavior: HitTestBehavior.opaque,
+      child: withNotice,
+    );
   }
 
   Widget _buildVoice(ChatMessage msg, Color textColor) {
@@ -1649,7 +1783,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
               ),
               const SizedBox(height: 2),
               Text(
-                msg.voiceDurationLabel,
+                msg.durationLabel,
                 style: GoogleFonts.spaceGrotesk(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
@@ -1663,6 +1797,96 @@ class _MessageBubbleState extends State<_MessageBubble> {
     );
   }
 
+  /// Ouvre un message à vue unique : on le consomme d'abord, on l'affiche
+  /// ensuite, et le fichier part une fois refermé.
+  ///
+  /// Deux protections, de natures différentes, pendant tout l'affichage :
+  /// l'écran est verrouillé contre la capture (Android) ou surveillé
+  /// (iOS), et une capture détectée est signalée à l'expéditeur — c'est
+  /// tout ce qu'on peut faire d'une capture qu'on n'apprend qu'après.
+  Future<void> _openViewOnce(ChatMessage msg) async {
+    final chat = Get.find<ChatController>();
+    final url = await chat.openViewOnce(msg);
+    if (url == null || !mounted) return;
+
+    // Le vocal se joue dans la bulle : il n'a pas de visionneuse à
+    // refermer, donc rien ici ne peut l'attendre. C'est la fin de la
+    // lecture qui referme — et qui rend la protection et efface le
+    // fichier (voir [_endViewOnceVoice]). Le libérer au retour, comme
+    // pour les deux autres, couperait le son en pleine écoute.
+    if (msg.type == MessageType.voice) {
+      await ScreenGuard.acquire();
+      // Posés **avant** le contrôle de montage : c'est `_viewOnceUrl` qui
+      // dit à `_endViewOnceVoice` qu'il y a quelque chose à rendre. Pris
+      // dans l'autre ordre, quitter l'écran à cet instant précis laissait
+      // le verrou d'écran posé pour de bon.
+      _viewOnceUrl = url;
+      _viewOnceShots = ScreenGuard.onScreenshot.listen(
+        (_) => chat.reportScreenshot(msg.id),
+      );
+      if (!mounted) {
+        _endViewOnceVoice();
+        return;
+      }
+      setState(() {});
+      try {
+        await _togglePlayVoice();
+      } on Exception {
+        _endViewOnceVoice();
+        rethrow;
+      }
+      return;
+    }
+
+    final shots = ScreenGuard.onScreenshot.listen(
+      (_) => chat.reportScreenshot(msg.id),
+    );
+    try {
+      switch (msg.type) {
+        case MessageType.image:
+          await ScreenGuard.guard(
+            () => openSealedImageViewer(context, imageUrl: url),
+          );
+        case MessageType.video:
+          await ScreenGuard.guard(
+            () => openChatVideoViewer(
+              context,
+              source: url,
+              heroTag: 'chat_viewonce_${msg.id}',
+              sealed: true,
+            ),
+          );
+        case MessageType.text:
+        case MessageType.document:
+        case MessageType.sticker:
+        case MessageType.voice:
+          break;
+      }
+    } finally {
+      await shots.cancel();
+    }
+    chat.releaseViewOnce(url);
+  }
+
+  /// Referme un vocal à vue unique : le fichier part, la protection
+  /// d'écran est rendue, et la bulle repasse à « ouvert ».
+  ///
+  /// Appelée à la fin de la lecture — et par [dispose] si on quitte
+  /// l'écran avant, sans quoi la fenêtre resterait protégée pour rien.
+  void _endViewOnceVoice() {
+    unawaited(_viewOnceShots?.cancel());
+    _viewOnceShots = null;
+    final consumed = _viewOnceUrl;
+    if (consumed == null) return;
+    _viewOnceUrl = null;
+    // Appelé aussi depuis `dispose()`, où GetX a pu retirer le contrôleur
+    // avant nous. Le verrou d'écran, lui, se rend dans tous les cas.
+    if (Get.isRegistered<ChatController>()) {
+      Get.find<ChatController>().releaseViewOnce(consumed);
+    }
+    unawaited(ScreenGuard.release());
+  }
+
   Future<void> _togglePlayVoice() async {
     if (_playing) {
       await _player?.pause();
@@ -1673,12 +1897,18 @@ class _MessageBubbleState extends State<_MessageBubble> {
     if (!_playerInit) {
       _player = AudioPlayer();
       _player!.onPlayerComplete.listen((_) {
-        if (mounted) setState(() => _playing = false);
+        if (!mounted) return;
+        // Vocal à vue unique : la fin de la lecture est le moment où il
+        // se referme.
+        setState(() {
+          _playing = false;
+          _endViewOnceVoice();
+        });
       });
       _playerInit = true;
     }
 
-    final content = widget.message.content;
+    final content = _viewOnceUrl ?? widget.message.content;
     await _player!.play(
       _isRemote(content) ? UrlSource(content) : DeviceFileSource(content),
     );
@@ -1756,6 +1986,144 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   color: AppColors.gray,
                 ),
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Bulle vidéo : une tuile, pas un lecteur.
+  ///
+  /// Rien n'est décodé ici — ni première image, ni lecture. Une
+  /// discussion peut aligner plusieurs vidéos, et autant de décodeurs
+  /// installés en même temps mettent à genoux un téléphone d'entrée de
+  /// gamme rien qu'en défilant. L'appui ouvre la visionneuse, qui en
+  /// ouvre **un** (voir `openChatVideoViewer`).
+  ///
+  /// L'aperçu affiché est [ChatMessage.thumbUrl], extrait du fichier à
+  /// l'envoi. Une vidéo reçue sans vignette — envoyée par une version
+  /// antérieure, ou extraction ratée — retombe sur la tuile nue, qui
+  /// reste parfaitement utilisable.
+  Widget _buildVideo(ChatMessage msg) {
+    const width = 220.0;
+    const height = 150.0;
+    final thumb = msg.thumbUrl;
+
+    return GestureDetector(
+      onTap: () => openChatVideoViewer(
+        context,
+        source: msg.content,
+        heroTag: 'chat_video_${msg.id}',
+      ),
+      child: Hero(
+        tag: 'chat_video_${msg.id}',
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            width: width,
+            height: height,
+            color: AppColors.black.withValues(alpha: 0.88),
+            child: Stack(
+              children: [
+                // Aperçu extrait à l'envoi : une image ordinaire, donc
+                // mise en cache et sans décodeur vidéo. Chemin local tant
+                // que le message n'est pas parti, URL ensuite — même
+                // convention que `content`.
+                if (thumb != null)
+                  Positioned.fill(
+                    child: _isRemote(thumb)
+                        ? CachedNetworkImage(
+                            imageUrl: thumb,
+                            fit: BoxFit.cover,
+                            errorWidget: (_, _, _) => const SizedBox.shrink(),
+                          )
+                        : Image.file(
+                            File(thumb),
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                          ),
+                  ),
+                // Voile sombre : le bouton de lecture et la durée sont
+                // blancs, et une vignette claire les effacerait.
+                if (thumb != null)
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            AppColors.black.withValues(alpha: 0.34),
+                            AppColors.black.withValues(alpha: 0.12),
+                            AppColors.black.withValues(alpha: 0.44),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  top: 8,
+                  left: 10,
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.videocam_rounded,
+                        size: 15,
+                        color: AppColors.whiteMuted,
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        'Vidéo',
+                        style: GoogleFonts.manrope(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.4,
+                          color: AppColors.whiteMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Center(
+                  child: Container(
+                    width: 52,
+                    height: 52,
+                    decoration: const BoxDecoration(
+                      color: AppColors.orange,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow_rounded,
+                      color: AppColors.white,
+                      size: 32,
+                    ),
+                  ),
+                ),
+                if (msg.durationMs != null)
+                  Positioned(
+                    right: 8,
+                    bottom: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.black.withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        msg.durationLabel,
+                        style: GoogleFonts.spaceGrotesk(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
@@ -2393,6 +2761,8 @@ class _InputBar extends GetView<ChatController> {
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (controller.viewOnceArmed.value)
+              _ViewOnceBanner(onCancel: controller.toggleViewOnce),
             if (replying != null)
               _ReplyComposerBanner(
                 message: replying,
@@ -2508,7 +2878,17 @@ class _InputBar extends GetView<ChatController> {
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 18),
+                Obx(
+                  () => _ViewOnceSwitch(
+                    armed: controller.viewOnceArmed.value,
+                    isDark: isDark,
+                    ink: ink,
+                    muted: muted,
+                    onChanged: (_) => controller.toggleViewOnce(),
+                  ),
+                ),
+                const SizedBox(height: 18),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
@@ -2520,6 +2900,16 @@ class _InputBar extends GetView<ChatController> {
                       onTap: () {
                         Get.back();
                         controller.pickAndSendImage();
+                      },
+                    ),
+                    _AttachOption(
+                      icon: Icons.videocam_rounded,
+                      label: 'Vidéo',
+                      color: AppColors.orangeDeep,
+                      isDark: isDark,
+                      onTap: () {
+                        Get.back();
+                        controller.pickAndSendVideo(ImageSource.gallery);
                       },
                     ),
                     _AttachOption(
@@ -2549,6 +2939,135 @@ class _InputBar extends GetView<ChatController> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// « Le prochain média part à vue unique ».
+///
+/// Posé ici plutôt que dans la barre de saisie : c'est le geste
+/// d'attacher qui appelle la question, et la barre porte déjà cinq
+/// commandes. Une fois armé, [_ViewOnceBanner] le rappelle au-dessus de
+/// la saisie — sans quoi on enverrait à vue unique sans le savoir.
+/// Rappel, juste au-dessus de la saisie, que le prochain média partira à
+/// vue unique — avec de quoi se dédire.
+///
+/// Un envoi à vue unique ne se rattrape pas : le destinataire l'ouvre, et
+/// il n'en reste rien. Le réglage ne doit donc jamais être invisible au
+/// moment d'appuyer.
+class _ViewOnceBanner extends StatelessWidget {
+  const _ViewOnceBanner({required this.onCancel});
+
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(6, 0, 6, 6),
+      padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+      decoration: BoxDecoration(
+        color: AppColors.orange.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.looks_one_outlined,
+            size: 18,
+            color: AppColors.orangeReadable,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Vue unique : le prochain média ne se verra qu’une fois',
+              style: GoogleFonts.manrope(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: AppColors.orangeReadable,
+              ),
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Annuler la vue unique',
+            icon: const Icon(
+              Icons.close_rounded,
+              size: 18,
+              color: AppColors.orangeReadable,
+            ),
+            onPressed: onCancel,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ViewOnceSwitch extends StatelessWidget {
+  const _ViewOnceSwitch({
+    required this.armed,
+    required this.isDark,
+    required this.ink,
+    required this.muted,
+    required this.onChanged,
+  });
+
+  final bool armed;
+  final bool isDark;
+  final Color ink;
+  final Color muted;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: armed
+            ? AppColors.orange.withValues(alpha: 0.10)
+            : (isDark ? AppColors.blackSoft : AppColors.whiteSoft),
+        border: Border.all(
+          color: armed
+              ? AppColors.orange.withValues(alpha: 0.45)
+              : muted.withValues(alpha: 0.15),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.looks_one_outlined,
+            size: 22,
+            color: armed ? AppColors.orange : muted,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Vue unique',
+                  style: GoogleFonts.manrope(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w700,
+                    color: ink,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Photo, vidéo ou vocal lisible une seule fois',
+                  style: GoogleFonts.manrope(fontSize: 12, color: muted),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: armed,
+            activeThumbColor: AppColors.orange,
+            onChanged: onChanged,
+          ),
+        ],
       ),
     );
   }

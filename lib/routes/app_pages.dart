@@ -19,6 +19,7 @@ import '../screens/auth/auth_screen.dart';
 import '../screens/call/call_screen.dart';
 import '../screens/chat/chat_screen.dart';
 import '../screens/chat/conversations_screen.dart';
+import '../screens/community/contact_suggestions_screen.dart';
 import '../screens/community/community_screen.dart';
 import '../screens/compose/compose_screen.dart';
 import '../screens/feed/feed_post_screen.dart';
@@ -211,6 +212,14 @@ class AppPages {
       transition: Transition.cupertino,
       transitionDuration: const Duration(milliseconds: 320),
     ),
+    GetPage(
+      name: AppRoutes.contactSuggestions,
+      page: () => const ContactSuggestionsScreen(),
+      binding: ContactsBinding(),
+      transition: Transition.cupertino,
+      transitionDuration: const Duration(milliseconds: 320),
+    ),
+
     GetPage(
       name: AppRoutes.notifications,
       page: () => const NotificationsScreen(),

@@ -7,6 +7,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:get/get.dart';
 
 import '../models/account_type.dart';
+import '../models/phone_contact.dart';
 import '../models/user_profile.dart';
 import 'auth_service.dart';
 import 'dossier_service.dart';
@@ -145,6 +146,23 @@ class UserProfileService extends GetxService {
       createdAt: DateTime.now(),
     );
     await _usersRef.doc(user.uid).set(created.toMap());
+    // Coordonnées hors du document public — voir UserProfile.toMap.
+    if ((email != null && email.isNotEmpty) ||
+        (phoneNumber != null && phoneNumber.isNotEmpty)) {
+      unawaited(
+        _privateContactRef(user.uid).set({
+          if (email != null && email.isNotEmpty) 'email': email,
+          if (phoneNumber != null && phoneNumber.isNotEmpty)
+            'phoneNumber': phoneNumber,
+        }, SetOptions(merge: true)).catchError((Object e) {
+          developer.log(
+            'Coordonnées privées',
+            name: 'UserProfileService',
+            error: e,
+          );
+        }),
+      );
+    }
     profile.value = created;
     isLoading.value = false;
 
@@ -172,6 +190,100 @@ class UserProfileService extends GetxService {
     );
 
     return created;
+  }
+
+  // -----------------------------------------------------------------------
+  // Coordonnées privées et annuaire d'empreintes
+  // -----------------------------------------------------------------------
+
+  /// `users/{uid}/private/contact` — e-mail et téléphone, lisibles par
+  /// leur seul propriétaire.
+  DocumentReference<Map<String, dynamic>> _privateContactRef(String uid) =>
+      _usersRef.doc(uid).collection('private').doc('contact');
+
+  /// `phoneDirectory/{empreinte}` — l'annuaire qui permet de retrouver
+  /// quelqu'un à partir d'un numéro de son répertoire.
+  ///
+  /// **Aucun client ne peut le lire** : seule la Cloud Function
+  /// `matchContacts` y accède, avec les droits de l'Admin SDK. Sans quoi
+  /// il suffirait de générer les quelques dizaines de millions de numéros
+  /// camerounais possibles pour reconstituer l'annuaire de la commune.
+  DocumentReference<Map<String, dynamic>> _phoneDirectoryRef(String hash) =>
+      _db.collection('phoneDirectory').doc(hash);
+
+  /// Les coordonnées privées de la session.
+  Future<({String? email, String? phoneNumber})> loadContact() async {
+    final uid = _auth.isSignedIn ? _auth.uid : null;
+    if (uid == null) return (email: null, phoneNumber: null);
+    try {
+      final snap = await _privateContactRef(uid).get();
+      final d = snap.data();
+      return (
+        email: d?['email'] as String?,
+        phoneNumber: d?['phoneNumber'] as String?,
+      );
+    } on FirebaseException catch (e) {
+      developer.log('loadContact', name: 'UserProfileService', error: e);
+      return (email: null, phoneNumber: null);
+    }
+  }
+
+  /// Enregistre le numéro de la session, et inscrit son empreinte dans
+  /// l'annuaire pour que ceux qui l'ont dans leur répertoire puissent le
+  /// retrouver.
+  ///
+  /// Renvoie le numéro sous forme canonique, ou `null` si ce n'en est pas
+  /// un — l'appelant affiche alors son propre message.
+  ///
+  /// L'ancienne empreinte est retirée : sans ça, changer de numéro
+  /// laisserait l'ancien pointer indéfiniment sur le compte, et son
+  /// nouveau propriétaire serait proposé aux contacts de l'ancien.
+  Future<String?> savePhoneNumber(String raw) async {
+    final uid = _auth.uid;
+    final e164 = PhoneContact.normalize(raw);
+    if (e164 == null) return null;
+
+    final previous = (await loadContact()).phoneNumber;
+    final hash = PhoneContact.hashOf(e164);
+
+    await _privateContactRef(uid).set({
+      'phoneNumber': e164,
+    }, SetOptions(merge: true));
+
+    await _phoneDirectoryRef(hash).set({
+      'uid': uid,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    if (previous != null && previous != e164) {
+      final oldHash = PhoneContact.hashOf(previous);
+      await _phoneDirectoryRef(oldHash).delete().catchError((Object e) {
+        developer.log(
+          'Retrait de l’ancienne empreinte',
+          name: 'UserProfileService',
+          error: e,
+        );
+      });
+    }
+
+    return e164;
+  }
+
+  /// Retire le numéro : il disparaît des coordonnées **et** de
+  /// l'annuaire. Quelqu'un qui retire son numéro cesse d'être trouvable,
+  /// c'est tout l'intérêt du geste.
+  Future<void> removePhoneNumber() async {
+    final uid = _auth.uid;
+    final current = (await loadContact()).phoneNumber;
+    await _privateContactRef(uid).set({
+      'phoneNumber': FieldValue.delete(),
+    }, SetOptions(merge: true));
+    if (current == null) return;
+    await _phoneDirectoryRef(
+      PhoneContact.hashOf(current),
+    ).delete().catchError((Object e) {
+      developer.log('removePhoneNumber', name: 'UserProfileService', error: e);
+    });
   }
 
   bool get hasProfile => profile.value != null;

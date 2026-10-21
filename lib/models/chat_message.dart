@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum MessageType { text, voice, image, document, sticker }
+enum MessageType { text, voice, image, video, document, sticker }
 
 /// Le statut auquel un message se rapporte.
 ///
@@ -86,6 +86,10 @@ class ChatMessage {
     required this.content,
     this.fileName,
     this.durationMs,
+    this.thumbUrl,
+    this.viewOnce = false,
+    this.viewOnceOpenedAt,
+    this.screenshotAt,
     required this.createdAt,
     this.readAt,
     this.expiresAt,
@@ -116,6 +120,43 @@ class ChatMessage {
   final String content;
   final String? fileName;
   final int? durationMs;
+
+  /// Image d'aperçu d'une vidéo, extraite du fichier à l'envoi puis
+  /// stockée à côté de lui.
+  ///
+  /// Sans elle, la bulle ne pourrait montrer le contenu qu'en décodant la
+  /// vidéo elle-même — autant de décodeurs que de vidéos à l'écran, ce
+  /// qu'un téléphone d'entrée de gamme ne tient pas en défilant. Une
+  /// vignette JPEG se charge et se met en cache comme une photo ordinaire.
+  ///
+  /// Porte le chemin du fichier **local** tant que le message n'est pas
+  /// parti, l'URL Storage ensuite — même convention que [content].
+  final String? thumbUrl;
+
+  /// Message à vue unique : lisible une fois par son destinataire, puis
+  /// consommé ([viewOnceOpenedAt]).
+  ///
+  /// Ne concerne que ce qui s'ouvre — vocal, photo, vidéo. Un texte à vue
+  /// unique n'aurait pas de sens : il est lisible dans la bulle sans
+  /// qu'on ait rien à ouvrir.
+  final bool viewOnce;
+
+  /// Moment où le destinataire l'a ouvert. `null` tant qu'il ne l'a pas
+  /// fait. C'est **ce champ** qui interdit une seconde ouverture, pas
+  /// l'effacement de [content] qui l'accompagne : si l'app meurt entre
+  /// les deux, le message reste fermé.
+  final DateTime? viewOnceOpenedAt;
+
+  /// Moment où le destinataire a capturé l'écran pendant l'affichage
+  /// (iOS seulement — Android bloque la capture au lieu de la signaler).
+  ///
+  /// Écrit par celui qui a capturé, et lu par celui qui a envoyé : c'est
+  /// tout ce qu'on peut faire d'une capture, puisqu'on ne l'apprend
+  /// qu'une fois qu'elle a eu lieu.
+  final DateTime? screenshotAt;
+
+  bool get wasScreenshotted => screenshotAt != null;
+
   final DateTime createdAt;
   final DateTime? readAt;
   final DateTime? expiresAt;
@@ -189,6 +230,33 @@ class ChatMessage {
   /// messages non encore confirmés restent en bas de la discussion.
   final bool hasServerTimestamp;
 
+  /// Les types qui s'ouvrent, donc les seuls qui peuvent être à vue
+  /// unique. Un texte ou un sticker se lit dans la bulle : il n'y a rien
+  /// à « ouvrir », donc rien à consommer.
+  bool get supportsViewOnce =>
+      type == MessageType.image ||
+      type == MessageType.video ||
+      type == MessageType.voice;
+
+  /// Déjà ouvert : il ne reste que la trace du message.
+  bool get viewOnceConsumed => viewOnce && viewOnceOpenedAt != null;
+
+  /// Vrai si [uid] peut l'ouvrir maintenant — une seule fois, et jamais
+  /// pour qui l'a envoyé : l'expéditeur consommerait son propre message
+  /// avant que l'autre l'ait vu.
+  bool canOpenViewOnce(String uid) =>
+      viewOnce && !deleted && viewOnceOpenedAt == null && senderUid != uid;
+
+  /// Vrai pour les messages dont le contenu occupe la bulle bord à bord
+  /// (photo, vidéo) : la bulle se resserre alors à 4 px au lieu de la
+  /// gouttière de texte, et les éléments qui l'accompagnent — citation,
+  /// réactions, heure — se décalent pour ne pas coller au média.
+  /// Un média à vue unique n'en fait pas partie : tant qu'il n'est pas
+  /// ouvert, sa bulle ne contient qu'une ligne de texte et son cachet —
+  /// collée aux bords, elle paraîtrait rognée.
+  bool get isMediaBubble =>
+      (type == MessageType.image || type == MessageType.video) && !viewOnce;
+
   bool get isExpired => expiresAt != null && DateTime.now().isAfter(expiresAt!);
 
   bool get isRead => readAt != null;
@@ -200,6 +268,10 @@ class ChatMessage {
     content: content,
     fileName: fileName,
     durationMs: durationMs,
+    thumbUrl: thumbUrl,
+    viewOnce: viewOnce,
+    viewOnceOpenedAt: viewOnceOpenedAt,
+    screenshotAt: screenshotAt,
     createdAt: createdAt,
     readAt: readAt,
     expiresAt: expiresAt,
@@ -214,7 +286,8 @@ class ChatMessage {
     hiddenFor: hiddenFor,
   );
 
-  String get voiceDurationLabel {
+  /// `m:ss` — durée d'un vocal comme d'une vidéo.
+  String get durationLabel {
     if (durationMs == null) return '0:00';
     final secs = (durationMs! / 1000).round();
     final m = secs ~/ 60;
@@ -237,13 +310,27 @@ class ChatMessage {
     return _plainTypePreview;
   }
 
-  String get _plainTypePreview => switch (type) {
-    MessageType.voice => '🎤 Message vocal',
-    MessageType.image => '📷 Photo',
-    MessageType.document => '📎 ${fileName ?? 'Document'}',
-    MessageType.sticker => content,
-    MessageType.text => _textPreview,
-  };
+  String get _plainTypePreview {
+    // Un message à vue unique ne dit pas ce qu'il contient au-delà de son
+    // type : son aperçu s'affiche dans la liste des conversations et dans
+    // la notification, deux endroits qu'on lit sans l'ouvrir.
+    if (viewOnce && supportsViewOnce) {
+      final noun = switch (type) {
+        MessageType.voice => 'Message vocal',
+        MessageType.video => 'Vidéo',
+        _ => 'Photo',
+      };
+      return viewOnceConsumed ? '👁 $noun ouvert' : '👁 $noun · vue unique';
+    }
+    return switch (type) {
+      MessageType.voice => '🎤 Message vocal',
+      MessageType.image => '📷 Photo',
+      MessageType.video => '🎥 Vidéo',
+      MessageType.document => '📎 ${fileName ?? 'Document'}',
+      MessageType.sticker => content,
+      MessageType.text => _textPreview,
+    };
+  }
 
   String get _textPreview =>
       content.length > 120 ? '${content.substring(0, 120)}…' : content;
@@ -254,6 +341,8 @@ class ChatMessage {
     'content': content,
     if (fileName != null) 'fileName': fileName,
     if (durationMs != null) 'durationMs': durationMs,
+    if (thumbUrl != null) 'thumbUrl': thumbUrl,
+    if (viewOnce) 'viewOnce': true,
     // Horodatage client immédiat : une requête `orderBy('createdAt')`
     // n'inclut pas les documents dont le champ est encore null (cas de
     // `FieldValue.serverTimestamp()` tant que l'écriture n'est pas résolue),
@@ -282,6 +371,10 @@ class ChatMessage {
       content: d['content'] as String? ?? '',
       fileName: d['fileName'] as String?,
       durationMs: d['durationMs'] as int?,
+      thumbUrl: d['thumbUrl'] as String?,
+      viewOnce: d['viewOnce'] as bool? ?? false,
+      viewOnceOpenedAt: (d['viewOnceOpenedAt'] as Timestamp?)?.toDate(),
+      screenshotAt: (d['screenshotAt'] as Timestamp?)?.toDate(),
       // `createdAt` (serverTimestamp) est null le temps que l'écriture
       // soit confirmée : on se rabat sur l'horodatage client pour garder
       // un ordre stable, et `hasServerTimestamp` signale lequel des deux
@@ -350,6 +443,11 @@ bool _groupsWith(ChatMessage previous, ChatMessage next, Duration window) {
     return false;
   }
   if (previous.senderUid != next.senderUid) return false;
+  // Une photo à vue unique n'est pas une tuile : c'est un cachet à
+  // ouvrir, avec son propre état. Noyée dans une mosaïque, elle n'aurait
+  // ni son libellé ni sa zone d'appui — et l'ouvrir en ouvrirait
+  // l'album entier.
+  if (previous.viewOnce || next.viewOnce) return false;
   // Une photo supprimée n'a plus d'URL : dans une mosaïque, elle
   // afficherait une tuile brisée — et si c'était la première du groupe,
   // son « Message supprimé » masquerait tout l'album.

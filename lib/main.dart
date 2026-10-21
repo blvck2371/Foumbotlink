@@ -21,6 +21,7 @@ import 'services/feed_service.dart';
 import 'services/chat_service.dart';
 import 'services/connectivity_service.dart';
 import 'services/demarche_service.dart';
+import 'services/contact_match_service.dart';
 import 'services/dossier_service.dart';
 import 'services/follow_service.dart';
 import 'services/local_notifications_service.dart';
@@ -176,6 +177,7 @@ Future<void> main() async {
   Get.put(SavedSearchService(), permanent: true);
   Get.put(SellerReviewService(), permanent: true);
   Get.put(FollowService(), permanent: true);
+  Get.put(ContactMatchService(), permanent: true);
   Get.put(DossierService(), permanent: true);
   Get.put(DemarcheService(), permanent: true);
   Get.put(ModerationService(), permanent: true);
