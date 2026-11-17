@@ -1138,6 +1138,7 @@ class _SignOutButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final auth = Get.find<AuthService>();
     final profiles = Get.find<UserProfileService>();
+    final home = Get.find<HomeController>();
 
     return Obx(() {
       if (!auth.isSignedIn || profiles.profile.value == null) {
@@ -1161,7 +1162,7 @@ class _SignOutButton extends StatelessWidget {
                     // sur un compte qui n'existe plus donnerait à voir un
                     // menu à moitié vide le temps de la bascule.
                     Get.back();
-                    Get.find<HomeController>().signOut();
+                    home.signOut();
                   },
                   icon: const Icon(
                     Icons.logout_rounded,
@@ -1185,6 +1186,41 @@ class _SignOutButton extends StatelessWidget {
                     ),
                   ),
                 ),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  TextButton(
+                    onPressed: home.openPrivacyPolicy,
+                    child: Text(
+                      'Confidentialité',
+                      style: GoogleFonts.manrope(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: muted,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: home.isDeletingAccount.value
+                        ? null
+                        : () {
+                            Get.back();
+                            home.deleteAccount();
+                          },
+                    child: Text(
+                      home.isDeletingAccount.value
+                          ? 'Suppression…'
+                          : 'Supprimer mon compte',
+                      style: GoogleFonts.manrope(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.danger,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

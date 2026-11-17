@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:get/get.dart';
 
 import '../models/call.dart';
@@ -97,6 +98,9 @@ class CallService extends GetxService {
 
   void _watchIncoming(String myUid) {
     _incomingSub?.cancel();
+    // Préchauffe les serveurs ICE : sans ça, l'aller-retour vers
+    // getIceServers retarderait le décrochage du premier appel.
+    unawaited(_iceServers());
     developer.log('watching incoming calls for $myUid', name: 'CallService');
     // Filtre sur `createdAt` : au lancement de l'app, la première snapshot
     // renvoie tous les documents déjà "ringing" comme docChanges "added" —
@@ -280,10 +284,10 @@ class CallService extends GetxService {
   /// offer/answer via Firestore mais **aucun flux audio ne s'établit** — ICE
   /// part en `failed` et l'appel se coupe juste après le décrochage.
   ///
-  /// C'est pourquoi [rtcConfiguration] lit d'abord `config/webrtc` dans
-  /// Firestore : on peut y coller un vrai TURN (clé metered.ca, Cloudflare
-  /// Realtime, Twilio ou coturn auto-hébergé) et réparer les appels sur le
-  /// parc installé **sans republier l'application**.
+  /// Ce n'est donc qu'un dernier recours : [rtcConfiguration] demande
+  /// d'abord des identifiants TURN temporaires à la Cloud Function
+  /// `getIceServers` (Cloudflare), puis lit `config/webrtc` dans Firestore,
+  /// et seulement ensuite retombe sur cette liste.
   static const fallbackIceServers = [
     {
       'urls': [
@@ -316,6 +320,10 @@ class CallService extends GetxService {
 
   List<Map<String, dynamic>>? _cachedIceServers;
 
+  /// Fin de validité de [_cachedIceServers]. Les identifiants TURN de
+  /// `getIceServers` expirent : on les renouvelle une heure avant.
+  DateTime? _cachedIceServersUntil;
+
   /// Configuration passée à `createPeerConnection`, serveurs ICE inclus.
   ///
   /// Format attendu dans `config/webrtc` (lisible par tout utilisateur
@@ -339,24 +347,53 @@ class CallService extends GetxService {
 
   Future<List<Map<String, dynamic>>> _iceServers() async {
     final cached = _cachedIceServers;
-    if (cached != null) return cached;
+    final until = _cachedIceServersUntil;
+    if (cached != null && (until == null || DateTime.now().isBefore(until))) {
+      return cached;
+    }
 
+    // 1. Identifiants TURN temporaires (Cloud Function → Cloudflare).
+    try {
+      final response = await FirebaseFunctions.instance
+          .httpsCallable(
+            'getIceServers',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 8)),
+          )
+          .call<Map<String, dynamic>>();
+      final servers = _parseIceServers(response.data['iceServers']);
+      if (servers.isNotEmpty) {
+        final ttl = (response.data['ttlSeconds'] as num?)?.toInt() ?? 3600;
+        _cachedIceServersUntil = DateTime.now().add(
+          Duration(seconds: (ttl - 3600).clamp(60, ttl)),
+        );
+        developer.log(
+          '${servers.length} serveur(s) ICE reçus de getIceServers',
+          name: 'CallService',
+        );
+        return _cachedIceServers = servers;
+      }
+    } on Object catch (e) {
+      // TURN pas encore configuré, réseau coupé… : on passe à la suite.
+      developer.log(
+        'getIceServers indisponible',
+        name: 'CallService',
+        error: e,
+      );
+    }
+
+    // 2. Liste posée à la main dans `config/webrtc`, 3. liste compilée —
+    // gardées en cache le temps de la session, sauf si la fonction répond
+    // au prochain essai (on la retente au bout de 10 minutes).
+    _cachedIceServersUntil = DateTime.now().add(const Duration(minutes: 10));
     try {
       final doc = await _db.collection('config').doc('webrtc').get();
-      final raw = doc.data()?['iceServers'];
-      if (raw is List && raw.isNotEmpty) {
-        final servers = raw
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .where((e) => e['urls'] != null)
-            .toList();
-        if (servers.isNotEmpty) {
-          developer.log(
-            '${servers.length} serveur(s) ICE chargé(s) depuis config/webrtc',
-            name: 'CallService',
-          );
-          return _cachedIceServers = servers;
-        }
+      final servers = _parseIceServers(doc.data()?['iceServers']);
+      if (servers.isNotEmpty) {
+        developer.log(
+          '${servers.length} serveur(s) ICE chargé(s) depuis config/webrtc',
+          name: 'CallService',
+        );
+        return _cachedIceServers = servers;
       }
     } on Object catch (e) {
       // Un appel doit pouvoir démarrer même si Firestore est injoignable :
@@ -367,6 +404,15 @@ class CallService extends GetxService {
     return _cachedIceServers = List<Map<String, dynamic>>.from(
       fallbackIceServers.map((e) => Map<String, dynamic>.from(e)),
     );
+  }
+
+  static List<Map<String, dynamic>> _parseIceServers(Object? raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .where((e) => e['urls'] != null)
+        .toList();
   }
 
   @override

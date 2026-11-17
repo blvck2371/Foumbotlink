@@ -1,6 +1,25 @@
 # Foumbot Link
 
-Application Flutter avec **Three.js intégré en local** et un **onboarding** immersif en 3D.
+Application communautaire pour les habitants de Foumbot (Flutter + Firebase) :
+fil d'actualité, statuts 24 h, messagerie (texte, vocal, photo, vidéo),
+appels audio/vidéo WebRTC, marché d'annonces, guide des démarches et suivi
+des dossiers déposés auprès des structures, météo locale.
+
+## Architecture
+
+| Dossier | Rôle |
+|---|---|
+| `lib/services/` | Accès Firebase et logique métier (un service GetX par domaine) |
+| `lib/controllers/`, `lib/bindings/` | État des écrans (GetX) |
+| `lib/screens/`, `lib/widgets/` | Interface |
+| `lib/models/` | Modèles et logique pure (testée dans `test/`) |
+| `functions/` | Cloud Functions Node 22 : notifications, appels, modération, marché, contacts, TURN, suppression de compte |
+| `firestore.rules`, `storage.rules` | Règles de sécurité (testées dans `functions/scripts/`) |
+| `public/` | Pages web publiques (Firebase Hosting) : confidentialité, suppression de compte |
+| `assets/web/`, `assets/threejs/` | Onboarding 3D (Three.js local) |
+
+Identifiant Android : `com.foumbotlink.app`. Firebase : projet `foumbotlink`
+(déjà configuré — `lib/firebase_options.dart`, `google-services.json`).
 
 ## Lancer
 
@@ -9,44 +28,85 @@ flutter pub get
 flutter run
 ```
 
-## Structure clé
+## Tests
 
-- `assets/threejs/three.min.js` — bibliothèque Three.js locale
-- `assets/web/onboarding.html` — scènes 3D d’onboarding
-- `assets/web/map_geometry.js` — géométrie vectorielle de la carte
-- `lib/` — GetX (navigation, état, thème)
+```bash
+flutter analyze && flutter test        # logique Dart
+cd functions && npm ci
+npm run test:rules:all                 # règles Firestore + rattrapage marché (émulateur)
+npm run test:delete-account            # suppression de compte (émulateurs)
+```
 
-## Configuration Firebase (comptes)
+Les mêmes vérifications tournent en CI (`.github/workflows/ci.yml`).
 
-L'authentification (e-mail + téléphone) et les profils utilisateurs
-passent par Firebase. `lib/firebase_options.dart` n'est qu'un
-placeholder tant que le projet n'est pas configuré — l'app ne se
-lancera pas avant cette étape (le reste, y compris `flutter analyze` et
-`flutter test`, fonctionne normalement sans elle).
+## Publier sur le Play Store
 
-1. Installer les CLI si besoin :
-   ```bash
-   npm install -g firebase-tools
-   dart pub global activate flutterfire_cli
+### Clé d'upload (une seule fois)
+
+```bash
+keytool -genkey -v -keystore ~/foumbotlink-upload.jks \
+  -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+```
+
+Puis créer `android/key.properties` (**jamais versionné**, voir
+`android/.gitignore`) :
+
+```properties
+storePassword=…
+keyPassword=…
+keyAlias=upload
+storeFile=/Users/<vous>/foumbotlink-upload.jks
+```
+
+Sauvegarder le `.jks` et les mots de passe hors de l'ordinateur : sans eux,
+plus aucune mise à jour ne peut être publiée (sauf réinitialisation de la
+clé d'upload via le support Google). Sans `key.properties`, le build release
+retombe sur la clé de debug — utile en local, refusé par la Play Console.
+
+Ajouter ensuite les empreintes SHA-1/SHA-256 de la clé d'upload **et** de la
+clé de signature Play (Play Console → Intégrité de l'app) à l'app Android
+dans la console Firebase, sinon la connexion par téléphone échoue sur les
+installations venant du Play Store.
+
+### Build
+
+```bash
+flutter build appbundle --release   # → build/app/outputs/bundle/release/app-release.aab
+```
+
+Incrémenter le numéro après le `+` de `version:` dans `pubspec.yaml` à
+chaque envoi (c'est le `versionCode`).
+
+### Fiche Play Store
+
+- Politique de confidentialité : https://foumbotlink.web.app/confidentialite
+- Suppression de compte : https://foumbotlink.web.app/suppression-compte
+  (dans l'app : menu → *Supprimer mon compte*)
+
+## Appels : serveur TURN
+
+Sans relais TURN, deux téléphones en 4G/5G ne s'entendent souvent pas. La
+fonction `getIceServers` fournit à l'app des identifiants Cloudflare
+temporaires (12 h) ; le jeton ne quitte jamais le serveur.
+
+1. Cloudflare → Realtime → TURN Server → créer une clé.
+2. ```bash
+   firebase functions:secrets:set CLOUDFLARE_TURN_KEY_ID
+   firebase functions:secrets:set CLOUDFLARE_TURN_API_TOKEN
+   firebase deploy --only functions:getIceServers
    ```
-2. Se connecter (ouvre le navigateur) :
-   ```bash
-   firebase login
-   ```
-3. Depuis la racine du projet, générer la vraie configuration :
-   ```bash
-   flutterfire configure
-   ```
-   Ça régénère `lib/firebase_options.dart` avec les clés du projet
-   Firebase choisi (ou créé) et enregistre les apps Android/iOS/macOS.
-4. Dans la [console Firebase](https://console.firebase.google.com), sur
-   le projet choisi :
-   - **Authentication → Sign-in method** : activer **E-mail/Mot de
-     passe** et **Téléphone**.
-   - **Firestore Database** : créer la base (mode production).
-   - Pour le téléphone sur iOS : configurer une clé APNs
-     (Authentication → Sign-in method → Téléphone) sinon la vérification
-     retombe sur reCAPTCHA.
+
+Tant que ce n'est pas fait, l'app retombe sur `config/webrtc` (Firestore),
+puis sur des serveurs publics de démonstration.
+
+## Déployer le backend
+
+```bash
+firebase deploy --only firestore:indexes      # d'abord : la construction prend quelques minutes
+firebase deploy --only firestore:rules,storage
+firebase deploy --only functions
+firebase deploy --only hosting
+```
 
 ## Marché (vente & achat)
 
@@ -73,14 +133,6 @@ partie serveur.
 - **Une annonce vendue disparaît de la grille** et ne reste que dans
   « Mes annonces ». Une annonce expire au bout de 60 jours et se relance
   gratuitement, autant de fois qu'on veut.
-
-### Déployer
-
-```bash
-firebase deploy --only firestore:indexes   # d'abord : la construction prend quelques minutes
-firebase deploy --only firestore:rules,storage
-firebase deploy --only functions
-```
 
 ### Rattrapage des annonces existantes
 

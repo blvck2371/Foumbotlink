@@ -32,6 +32,7 @@ const {
   getDoc,
   deleteDoc,
   updateDoc,
+  writeBatch,
   arrayUnion,
   serverTimestamp,
 } = require("firebase/firestore");
@@ -181,16 +182,57 @@ async function main() {
   });
 
   // --- 2. Codes de suivi -------------------------------------------------
+  /**
+   * Réserve un code comme le fait l'app : le code et
+   * `users/{uid}/private/tracking` dans le même batch.
+   *
+   * @param {object} db Contexte Firestore de l'appelant.
+   * @param {string} uid Compte qui réserve.
+   * @param {string} code Code tiré.
+   * @param {string=} target Compte vers lequel le code pointe.
+   * @return {Promise<void>} Résolue une fois le batch validé.
+   */
+  function reserve(db, uid, code, target = uid) {
+    const batch = writeBatch(db);
+    batch.set(doc(db, "trackingCodes", code), {uid: target});
+    batch.set(doc(db, "users", uid, "private", "tracking"), {code});
+    return batch.commit();
+  }
+
   await check("chacun réserve un code pointant sur lui-même", async () => {
-    await assertSucceeds(
-        setDoc(doc(outsider, "trackingCodes", "FBT-ZZZ"), {uid: OUTSIDER}),
+    await assertSucceeds(reserve(outsider, OUTSIDER, "FBT-ZZZ"));
+  });
+
+  await check("un compte ne réserve qu'un seul code", async () => {
+    // Sans ce verrou, un compte pouvait réserver des codes en boucle.
+    await assertFails(reserve(outsider, OUTSIDER, "FBT-YYY"));
+  });
+
+  await check("le verrou du code ne s'efface ni ne se réécrit", async () => {
+    const lock = doc(outsider, "users", OUTSIDER, "private", "tracking");
+    await assertFails(deleteDoc(lock));
+    await assertFails(setDoc(lock, {code: "FBT-WWW"}));
+  });
+
+  await check("un code seul, sans son verrou, est refusé", async () => {
+    await assertFails(
+        setDoc(doc(pending, "trackingCodes", "FBT-VVV"), {uid: PENDING}),
+    );
+  });
+
+  await check("le verrou seul, sans code réservé, est refusé", async () => {
+    await assertFails(
+        setDoc(doc(pending, "users", PENDING, "private", "tracking"),
+            {code: "FBT-VVV"}),
     );
   });
 
   await check("on ne réserve pas un code pour autrui", async () => {
-    await assertFails(
-        setDoc(doc(outsider, "trackingCodes", "FBT-XXX"), {uid: CITIZEN}),
-    );
+    await assertFails(reserve(pending, PENDING, "FBT-XXX", CITIZEN));
+  });
+
+  await check("un code déjà pris ne se réserve pas", async () => {
+    await assertFails(reserve(pending, PENDING, CODE));
   });
 
   await check("un code attribué ne se réattribue pas", async () => {

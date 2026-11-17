@@ -24,8 +24,10 @@ const {initializeApp} = require("firebase-admin/app");
 const {getFirestore, FieldValue} = require("firebase-admin/firestore");
 const {getMessaging} = require("firebase-admin/messaging");
 const {getStorage} = require("firebase-admin/storage");
+const {getAuth} = require("firebase-admin/auth");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
+const {defineSecret} = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
 const {marketKeywords, backfillListing} =
   require("./market_backfill");
@@ -1314,3 +1316,212 @@ exports.purgeExpiredStatuses = onSchedule(
       logger.info(`Statuts : ${purged} statut(s) expiré(s) purgé(s).`);
     },
 );
+
+
+// ---------------------------------------------------------------------
+// Serveurs TURN — identifiants temporaires Cloudflare
+// ---------------------------------------------------------------------
+
+/**
+ * Clé TURN Cloudflare (Realtime → TURN Server). Posée une fois avec :
+ *   firebase functions:secrets:set CLOUDFLARE_TURN_KEY_ID
+ *   firebase functions:secrets:set CLOUDFLARE_TURN_API_TOKEN
+ */
+const CLOUDFLARE_TURN_KEY_ID = defineSecret("CLOUDFLARE_TURN_KEY_ID");
+const CLOUDFLARE_TURN_API_TOKEN = defineSecret("CLOUDFLARE_TURN_API_TOKEN");
+
+/** Durée de vie des identifiants remis à l'app : une demi-journée. */
+const TURN_TTL_SECONDS = 12 * 60 * 60;
+
+/**
+ * Remet à l'app des serveurs ICE avec des identifiants TURN valables
+ * [TURN_TTL_SECONDS].
+ *
+ * Le jeton Cloudflare ne quitte jamais le serveur : l'app ne reçoit que
+ * des identifiants qui expirent d'eux-mêmes. Des identifiants fixes
+ * (`config/webrtc`) seraient lisibles par n'importe quel compte connecté,
+ * et donc réutilisables par n'importe qui pour faire passer son propre
+ * trafic sur notre facture.
+ *
+ * En cas d'échec (secrets absents, Cloudflare injoignable), on répond
+ * `failed-precondition` / `unavailable` : l'app retombe alors sur
+ * `config/webrtc`, puis sur sa liste compilée.
+ */
+exports.getIceServers = onCall(
+    {secrets: [CLOUDFLARE_TURN_KEY_ID, CLOUDFLARE_TURN_API_TOKEN]},
+    async (request) => {
+      if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Connexion requise.");
+      }
+      const keyId = CLOUDFLARE_TURN_KEY_ID.value();
+      const token = CLOUDFLARE_TURN_API_TOKEN.value();
+      // « unset » : valeur provisoire tant que le compte Cloudflare n'est
+      // pas créé (le déploiement exige que les secrets existent).
+      if (!keyId || !token || keyId === "unset" || token === "unset") {
+        throw new HttpsError("failed-precondition", "TURN non configuré.");
+      }
+
+      let response;
+      try {
+        response = await fetch(
+            `https://rtc.live.cloudflare.com/v1/turn/keys/${keyId}` +
+              "/credentials/generate-ice-servers",
+            {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ttl: TURN_TTL_SECONDS}),
+              signal: AbortSignal.timeout(5000),
+            },
+        );
+      } catch (err) {
+        logger.error("TURN : Cloudflare injoignable", err);
+        throw new HttpsError("unavailable", "Serveur TURN injoignable.");
+      }
+      if (!response.ok) {
+        logger.error("TURN : réponse Cloudflare", response.status);
+        throw new HttpsError("unavailable", "Serveur TURN indisponible.");
+      }
+
+      const body = await response.json();
+      // `generate-ice-servers` renvoie une liste ; l'ancien point d'entrée
+      // `generate` renvoyait un objet seul.
+      const raw = Array.isArray(body.iceServers) ?
+        body.iceServers :
+        [body.iceServers].filter(Boolean);
+      const iceServers = raw
+          .map((s) => ({
+            ...s,
+            // Le port 53 est bloqué par la plupart des navigateurs et de
+            // nombreux réseaux mobiles : inutile de le tenter.
+            urls: [].concat(s.urls || []).filter((u) => !/:53(\?|$)/.test(u)),
+          }))
+          .filter((s) => s.urls.length > 0);
+      if (!iceServers.length) {
+        throw new HttpsError("unavailable", "Aucun serveur TURN reçu.");
+      }
+      return {iceServers, ttlSeconds: TURN_TTL_SECONDS};
+    },
+);
+
+
+// ---------------------------------------------------------------------
+// Suppression de compte
+// ---------------------------------------------------------------------
+
+/**
+ * Supprime chaque document renvoyé par [query], par paquets.
+ *
+ * `recursiveDelete` emporte aussi les sous-collections ; les triggers
+ * `onPostDeleted`, `onMarketItemDeleted`, `onStatusDeleted` font ensuite
+ * le ménage habituel (images, likes, miroirs).
+ *
+ * @param {FirebaseFirestore.Query} query Documents à supprimer.
+ * @return {Promise<number>} Nombre de documents supprimés.
+ */
+async function deleteAll(query) {
+  const snap = await query.get();
+  for (const doc of snap.docs) {
+    await db.recursiveDelete(doc.ref);
+  }
+  return snap.size;
+}
+
+/**
+ * Supprime le compte de l'appelant et ce qu'il a publié — exigence du
+ * Play Store pour toute application où l'on crée un compte.
+ *
+ * Effacé : profil et toutes ses sous-collections (coordonnées, jetons
+ * push, notifications, favoris…), publications, commentaires, statuts,
+ * annonces, démarches publiées, empreinte de téléphone, code de suivi,
+ * liens d'abonnement (les compteurs des autres sont corrigés), fichiers
+ * Storage, puis le compte Firebase Auth lui-même.
+ *
+ * Conservé : les messages déjà envoyés restent chez leur destinataire
+ * (comme un courrier remis), les dossiers déposés auprès d'une structure
+ * restent dans ses registres, et les signalements sont gardés pour la
+ * modération. Le profil n'existant plus, ces traces s'affichent au nom
+ * d'un « compte supprimé ».
+ */
+exports.deleteAccount = onCall({timeoutSeconds: 540}, async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Connexion requise.");
+  }
+  logger.info(`deleteAccount : début pour ${uid}`);
+
+  const step = async (label, fn) => {
+    try {
+      const n = await fn();
+      logger.info(`deleteAccount ${uid} — ${label}`, n === undefined ? "" : n);
+    } catch (err) {
+      // On s'arrête là : le compte Auth n'est supprimé qu'en dernier,
+      // l'appel reste donc rejouable et reprendra le ménage.
+      logger.error(`deleteAccount ${uid} — ${label} en échec`, err);
+      throw err;
+    }
+  };
+
+  // 1. Contenus publiés.
+  await step("publications", () =>
+    deleteAll(db.collection("posts").where("authorUid", "==", uid)));
+  await step("commentaires", () =>
+    deleteAll(db.collectionGroup("comments").where("authorUid", "==", uid)));
+  await step("statuts", () =>
+    deleteAll(db.collection("statuses").where("authorUid", "==", uid)));
+  await step("annonces", () =>
+    deleteAll(db.collection("market").where("sellerUid", "==", uid)));
+  await step("démarches", () =>
+    deleteAll(db.collection("demarches").where("structureUid", "==", uid)));
+
+  // 2. Annuaires : plus personne ne doit pouvoir le retrouver.
+  await step("annuaire téléphonique", () =>
+    deleteAll(db.collection("phoneDirectory").where("uid", "==", uid)));
+  await step("code de suivi", () =>
+    deleteAll(db.collection("trackingCodes").where("uid", "==", uid)));
+  await step("quota de contacts", () =>
+    db.doc(`contactMatchQuota/${uid}`).delete());
+
+  // 3. Abonnements : retirer les liens des deux côtés et corriger les
+  // compteurs des autres comptes.
+  // `update` et non `set(merge)` : si l'autre compte a déjà disparu, on
+  // ne doit pas lui recréer un profil fantôme.
+  const unlink = async (otherUid, edge, counter) => {
+    const other = db.doc(`users/${otherUid}`);
+    const batch = db.batch();
+    batch.delete(db.doc(`users/${otherUid}/${edge}/${uid}`));
+    if ((await other.get()).exists) {
+      batch.update(other, {[counter]: FieldValue.increment(-1)});
+    }
+    await batch.commit();
+  };
+  await step("abonnements", async () => {
+    const following = await db.collection(`users/${uid}/following`).get();
+    for (const doc of following.docs) {
+      await unlink(doc.id, "followers", "followersCount");
+    }
+    const followers = await db.collection(`users/${uid}/followers`).get();
+    for (const doc of followers.docs) {
+      await unlink(doc.id, "following", "followingCount");
+    }
+    return following.size + followers.size;
+  });
+
+  // 4. Profil et toutes ses sous-collections.
+  await step("profil", () => db.recursiveDelete(db.doc(`users/${uid}`)));
+
+  // 5. Fichiers.
+  const bucket = getStorage().bucket();
+  for (const prefix of [`profiles/${uid}/`, `statuses/${uid}/`,
+    `posts/${uid}/`, `market/${uid}/`]) {
+    await step(`fichiers ${prefix}`, () => bucket.deleteFiles({prefix}));
+  }
+
+  // 6. Le compte lui-même, en dernier : tant qu'il existe, l'appel peut
+  // être rejoué pour finir le travail.
+  await step("compte Auth", () => getAuth().deleteUser(uid));
+  logger.info(`deleteAccount : ${uid} supprimé`);
+  return {deleted: true};
+});

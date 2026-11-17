@@ -83,29 +83,39 @@ class DossierService {
     // problème (règles, réseau) qu'il vaut mieux remonter.
     for (var attempt = 0; attempt < 5; attempt++) {
       final code = TrackingCode.generate();
-      try {
-        await _codesRef.doc(code).set({
+      // Les deux documents partent ensemble : les règles exigent que la
+      // réservation du code et `private/tracking` soient posées dans la
+      // même écriture — c'est ce qui borne chaque compte à un seul code.
+      final batch = _db.batch()
+        ..set(_codesRef.doc(code), {
           'uid': uid,
           'displayName': displayName,
           'createdAt': FieldValue.serverTimestamp(),
+        })
+        ..set(_privateTrackingRef(uid), {
+          'code': code,
+          'createdAt': FieldValue.serverTimestamp(),
         });
+      try {
+        await batch.commit();
       } on FirebaseException catch (e) {
-        // Code déjà pris : on retire. Toute autre erreur remonte.
-        if (e.code == 'permission-denied' || e.code == 'already-exists') {
-          continue;
+        if (e.code != 'permission-denied' && e.code != 'already-exists') {
+          rethrow;
         }
-        rethrow;
+        // Soit le code est déjà pris, soit un autre appareil du même
+        // compte vient d'attribuer le sien — dans ce cas, c'est lui qui
+        // fait foi.
+        final again = await _privateTrackingRef(uid).get();
+        final assigned = again.data()?['code'] as String?;
+        if (assigned != null && assigned.isNotEmpty) return assigned;
+        continue;
       }
-      await _privateTrackingRef(uid).set({
-        'code': code,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
       // Ménage des tout premiers comptes, dont le code avait été écrit
       // sur le document utilisateur — lisible par n'importe quel compte
       // connecté. Sans effet si le champ n'a jamais existé.
-      await _userRef(uid).set({
-        'trackingCode': FieldValue.delete(),
-      }, SetOptions(merge: true));
+      await _userRef(
+        uid,
+      ).set({'trackingCode': FieldValue.delete()}, SetOptions(merge: true));
       return code;
     }
     throw StateError('Impossible d’attribuer un code de suivi.');
@@ -148,10 +158,9 @@ class DossierService {
   /// l'écran, le code s'affiche donc immédiatement au lieu d'attendre un
   /// aller-retour réseau — c'est exactement le temps de chargement qu'on
   /// reprochait à cet écran.
-  Stream<String?> watchTrackingCode(String uid) =>
-      _privateTrackingRef(uid).snapshots().map(
-            (snap) => snap.data()?['code'] as String?,
-          );
+  Stream<String?> watchTrackingCode(String uid) => _privateTrackingRef(
+    uid,
+  ).snapshots().map((snap) => snap.data()?['code'] as String?);
 
   /// Suit un code saisi au guichet, au lieu de le chercher une fois.
   ///
@@ -166,21 +175,25 @@ class DossierService {
     if (problem != null) return Stream.value(CodeUnknown(problem));
 
     final code = TrackingCode.normalize(raw);
-    return _codesRef.doc(code).snapshots().map<CodeLookup>((snap) {
-      if (!snap.exists) {
-        return const CodeUnknown(
-          'Aucun habitant ne porte ce code. Vérifiez la lecture de la '
-          'chemise, caractère par caractère.',
-        );
-      }
-      final d = snap.data()!;
-      return CodeFound(
-        uid: d['uid'] as String? ?? '',
-        displayName: d['displayName'] as String? ?? 'Habitant',
-      );
-    }).handleError((Object e) {
-      developer.log('watchCode', name: 'DossierService', error: e);
-    });
+    return _codesRef
+        .doc(code)
+        .snapshots()
+        .map<CodeLookup>((snap) {
+          if (!snap.exists) {
+            return const CodeUnknown(
+              'Aucun habitant ne porte ce code. Vérifiez la lecture de la '
+              'chemise, caractère par caractère.',
+            );
+          }
+          final d = snap.data()!;
+          return CodeFound(
+            uid: d['uid'] as String? ?? '',
+            displayName: d['displayName'] as String? ?? 'Habitant',
+          );
+        })
+        .handleError((Object e) {
+          developer.log('watchCode', name: 'DossierService', error: e);
+        });
   }
 
   // -----------------------------------------------------------------------

@@ -1,4 +1,4 @@
-package com.foumbotlik.foumbotlik
+package com.foumbotlink.app
 
 import android.content.Context
 import android.media.AudioAttributes

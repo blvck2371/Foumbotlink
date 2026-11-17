@@ -18,22 +18,44 @@ service cloud.firestore {
     // Profils utilisateurs
     // -----------------------------------------------------------------
     match /users/{uid} {
+      // `followersCount` ne bouge que d'un cran, et seulement dans la
+      // même écriture que l'abonnement qui le justifie : +1 quand
+      // `followers/{moi}` apparaît, −1 quand il disparaît (batch de
+      // follow_service.dart). Sans ce lien, n'importe quel compte
+      // connecté pouvait inscrire un nombre d'abonnés arbitraire sur le
+      // profil d'autrui — ou le sien.
+      function followersCountMatchesEdge() {
+        let before = resource.data.get('followersCount', 0);
+        let after = request.resource.data.get('followersCount', 0);
+        let edge = /databases/$(database)/documents/users/$(uid)/followers/$(request.auth.uid);
+        return after == before
+          || (after == before + 1 && !exists(edge) && existsAfter(edge))
+          || (after == before - 1 && exists(edge) && !existsAfter(edge));
+      }
+
       allow read: if request.auth != null;
 
+      // Un profil naît à zéro abonné : sinon il suffirait de le créer
+      // avec les compteurs déjà gonflés.
       allow create: if request.auth != null
         && request.auth.uid == uid
-        && request.resource.data.verified == false;
+        && request.resource.data.verified == false
+        && request.resource.data.get('followersCount', 0) == 0
+        && request.resource.data.get('followingCount', 0) == 0;
 
       // Le propriétaire peut modifier son propre profil librement (hors
-      // verified/accountType, contrôlés côté admin). Un autre utilisateur
-      // ne peut toucher que `followersCount` — c'est le seul champ que
-      // follow_service.dart écrit sur le document d'autrui (batch
-      // follow/unfollow) ; tout le reste du document doit rester intact.
+      // verified/accountType, contrôlés côté admin, et hors compteurs).
+      // Un autre utilisateur ne peut toucher que `followersCount` — c'est
+      // le seul champ que follow_service.dart écrit sur le document
+      // d'autrui (batch follow/unfollow) ; tout le reste du document doit
+      // rester intact.
       allow update: if request.auth != null
         && request.resource.data.verified == resource.data.verified
         && request.resource.data.accountType == resource.data.accountType
+        && followersCountMatchesEdge()
         && (
-          request.auth.uid == uid
+          (request.auth.uid == uid
+            && counterStep(resource, request.resource, 'followingCount', 0))
           || request.resource.data.diff(resource.data).affectedKeys()
                .hasOnly(['followersCount'])
         );
@@ -43,8 +65,25 @@ service cloud.firestore {
       // Cloud Functions pour notifier un appel entrant / un appel manqué).
       // Les Functions y accèdent via l'Admin SDK, qui ignore ces règles.
       match /private/{docId} {
-        allow read, write: if request.auth != null
+        allow read: if request.auth != null
           && request.auth.uid == uid;
+        allow write: if request.auth != null
+          && request.auth.uid == uid
+          && docId != 'tracking';
+      }
+
+      // Le code de suivi tel que son propriétaire le voit. Écrit une
+      // seule fois, dans le même batch que `trackingCodes/{code}`, et
+      // jamais modifié ni effacé : c'est ce verrou qui borne chaque
+      // compte à un seul code (voir `trackingCodes` plus bas).
+      match /private/tracking {
+        allow create: if request.auth != null
+          && request.auth.uid == uid
+          && request.resource.data.code is string
+          && existsAfter(/databases/$(database)/documents/trackingCodes/$(request.resource.data.code))
+          && getAfter(/databases/$(database)/documents/trackingCodes/$(request.resource.data.code))
+               .data.uid == uid;
+        allow update, delete: if false;
       }
 
       // Flux personnel (message reçu, like, commentaire, nouvel abonné,
@@ -212,8 +251,15 @@ service cloud.firestore {
                 == resource.data.get('likesCount', 0) - 1
             )
           )
-          || request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['commentsCount'])
+          // Même borne pour les commentaires : un cran à la fois
+          // (feed_service.addComment / _decrementCommentsCount), jamais
+          // sous zéro.
+          || (
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['commentsCount'])
+            && counterStep(resource, request.resource, 'commentsCount', 0)
+            && request.resource.data.get('commentsCount', 0) >= 0
+          )
         );
 
       allow delete: if request.auth != null
@@ -412,8 +458,17 @@ service cloud.firestore {
       // Chacun ne réserve qu'un code pointant sur lui-même, et un code
       // déjà pris ne peut pas être repris : `create` échoue si le
       // document existe, ce qui garantit l'unicité sans transaction.
+      //
+      // **Un seul code par compte** : la réservation doit poser, dans le
+      // même batch, `users/{moi}/private/tracking` — qui ne doit pas
+      // encore exister et ne pourra plus jamais être effacé. Sans ce
+      // verrou, un compte pouvait réserver des codes en boucle et
+      // épuiser l'espace des codes.
       allow create: if request.auth != null
-        && request.resource.data.uid == request.auth.uid;
+        && request.resource.data.uid == request.auth.uid
+        && !exists(/databases/$(database)/documents/users/$(request.auth.uid)/private/tracking)
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)/private/tracking)
+             .data.code == code;
 
       // Un code attribué ne bouge plus : le réattribuer ferait basculer
       // les dossiers en cours d'un habitant vers un autre.

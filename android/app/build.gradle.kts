@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // START: FlutterFire Configuration
@@ -8,8 +10,15 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
+
 android {
-    namespace = "com.foumbotlik.foumbotlik"
+    namespace = "com.foumbotlink.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -25,8 +34,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.foumbotlik.foumbotlik"
+        applicationId = "com.foumbotlink.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         // Firebase Auth exige minSdk 23.
@@ -36,11 +44,37 @@ android {
         versionName = flutter.versionName
     }
 
+    // Clé d'upload Play Store — lue depuis android/key.properties, jamais
+    // versionné (voir android/.gitignore). Format :
+    //   storePassword=...
+    //   keyPassword=...
+    //   keyAlias=upload
+    //   storeFile=/chemin/absolu/vers/upload-keystore.jks
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Sans key.properties (machine de dev), on retombe sur la clé
+            // de debug pour que `flutter run --release` marche encore — un
+            // tel AAB serait de toute façon refusé par la Play Console.
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn(
+                    "android/key.properties absent : build release signé " +
+                        "avec la clé de DEBUG (non publiable).",
+                )
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

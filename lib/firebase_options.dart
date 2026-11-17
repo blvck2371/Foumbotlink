@@ -51,7 +51,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyCEELwBpYSnp6Dg2qkhc_56HGJrmG4i_fA',
-    appId: '1:141324093576:android:a08e57eb6efd5b7d88773d',
+    appId: '1:141324093576:android:c547b9e07bd5a9fe88773d',
     messagingSenderId: '141324093576',
     projectId: 'foumbotlink',
     storageBucket: 'foumbotlink.firebasestorage.app',

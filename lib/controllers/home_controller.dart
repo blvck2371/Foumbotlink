@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:math';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/app_feature.dart';
 import '../models/feed_item.dart';
@@ -142,6 +144,72 @@ class HomeController extends GetxController {
       'Vous consultez maintenant Foumbot Link sans compte.',
       duration: const Duration(seconds: 3),
     );
+  }
+
+  /// Politique de confidentialité, publiée sur Firebase Hosting (dossier
+  /// `public/`). Le même lien figure sur la fiche Play Store.
+  static final privacyPolicyUrl = Uri.parse(
+    'https://foumbotlink.web.app/confidentialite',
+  );
+
+  Future<void> openPrivacyPolicy() async {
+    final ok = await launchUrl(
+      privacyPolicyUrl,
+      mode: LaunchMode.externalApplication,
+    );
+    if (!ok) {
+      Get.snackbar('Lien indisponible', privacyPolicyUrl.toString());
+    }
+  }
+
+  /// Suppression définitive du compte — exigence du Play Store.
+  ///
+  /// Tout le travail se fait côté serveur (`deleteAccount`, Admin SDK) :
+  /// le client n'a pas le droit d'effacer ce qu'il a publié chez les
+  /// autres (commentaires, liens d'abonnement), et une suppression
+  /// interrompue doit pouvoir être reprise.
+  final isDeletingAccount = false.obs;
+
+  Future<void> deleteAccount() async {
+    if (isDeletingAccount.value) return;
+    final confirmed = await confirmAction(
+      title: 'Supprimer votre compte ?',
+      message:
+          'Votre profil, vos publications, commentaires, statuts, '
+          'annonces et abonnements seront effacés définitivement. Les '
+          'messages déjà envoyés restent chez leurs destinataires, et les '
+          'dossiers déposés auprès d’une structure restent dans ses '
+          'registres.\n\nCette action est irréversible.',
+      confirmLabel: 'Supprimer définitivement',
+    );
+    if (!confirmed) return;
+
+    isDeletingAccount.value = true;
+    try {
+      await _endSessionCleanup();
+      await FirebaseFunctions.instance
+          .httpsCallable(
+            'deleteAccount',
+            options: HttpsCallableOptions(timeout: const Duration(minutes: 9)),
+          )
+          .call<Map<String, dynamic>>();
+      await _auth.signOut();
+      Get.snackbar(
+        'Compte supprimé',
+        'Vos données ont été effacées. Merci d’avoir utilisé Foumbot Link.',
+        duration: const Duration(seconds: 4),
+      );
+    } on Object catch (e) {
+      developer.log('deleteAccount', name: 'HomeController', error: e);
+      Get.snackbar(
+        'Suppression interrompue',
+        'Vérifiez votre connexion et réessayez : la suppression reprendra '
+            'là où elle s’est arrêtée.',
+        duration: const Duration(seconds: 5),
+      );
+    } finally {
+      isDeletingAccount.value = false;
+    }
   }
 
   /// Présence et token FCM retirés avant que l'uid disparaisse, sous
@@ -505,10 +573,7 @@ class HomeController extends GetxController {
           limit: FeedService.firstPageSize,
         );
         items.assignAll(
-          FeedService.rotate(
-            page.where(_isVisible),
-            random: Random(_feedSeed),
-          ),
+          FeedService.rotate(page.where(_isVisible), random: Random(_feedSeed)),
         );
         // Basé sur la page brute, pas sur la liste filtrée : masquer des
         // posts (modération, blocage) raccourcit la page sans pour autant
@@ -648,9 +713,7 @@ class HomeController extends GetxController {
   void reshuffleFeed() {
     _feedSeed = DateTime.now().microsecondsSinceEpoch;
     _pageIndex = 0;
-    items.assignAll(
-      FeedService.rotate(items, random: Random(_feedSeed)),
-    );
+    items.assignAll(FeedService.rotate(items, random: Random(_feedSeed)));
     if (scrollController.hasClients) {
       scrollController.animateTo(
         0,

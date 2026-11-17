@@ -3,7 +3,7 @@
 <plist version="1.0">
 	<dict>
 		<key>NSContactsUsageDescription</key>
-	<string>Foumbot Link compare votre répertoire pour vous proposer les habitants que vous connaissez déjà. Vos numéros ne quittent pas votre téléphone : seules des empreintes chiffrées sont comparées.</string>
+	<string>Foumbot Link compare votre répertoire pour vous proposer les habitants que vous connaissez déjà. Vos numéros ne sont jamais envoyés en clair : seule une empreinte de chacun est comparée, et rien n’est conservé.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 		<true/>
 		<key>CFBundleDevelopmentRegion</key>
