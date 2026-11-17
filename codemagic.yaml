@@ -56,8 +56,12 @@ workflows:
         # versionCode = dernier numéro publié sur Google Play + 1 : plus
         # besoin de toucher au `+N` de pubspec.yaml à chaque envoi.
         script: |
+          # Aucune version encore sur Play (ou erreur d'API) : on part de 0.
           LATEST=$(google-play get-latest-build-number \
-            --package-name "$PACKAGE_NAME" 2>/dev/null || echo 0)
+            --package-name "$PACKAGE_NAME" 2>/dev/null | tail -n 1 || true)
+          case "$LATEST" in
+            ''|*[!0-9]*) LATEST=0 ;;
+          esac
           BUILD_NUMBER=$((LATEST + 1))
           echo "versionCode : $BUILD_NUMBER"
           flutter build appbundle --release --build-number="$BUILD_NUMBER"
