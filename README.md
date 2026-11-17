@@ -84,7 +84,7 @@ avec la clé d'upload, puis envoi en brouillon sur la piste de test interne
 de Google Play. Le `versionCode` est calculé automatiquement (dernier
 publié + 1). Configuration dans Codemagic :
 
-- **Android keystores** : la clé d'upload, nom de référence `foumbotlink_upload` ;
+- **Android keystores** : la clé d'upload, nom de référence `foumbotlink` ;
 - **Variables d'environnement**, groupe `google_play` :
   `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS` = JSON du compte de service ayant
   accès à l'app dans la Play Console.
