@@ -77,6 +77,21 @@ flutter build appbundle --release   # → build/app/outputs/bundle/release/app-r
 Incrémenter le numéro après le `+` de `version:` dans `pubspec.yaml` à
 chaque envoi (c'est le `versionCode`).
 
+### Publication automatique (Codemagic)
+
+Chaque push sur `main` lance `codemagic.yaml` : analyse, tests, build signé
+avec la clé d'upload, puis envoi en brouillon sur la piste de test interne
+de Google Play. Le `versionCode` est calculé automatiquement (dernier
+publié + 1). Configuration dans Codemagic :
+
+- **Android keystores** : la clé d'upload, nom de référence `foumbotlink_upload` ;
+- **Variables d'environnement**, groupe `google_play` :
+  `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS` = JSON du compte de service ayant
+  accès à l'app dans la Play Console.
+
+Le tout premier `.aab` doit être envoyé à la main dans la Play Console
+(l'API Google Play refuse une app qui n'a encore aucune version).
+
 ### Fiche Play Store
 
 - Politique de confidentialité : https://foumbotlink.web.app/confidentialite

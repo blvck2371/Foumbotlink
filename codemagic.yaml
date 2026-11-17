@@ -1,0 +1,75 @@
+# Codemagic — build signé et publication sur Google Play à chaque push
+# sur `main`.
+#
+# À configurer une fois dans l'interface Codemagic (voir README) :
+#  - Team settings → Code signing identities → Android keystores :
+#    la clé d'upload, avec le nom de référence `foumbotlink_upload` ;
+#  - Environment variables → groupe `google_play` :
+#    GCLOUD_SERVICE_ACCOUNT_CREDENTIALS (JSON du compte de service, Secret).
+
+workflows:
+  android-play-store:
+    name: Android — Play Store
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+
+    environment:
+      flutter: 3.47.2
+      java: 17
+      android_signing:
+        - foumbotlink_upload
+      groups:
+        - google_play
+      vars:
+        PACKAGE_NAME: com.foumbotlink.app
+        GOOGLE_PLAY_TRACK: internal
+
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+      cancel_previous_builds: true
+
+    scripts:
+      - name: Clé d'upload → android/key.properties
+        # Codemagic expose la clé importée via les variables CM_KEYSTORE_* ;
+        # android/app/build.gradle.kts lit key.properties.
+        script: |
+          cat > "$CM_BUILD_DIR/android/key.properties" <<EOF
+          storePassword=$CM_KEYSTORE_PASSWORD
+          keyPassword=$CM_KEY_PASSWORD
+          keyAlias=$CM_KEY_ALIAS
+          storeFile=$CM_KEYSTORE_PATH
+          EOF
+
+      - name: Dépendances
+        script: flutter pub get
+
+      - name: Analyse et tests
+        script: |
+          flutter analyze
+          flutter test
+
+      - name: Build AAB
+        # versionCode = dernier numéro publié sur Google Play + 1 : plus
+        # besoin de toucher au `+N` de pubspec.yaml à chaque envoi.
+        script: |
+          LATEST=$(google-play get-latest-build-number \
+            --package-name "$PACKAGE_NAME" 2>/dev/null || echo 0)
+          BUILD_NUMBER=$((LATEST + 1))
+          echo "versionCode : $BUILD_NUMBER"
+          flutter build appbundle --release --build-number="$BUILD_NUMBER"
+
+    artifacts:
+      - build/**/outputs/bundle/**/*.aab
+      - build/**/outputs/**/mapping.txt
+
+    publishing:
+      google_play:
+        credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
+        track: $GOOGLE_PLAY_TRACK
+        # Brouillon : la version arrive sur la Play Console, tu la valides
+        # d'un clic. Passer à false pour publier automatiquement.
+        submit_as_draft: true
