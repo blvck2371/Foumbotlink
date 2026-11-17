@@ -80,7 +80,7 @@ chaque envoi (c'est le `versionCode`).
 ### Publication automatique (Codemagic)
 
 Chaque push sur `main` lance `codemagic.yaml` : analyse, tests, build signé
-avec la clé d'upload, puis envoi en brouillon sur la piste de test interne
+avec la clé d'upload, puis publication directe sur la piste de test interne
 de Google Play. Le `versionCode` est calculé automatiquement (dernier
 publié + 1). Configuration dans Codemagic :
 

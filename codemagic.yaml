@@ -74,6 +74,6 @@ workflows:
       google_play:
         credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
         track: $GOOGLE_PLAY_TRACK
-        # Brouillon : la version arrive sur la Play Console, tu la valides
-        # d'un clic. Passer à false pour publier automatiquement.
-        submit_as_draft: true
+        # Publiée directement auprès des testeurs du canal, sans validation
+        # manuelle dans la Play Console.
+        submit_as_draft: false
