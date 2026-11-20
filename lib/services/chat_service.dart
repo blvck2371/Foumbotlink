@@ -158,26 +158,10 @@ class ChatService {
       statusRef: statusRef,
     );
 
-    // Un message rattaché à un statut s'annonce comme tel dans la liste
-    // des conversations : « ❤️ A aimé votre statut » se comprend d'un
-    // coup d'œil, là où un cœur seul laisserait perplexe.
-    final lastMsgPreview = statusRef != null
-        ? (statusRef.isLike
-            ? '❤️ A aimé votre statut'
-            : '💬 ${content.length > 70 ? '${content.substring(0, 70)}…' : content}')
-        : viewOnce && msg.supportsViewOnce
-        // Un message à vue unique ne livre pas son contenu à la liste des
-        // conversations : elle se lit sans l'ouvrir.
-        ? msg.shortPreview
-        : switch (type) {
-            MessageType.voice => '🎤 Message vocal',
-            MessageType.image => '📷 Photo',
-            MessageType.video => '🎥 Vidéo',
-            MessageType.document => '📎 ${fileName ?? 'Document'}',
-            MessageType.sticker => content,
-            MessageType.text =>
-              content.length > 80 ? '${content.substring(0, 80)}…' : content,
-          };
+    // Un message rattaché à un statut s'annonce comme tel (« ❤️ A aimé
+    // votre statut »), un message éphémère ou à vue unique ne livre pas son
+    // contenu : voir ChatMessage.listPreview.
+    final lastMsgPreview = msg.listPreview;
 
     // Métadonnées de la liste des conversations (aperçu + badge non lu) :
     // envoyées en parallèle et sans `await`, hors du chemin critique. Elles

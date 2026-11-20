@@ -1303,8 +1303,9 @@ class _MessageBubbleState extends State<_MessageBubble> {
             // Un message à vue unique ne se transfère pas : la copie
             // vivrait ailleurs, hors de portée de la consommation.
             // `ChatController.forwardMessage` le refuse aussi — ici, on
-            // évite simplement de proposer ce qui n'aboutira pas.
-            if (!msg.viewOnce)
+            // évite simplement de proposer ce qui n'aboutira pas. Même
+            // chose pour un message éphémère.
+            if (!msg.viewOnce && msg.expiresAt == null)
               ListTile(
                 leading: Icon(Icons.forward_rounded, color: ink),
                 title: Text(

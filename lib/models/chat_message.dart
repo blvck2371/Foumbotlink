@@ -332,6 +332,31 @@ class ChatMessage {
     };
   }
 
+  /// Aperçu écrit dans la liste des conversations
+  /// (`conversations/{id}.lastMessage`).
+  ///
+  /// Un message éphémère n'y livre jamais son contenu : l'aperçu, lui, ne
+  /// disparaît pas — il resterait lisible dans la liste longtemps après
+  /// que le message s'est effacé de la discussion.
+  String get listPreview {
+    final status = statusRef;
+    if (status != null && status.isLike) return '❤️ A aimé votre statut';
+    if (expiresAt != null) return '⏱ Message éphémère';
+    if (status != null) {
+      return '💬 ${content.length > 70 ? '${content.substring(0, 70)}…' : content}';
+    }
+    if (viewOnce && supportsViewOnce) return shortPreview;
+    return switch (type) {
+      MessageType.voice => '🎤 Message vocal',
+      MessageType.image => '📷 Photo',
+      MessageType.video => '🎥 Vidéo',
+      MessageType.document => '📎 ${fileName ?? 'Document'}',
+      MessageType.sticker => content,
+      MessageType.text =>
+        content.length > 80 ? '${content.substring(0, 80)}…' : content,
+    };
+  }
+
   String get _textPreview =>
       content.length > 120 ? '${content.substring(0, 120)}…' : content;
 

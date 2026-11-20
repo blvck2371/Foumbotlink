@@ -282,4 +282,69 @@ void main() {
       expect(e.toString(), 'Document de 25 Mo : le maximum est 20 Mo.');
     });
   });
+
+  group('aperçu de la liste des conversations', () {
+    ChatMessage m(
+      MessageType type,
+      String content, {
+      DateTime? expiresAt,
+      bool viewOnce = false,
+      String? fileName,
+    }) => ChatMessage(
+      id: 'x',
+      senderUid: 'alice',
+      type: type,
+      content: content,
+      fileName: fileName,
+      viewOnce: viewOnce,
+      createdAt: at,
+      expiresAt: expiresAt,
+    );
+
+    test('un message éphémère ne livre jamais son contenu', () {
+      final later = at.add(const Duration(seconds: 30));
+      expect(
+        m(MessageType.text, 'Mon code : 4512', expiresAt: later).listPreview,
+        '⏱ Message éphémère',
+      );
+      expect(
+        m(
+          MessageType.document,
+          'https://cdn.test/d.pdf',
+          fileName: 'Relevé bancaire.pdf',
+          expiresAt: later,
+        ).listPreview,
+        '⏱ Message éphémère',
+      );
+    });
+
+    test('les autres messages gardent leur aperçu habituel', () {
+      expect(m(MessageType.text, 'Salut').listPreview, 'Salut');
+      expect(
+        m(MessageType.text, 'a' * 100).listPreview,
+        '${'a' * 80}…',
+      );
+      expect(
+        m(MessageType.document, 'u', fileName: 'cv.pdf').listPreview,
+        '📎 cv.pdf',
+      );
+      expect(
+        m(MessageType.image, 'u', viewOnce: true).listPreview,
+        '👁 Photo · vue unique',
+      );
+      expect(m(MessageType.voice, 'u').listPreview, '🎤 Message vocal');
+    });
+
+    test('un message expiré est reconnu comme tel', () {
+      final past = ChatMessage(
+        id: 'x',
+        senderUid: 'alice',
+        type: MessageType.text,
+        content: 'parti',
+        createdAt: DateTime.now().subtract(const Duration(minutes: 2)),
+        expiresAt: DateTime.now().subtract(const Duration(minutes: 1)),
+      );
+      expect(past.isExpired, isTrue);
+    });
+  });
 }

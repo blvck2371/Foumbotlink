@@ -20,6 +20,8 @@
 
 process.env.FIREBASE_CONFIG = JSON.stringify({
   projectId: process.env.GCLOUD_PROJECT,
+  // Même bucket que le client de test (`gs://{projet}`).
+  storageBucket: process.env.GCLOUD_PROJECT,
 });
 
 const {
@@ -52,7 +54,8 @@ const {
 const {getFirestore} = require("firebase-admin/firestore");
 const fs = require("fs");
 const path = require("path");
-const {onMessageCreated} = require("../index.js");
+const {getStorage} = require("firebase-admin/storage");
+const {onMessageCreated, purgeExpiredMessages} = require("../index.js");
 
 const PROJECT = process.env.GCLOUD_PROJECT || "demo-chat";
 const ALICE = "alice";
@@ -553,6 +556,67 @@ async function main() {
         "messages", "x2"), {senderUid: ALICE, type: "text",
       content: "c'est moi Alice", createdAt: Timestamp.now()}));
   });
+
+  // --- Messages éphémères ---------------------------------------------------
+  await check("éphémère : la notification gardée ne livre pas le contenu",
+      async () => {
+        await send(ALICE, BOB, "eph0", {
+          type: "text", content: "Code : 4512",
+          expiresAt: Timestamp.fromMillis(Date.now() + 30000),
+        }, "⏱ Message éphémère");
+        assert((await lastNotification(BOB)).body === "⏱ Message éphémère",
+            "le contenu est resté dans la liste des notifications");
+      });
+
+  await check("éphémères expirés : messages et fichiers effacés du serveur",
+      async () => {
+        // Écrits par l'Admin SDK : des dates JS, pas les Timestamp du SDK
+        // client.
+        const past = new Date(Date.now() - 60000);
+        const future = new Date(Date.now() + 3600000);
+        const conv2 = [ALICE, CAROLE].sort().join("_");
+        const photo = `chat/${CONV}/images/eph2.jpg`;
+        const proof = `chat/${CONV}/images/eph3.jpg`;
+        const photoUrl = await upload(ALICE, photo, jpg,
+            {contentType: "image/jpeg"});
+        const proofUrl = await upload(ALICE, proof, jpg,
+            {contentType: "image/jpeg"});
+        const msgs = admin.collection(`conversations/${CONV}/messages`);
+        const base = {senderUid: ALICE, createdAt: past};
+        await msgs.doc("eph1").set({...base, type: "text",
+          content: "secret", expiresAt: past});
+        await msgs.doc("eph2").set({...base, type: "image",
+          content: photoUrl, expiresAt: past});
+        await msgs.doc("eph3").set({...base, type: "image",
+          content: proofUrl, expiresAt: past});
+        await msgs.doc("eph4").set({...base, type: "text",
+          content: "pas encore", expiresAt: future});
+        // Message éphémère qui pointe vers la vidéo d'une autre
+        // conversation (transfert) : son fichier ne lui appartient pas.
+        await admin.doc(`conversations/${conv2}/messages/eph5`).set({
+          ...base, type: "video", content: videoMsg.content,
+          expiresAt: past,
+        });
+        await admin.doc("moderationQueue/message_eph3").set({status: "open"});
+
+        await purgeExpiredMessages.run({});
+
+        const exists = async (id, conv = CONV) =>
+          (await admin.doc(`conversations/${conv}/messages/${id}`).get())
+              .exists;
+        const bucket = getStorage().bucket();
+        const fileExists = async (p) => (await bucket.file(p).exists())[0];
+        assert(!(await exists("eph1")), "texte expiré toujours en base");
+        assert(!(await exists("eph2")), "photo expirée toujours en base");
+        assert(!(await fileExists(photo)), "fichier expiré toujours stocké");
+        assert(!(await exists("eph3")), "message signalé expiré en base");
+        assert(await fileExists(proof), "preuve d'un signalement supprimée");
+        assert(await exists("eph4"), "message pas encore expiré supprimé");
+        assert(!(await exists("eph5", conv2)), "transfert expiré en base");
+        assert(await fileExists(mp4Path),
+            "fichier d'une autre conversation supprimé");
+        assert(await exists("t1"), "message ordinaire supprimé");
+      });
 
   // --- Blocage --------------------------------------------------------------
   await check("après un blocage, plus aucun message dans aucun sens",

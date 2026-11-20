@@ -296,6 +296,7 @@ class ChatController extends GetxController {
     _typingIdleTimer?.cancel();
     _activityHeartbeat?.cancel();
     _activityStaleTimer?.cancel();
+    _expiryTimer?.cancel();
     _pushActivity(ChatActivity.idle);
     // Les médias en échec restent dans la file d'envoi (fichiers compris) :
     // ils se renvoient en revenant dans la discussion, même après une
@@ -463,15 +464,41 @@ class ChatController extends GetxController {
             // « Supprimé pour moi » : le message existe toujours pour
             // l'autre, il n'apparaît simplement plus ici.
             .where((m) => !m.isHiddenFor(myUid))
+            // Éphémère arrivé à échéance : il disparaît à l'heure dite,
+            // pas au prochain message reçu.
+            .where((m) => !m.isExpired)
             .toList()
           ..sort(_chronological);
     messages.assignAll(merged);
+    _scheduleNextExpiry(merged);
 
     // Ne garde que les clés des messages encore présents.
     final liveIds = merged.map((m) => m.id).toSet();
     _bubbleKeys.removeWhere((id, _) => !liveIds.contains(id));
 
     _checkForScam(merged);
+  }
+
+  Timer? _expiryTimer;
+
+  /// Programme le prochain passage au moment où le plus proche message
+  /// éphémère expire. Sans lui, un message de 30 secondes restait affiché
+  /// tant que rien d'autre n'arrivait dans la discussion : le filtre
+  /// n'était appliqué qu'à la réception d'un nouveau message.
+  void _scheduleNextExpiry(List<ChatMessage> shown) {
+    _expiryTimer?.cancel();
+    DateTime? next;
+    for (final m in shown) {
+      final at = m.expiresAt;
+      if (at != null && (next == null || at.isBefore(next))) next = at;
+    }
+    if (next == null) return;
+    final wait = next.difference(DateTime.now()) +
+        const Duration(milliseconds: 200);
+    _expiryTimer = Timer(
+      wait.isNegative ? Duration.zero : wait,
+      _rebuildMessages,
+    );
   }
 
   /// Analyse le dernier message **reçu** : c'est celui qui peut porter la
@@ -726,6 +753,10 @@ class ChatController extends GetxController {
     // dans une autre conversation, hors de portée de la consommation —
     // « vue unique » n'y voudrait plus rien dire.
     if (message.viewOnce) return false;
+    // Un message éphémère non plus : sa copie, ailleurs, ne s'effacerait
+    // pas — et son fichier, lui, serait supprimé à l'échéance, laissant
+    // une bulle cassée chez le destinataire.
+    if (message.expiresAt != null) return false;
     // Un média encore en cours d'envoi n'a qu'un chemin local, illisible
     // depuis le téléphone d'en face.
     final isFile =

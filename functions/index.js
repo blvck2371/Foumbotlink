@@ -126,9 +126,16 @@ async function writeNotification(uid, {type, title, body, data = {}, fromUid, fr
  * `writeNotification` + push correspondant. FCM exige des valeurs `data`
  * en string, converties au passage.
  */
-async function notifyUser(uid, {type, title, body, data = {}, fromUid, fromName}) {
+async function notifyUser(uid, {
+  type, title, body, data = {}, fromUid, fromName, storedBody,
+}) {
   if (!uid) return;
-  await writeNotification(uid, {type, title, body, data, fromUid, fromName});
+  // `storedBody` : ce qui reste dans la liste des notifications de l'app,
+  // quand le contenu ne doit pas y survivre (message éphémère). Le push,
+  // lui, s'efface de l'écran comme il est venu.
+  await writeNotification(uid, {
+    type, title, body: storedBody ?? body, data, fromUid, fromName,
+  });
 
   const stringData = {type};
   for (const [k, v] of Object.entries(data)) stringData[k] = String(v);
@@ -329,6 +336,100 @@ async function countUnread(conversationId, messageId, senderUid, recipient) {
   }
 }
 
+/** Ce qu'on montre d'un message éphémère là où il serait conservé. */
+const EPHEMERAL_PREVIEW = "⏱ Message éphémère";
+
+/** Messages expirés supprimés par passage, au plus. */
+const MESSAGE_PURGE_BATCH = 400;
+
+/**
+ * Chemin Storage d'une URL de téléchargement Firebase
+ * (`…/v0/b/{bucket}/o/{chemin encodé}?alt=media&token=…`), ou `null`.
+ *
+ * @param {string} url URL lue dans le message.
+ * @return {?string} Chemin dans le bucket.
+ */
+function storagePathFromUrl(url) {
+  if (typeof url !== "string") return null;
+  const match = /\/o\/([^?#]+)/.exec(url);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * Ramasse les messages éphémères arrivés à échéance : le document et ses
+ * fichiers (média, vignette).
+ *
+ * L'app les cachait déjà, mais rien ne les effaçait : le texte restait
+ * dans Firestore et les fichiers dans Storage, indéfiniment — lisibles par
+ * qui interroge la base directement. Un message « éphémère » doit l'être
+ * pour de vrai.
+ *
+ * Deux garde-fous sur les fichiers :
+ * - seuls ceux rangés sous `chat/{cette conversation}/` sont supprimés : un
+ *   message transféré pointe vers le fichier d'une autre conversation, qu'il
+ *   ne faut pas casser ;
+ * - un message signalé, dont le dossier de modération est encore ouvert,
+ *   garde son fichier : c'est la preuve que l'administrateur doit voir.
+ *
+ * @return {Promise<number>} Nombre de messages supprimés.
+ */
+async function purgeExpiredMessagesOnce() {
+  const snap = await db.collectionGroup("messages")
+      .where("expiresAt", "<=", new Date())
+      .limit(MESSAGE_PURGE_BATCH)
+      .get();
+  if (snap.empty) return 0;
+
+  const reviews = await db.getAll(...snap.docs.map((d) =>
+    db.doc(`moderationQueue/message_${d.id}`)));
+  const underReview = new Set(reviews
+      .filter((r) => r.exists && r.get("status") === "open")
+      .map((r) => r.id.slice("message_".length)));
+
+  const bucket = getStorage().bucket();
+  const batch = db.batch();
+  for (const doc of snap.docs) {
+    const conversationId = doc.ref.parent.parent.id;
+    if (!underReview.has(doc.id)) {
+      for (const url of [doc.get("content"), doc.get("thumbUrl")]) {
+        const path = storagePathFromUrl(url);
+        if (!path || !path.startsWith(`chat/${conversationId}/`)) continue;
+        try {
+          await bucket.file(path).delete({ignoreNotFound: true});
+        } catch (err) {
+          logger.error(`Fichier du message éphémère ${doc.id}`, err);
+        }
+      }
+    }
+    batch.delete(doc.ref);
+  }
+  await batch.commit();
+  return snap.size;
+}
+
+/**
+ * Toutes les 10 minutes : l'app fait disparaître le message à la seconde
+ * près, ce passage efface ce qui reste côté serveur. Plusieurs lots par
+ * passage si un retard s'est accumulé.
+ */
+exports.purgeExpiredMessages = onSchedule(
+    {schedule: "every 10 minutes", timeZone: "Africa/Douala"},
+    async () => {
+      let total = 0;
+      for (let round = 0; round < 5; round++) {
+        const purged = await purgeExpiredMessagesOnce();
+        total += purged;
+        if (purged < MESSAGE_PURGE_BATCH) break;
+      }
+      logger.info(`Messages éphémères : ${total} supprimé(s).`);
+    },
+);
+
 exports.onMessageCreated = onDocumentCreated(
     "conversations/{conversationId}/messages/{messageId}",
     async (event) => {
@@ -371,6 +472,7 @@ exports.onMessageCreated = onDocumentCreated(
         type: "message",
         title: senderName,
         body,
+        storedBody: msg.expiresAt ? EPHEMERAL_PREVIEW : undefined,
         data: {conversationId, senderUid: msg.senderUid || ""},
         fromUid: msg.senderUid,
         fromName: senderName,
