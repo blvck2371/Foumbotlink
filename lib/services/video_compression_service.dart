@@ -52,12 +52,13 @@ class VideoCompressionService {
 
   static Future<PreparedVideo> prepare(
     String path, {
+    VideoSendQuality quality = VideoSendQuality.standard,
     void Function(double progress)? onProgress,
   }) {
     final done = Completer<PreparedVideo>();
     _queue = _queue.then((_) async {
       try {
-        done.complete(await _prepare(path, onProgress));
+        done.complete(await _prepare(path, quality, onProgress));
       } catch (e, st) {
         // Fichier illisible, par exemple : l'appelant le saura, et la file
         // reste libre pour les vidéos suivantes.
@@ -69,6 +70,7 @@ class VideoCompressionService {
 
   static Future<PreparedVideo> _prepare(
     String path,
+    VideoSendQuality quality,
     void Function(double progress)? onProgress,
   ) async {
     final original = File(path);
@@ -90,7 +92,10 @@ class VideoCompressionService {
     try {
       final info = await VideoCompress.compressVideo(
         path,
-        quality: VideoQuality.Res960x540Quality,
+        quality: switch (quality) {
+          VideoSendQuality.standard => VideoQuality.Res960x540Quality,
+          VideoSendQuality.hd => VideoQuality.Res1280x720Quality,
+        },
         frameRate: 30,
         includeAudio: true,
       );

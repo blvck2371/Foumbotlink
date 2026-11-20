@@ -1,3 +1,20 @@
+/// Qualité d'envoi choisie pour une vidéo.
+///
+/// [standard] est le réglage par défaut : 960×540, ce qu'un écran de
+/// téléphone montre de toute façon dans une discussion. [hd] monte en
+/// 1280×720 pour une vidéo qui compte, au prix d'un fichier près de deux
+/// fois plus lourd.
+enum VideoSendQuality {
+  standard(bitsPerSecond: 2300000),
+  hd(bitsPerSecond: 4000000);
+
+  const VideoSendQuality({required this.bitsPerSecond});
+
+  /// Débit moyen produit (image + son), mesuré sur le réglage du plugin :
+  /// 0,14 bit par pixel à 30 images/s, plus ~128 kbit/s de son.
+  final int bitsPerSecond;
+}
+
 /// Quand compresser une vidéo avant l'envoi, et quand garder le résultat.
 ///
 /// Sans dépendance native, pour être vérifiable en test : la compression
@@ -34,5 +51,17 @@ class VideoCompressionPolicy {
         ? 0
         : (100 - sentBytes * 100 / originalBytes).round();
     return '${mb(originalBytes)} Mo → ${mb(sentBytes)} Mo (−$pct %)';
+  }
+
+  /// Taille probable après compression, pour l'annoncer avant l'envoi.
+  /// Jamais plus que l'original : une vidéo déjà légère part telle quelle.
+  static int estimateBytes({
+    required VideoSendQuality quality,
+    required int durationMs,
+    required int originalBytes,
+  }) {
+    if (durationMs <= 0) return originalBytes;
+    final estimate = quality.bitsPerSecond / 8 * durationMs / 1000;
+    return estimate < originalBytes ? estimate.round() : originalBytes;
   }
 }

@@ -4,7 +4,9 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:get_thumbnail_video/index.dart';
+import '../models/video_compression_policy.dart';
 import '../services/video_compression_service.dart';
+import '../widgets/video_quality_sheet.dart';
 import 'package:get_thumbnail_video/video_thumbnail.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -251,6 +253,9 @@ class ChatController extends GetxController {
   /// Vidéos déjà compressées, par id de message : un renvoi après échec
   /// réutilise le fichier au lieu de tout recompresser.
   final _preparedVideos = <String, PreparedVideo>{};
+
+  /// Qualité choisie pour chaque vidéo en cours d'envoi.
+  final _videoQuality = <String, VideoSendQuality>{};
 
   Future<void> _awaitConversation() =>
       _conversationReady.timeout(const Duration(seconds: 6), onTimeout: () {});
@@ -1060,6 +1065,7 @@ class ChatController extends GetxController {
       if (type == MessageType.voice) _safeDeleteFile(localPath);
       if (type == MessageType.video) {
         unawaited(_preparedVideos.remove(id)?.discard());
+        _videoQuality.remove(id);
       }
     } on Exception catch (e) {
       _reportSendError('uploadAndSend failed for $id ($type)', e);
@@ -1077,6 +1083,7 @@ class ChatController extends GetxController {
       videoProgress[id] = (compressing: true, value: 0);
       prepared = await VideoCompressionService.prepare(
         localPath,
+        quality: _videoQuality[id] ?? VideoSendQuality.standard,
         onProgress: (p) {
           if (!isClosed) videoProgress[id] = (compressing: true, value: p);
         },
@@ -1304,7 +1311,33 @@ class ChatController extends GetxController {
       return;
     }
     if (picked == null) return;
-    await sendVideoFile(picked.path, viewOnce: _consumeViewOnceArm());
+
+    // Choix Standard / HD, seulement si la vidéo va vraiment être
+    // compressée : une vidéo déjà légère part telle quelle, il n'y a rien
+    // à choisir.
+    final durationMs = await _probeVideoDuration(picked.path);
+    var quality = VideoSendQuality.standard;
+    int originalBytes;
+    try {
+      originalBytes = await File(picked.path).length();
+    } on FileSystemException catch (e) {
+      _reportSendError('video length failed', e);
+      return;
+    }
+    if (VideoCompressionPolicy.shouldCompress(originalBytes)) {
+      final choice = await showVideoQualitySheet(
+        durationMs: durationMs ?? 0,
+        originalBytes: originalBytes,
+      );
+      if (choice == null) return; // feuille refermée : rien ne part
+      quality = choice;
+    }
+    await sendVideoFile(
+      picked.path,
+      viewOnce: _consumeViewOnceArm(),
+      quality: quality,
+      knownDurationMs: durationMs,
+    );
   }
 
   /// Extrait l'image d'aperçu de la vidéo, dans le dossier temporaire.
@@ -1355,8 +1388,13 @@ class ChatController extends GetxController {
     }
   }
 
-  Future<void> sendVideoFile(String path, {bool viewOnce = false}) async {
-    final durationMs = await _probeVideoDuration(path);
+  Future<void> sendVideoFile(
+    String path, {
+    bool viewOnce = false,
+    VideoSendQuality quality = VideoSendQuality.standard,
+    int? knownDurationMs,
+  }) async {
+    final durationMs = knownDurationMs ?? await _probeVideoDuration(path);
     // Pas de vignette pour une vidéo à vue unique : elle en montrerait le
     // contenu dans la conversation, ce qui est exactement ce qu'on cherche
     // à éviter.
@@ -1379,6 +1417,7 @@ class ChatController extends GetxController {
         replyTo: replyTo,
       ),
     );
+    _videoQuality[id] = quality;
     _retryActions[id] = () => _uploadAndSend(
       id: id,
       type: MessageType.video,

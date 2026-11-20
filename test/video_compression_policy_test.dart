@@ -58,5 +58,40 @@ void main() {
         '80.0 Mo → 12.0 Mo (−85 %)',
       );
     });
+  
+    test('taille annoncée : une minute en Standard, puis en HD', () {
+      final standard = VideoCompressionPolicy.estimateBytes(
+        quality: VideoSendQuality.standard,
+        durationMs: 60000,
+        originalBytes: 120 * mb,
+      );
+      final hd = VideoCompressionPolicy.estimateBytes(
+        quality: VideoSendQuality.hd,
+        durationMs: 60000,
+        originalBytes: 120 * mb,
+      );
+      expect(standard / mb, closeTo(16.5, 0.5));
+      expect(hd / mb, closeTo(28.6, 0.5));
+      expect(hd, greaterThan(standard));
+    });
+
+    test('jamais plus lourd que l’original, ni sans durée connue', () {
+      expect(
+        VideoCompressionPolicy.estimateBytes(
+          quality: VideoSendQuality.hd,
+          durationMs: 60000,
+          originalBytes: 10 * mb,
+        ),
+        10 * mb,
+      );
+      expect(
+        VideoCompressionPolicy.estimateBytes(
+          quality: VideoSendQuality.standard,
+          durationMs: 0,
+          originalBytes: 50 * mb,
+        ),
+        50 * mb,
+      );
+    });
   });
 }
