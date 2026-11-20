@@ -3,6 +3,8 @@ import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../routes/app_routes.dart';
+import '../../services/moderation_service.dart';
 import '../../services/push_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
@@ -21,6 +23,7 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final themeController = Get.find<ThemeController>();
     final push = Get.find<PushService>();
+    final moderation = Get.find<ModerationService>();
 
     return Obx(() {
       final isDark = themeController.isDarkMode;
@@ -67,6 +70,35 @@ class SettingsScreen extends StatelessWidget {
                 muted: muted,
               ),
             ),
+            // Réservé aux administrateurs (`admins/{uid}`) : la file de
+            // modération. Invisible pour tous les autres comptes.
+            if (moderation.isAdmin.value) ...[
+              const SizedBox(height: 22),
+              _SectionTitle(label: 'Administration', muted: muted),
+              _SettingCard(
+                isDark: isDark,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(
+                    Icons.shield_outlined,
+                    color: AppColors.orange,
+                  ),
+                  title: Text(
+                    'Modération',
+                    style: GoogleFonts.manrope(
+                      fontWeight: FontWeight.w700,
+                      color: ink,
+                    ),
+                  ),
+                  subtitle: Text(
+                    'Signalements à traiter',
+                    style: GoogleFonts.manrope(fontSize: 12, color: muted),
+                  ),
+                  trailing: Icon(Icons.chevron_right, color: muted),
+                  onTap: () => Get.toNamed(AppRoutes.moderation),
+                ),
+              ),
+            ],
             const SizedBox(height: 22),
             _SectionTitle(label: 'À propos', muted: muted),
             _SettingCard(

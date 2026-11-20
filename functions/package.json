@@ -24,7 +24,7 @@
     "test:rules:counters": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_counters.js\"",
     "test:delete-account": "firebase emulators:exec --only firestore,auth,storage --project demo-delete \"node scripts/test_delete_account.js\"",
     "test:rules:blocking": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_blocking.js\"",
-    "test:block": "firebase emulators:exec --only firestore --project demo-block \"node scripts/test_block_function.js && node scripts/test_report_function.js\"",
+    "test:block": "firebase emulators:exec --only firestore,auth --project demo-block \"node scripts/test_block_function.js && node scripts/test_report_function.js\"",
     "test:rules:reports": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_reports.js\""
   },
   "dependencies": {

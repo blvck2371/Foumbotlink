@@ -19,6 +19,10 @@ enum AppNotificationType {
   /// Un dossier déposé au guichet a changé d'état. Émise par
   /// `onDossierWritten` — voir `Dossier` et `DossierStatus`.
   dossier,
+
+  /// Un dossier de modération est devenu prioritaire. Réservée aux
+  /// administrateurs, émise par `onReportCreated`.
+  moderation,
 }
 
 /// Document `users/{uid}/notifications/{id}` — flux personnel, jamais

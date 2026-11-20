@@ -151,6 +151,8 @@ class LocalNotificationsService extends GetxService {
       'message' => _messages,
       'missed_call' || 'missedCall' => _missedCalls,
       'dossier' => _demarches,
+      // Alerte de modération : haute importance, comme un message.
+      'moderation' => _messages,
       _ => _social,
     };
 

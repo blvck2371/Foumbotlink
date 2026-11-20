@@ -42,11 +42,16 @@ class ModerationService {
   /// Comptes qui ont bloqué l'utilisateur courant (miroir serveur).
   final RxSet<String> blockedBy = <String>{}.obs;
 
+  /// L'utilisateur courant est administrateur (`admins/{uid}` existe) :
+  /// l'écran de modération lui est ouvert.
+  final RxBool isAdmin = false.obs;
+
   /// Compatibilité : lecture synchrone de [blocked].
   Set<String> get blockedUids => blocked;
 
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _blockedSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _blockedBySub;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _adminSub;
   String? _watchedUid;
 
   /// J'ai bloqué [uid].
@@ -86,14 +91,21 @@ class ModerationService {
           (snap) => blockedBy.assignAll(snap.docs.map((d) => d.id)),
           onError: (Object _) {},
         );
+    _adminSub = _db.collection('admins').doc(myUid).snapshots().listen(
+      (snap) => isAdmin.value = snap.exists,
+      onError: (Object _) => isAdmin.value = false,
+    );
   }
 
   /// Fin de session : plus rien ne doit filtrer pour le compte suivant.
   void stopWatching() {
     _blockedSub?.cancel();
     _blockedBySub?.cancel();
+    _adminSub?.cancel();
     _blockedSub = null;
     _blockedBySub = null;
+    _adminSub = null;
+    isAdmin.value = false;
     _watchedUid = null;
     blocked.clear();
     blockedBy.clear();

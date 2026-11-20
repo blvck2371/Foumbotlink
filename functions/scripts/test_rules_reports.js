@@ -144,6 +144,36 @@ async function main() {
     await assertFails(setDoc(doc(alice, "moderationQueue", "x"), {}));
   });
 
+  // --- Administrateurs ------------------------------------------------------
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), "admins", "admin"), {});
+    await setDoc(doc(ctx.firestore(), "moderationQueue", "post_p1"),
+        {status: "open"});
+  });
+  const admin = env.authenticatedContext("admin").firestore();
+
+  await check("un administrateur lit la file", async () => {
+    await assertSucceeds(getDoc(doc(admin, "moderationQueue", "post_p1")));
+  });
+
+  await check("même un administrateur n'y écrit pas directement", async () => {
+    await assertFails(setDoc(doc(admin, "moderationQueue", "post_p1"),
+        {status: "dismissed"}));
+  });
+
+  await check("chacun sait s'il est administrateur", async () => {
+    await assertSucceeds(getDoc(doc(admin, "admins", "admin")));
+    await assertSucceeds(getDoc(doc(alice, "admins", ALICE)));
+  });
+
+  await check("personne ne lit la liste des autres", async () => {
+    await assertFails(getDoc(doc(alice, "admins", "admin")));
+  });
+
+  await check("personne ne se nomme administrateur", async () => {
+    await assertFails(setDoc(doc(alice, "admins", ALICE), {}));
+  });
+
   await env.cleanup();
   console.log(failures === 0 ?
     "\nLes signalements sont bornés." :

@@ -247,6 +247,7 @@ class PushService extends GetxService {
           'follow' ||
           'post' ||
           'dossier' ||
+          'moderation' ||
           'missedCall' ||
           'missed_call':
         // iOS affiche déjà sa propre bannière au premier plan (voir

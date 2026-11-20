@@ -34,4 +34,5 @@ abstract class AppRoutes {
   static const structureDemarches = '/demarches/mes-demarches';
   static const notifications = '/notifications';
   static const settings = '/settings';
+  static const moderation = '/moderation';
 }

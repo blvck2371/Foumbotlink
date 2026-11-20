@@ -171,6 +171,10 @@ class _NotificationTile extends GetView<NotificationsController> {
       icon: Icons.folder_open_rounded,
       color: AppColors.blue,
     ),
+    AppNotificationType.moderation => (
+      icon: Icons.shield_outlined,
+      color: AppColors.danger,
+    ),
   };
 
   @override

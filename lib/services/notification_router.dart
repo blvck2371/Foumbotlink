@@ -93,6 +93,8 @@ class NotificationRouter {
         if (follower != null && follower.isNotEmpty) {
           return (route: AppRoutes.userProfile, args: follower);
         }
+      case 'moderation':
+        return (route: AppRoutes.moderation, args: null);
       // 'appUpdate' : purement informatif, aucune navigation.
     }
     return null;

@@ -38,6 +38,7 @@ import '../screens/demarches/structure_demarches_screen.dart';
 import '../screens/demarches/structure_desk_screen.dart';
 import '../screens/demarches/demarche_detail_screen.dart';
 import '../screens/demarches/demarches_screen.dart';
+import '../screens/moderation/moderation_screen.dart';
 import '../screens/profile/user_profile_screen.dart';
 import '../screens/settings/settings_screen.dart';
 import '../screens/splash/splash_screen.dart';
@@ -209,6 +210,12 @@ class AppPages {
     GetPage(
       name: AppRoutes.settings,
       page: () => const SettingsScreen(),
+      transition: Transition.cupertino,
+      transitionDuration: const Duration(milliseconds: 320),
+    ),
+    GetPage(
+      name: AppRoutes.moderation,
+      page: () => const ModerationScreen(),
       transition: Transition.cupertino,
       transitionDuration: const Duration(milliseconds: 320),
     ),

@@ -140,7 +140,7 @@ async function notifyUser(uid, {type, title, body, data = {}, fromUid, fromName}
   // classe qu'un J'aime, et couper les J'aime ne doit pas le faire taire.
   // Les canaux sont créés côté app par LocalNotificationsService ; ceux-ci
   // ne font que router.
-  const CHANNELS = {message: "messages", dossier: "demarches"};
+  const CHANNELS = {message: "messages", dossier: "demarches", moderation: "messages"};
   const channelId = CHANNELS[type] || "social";
 
   await sendToUser(uid, {
@@ -944,8 +944,9 @@ exports.onReportCreated = onDocumentCreated("reports/{reportId}", async (event) 
   const targetRef = db.doc(targetPath);
   const queueRef = db.doc(`moderationQueue/${targetType}_${targetRef.id}`);
 
+  let escalated = null;
   try {
-    await db.runTransaction(async (tx) => {
+    escalated = await db.runTransaction(async (tx) => {
       const [target, queue] = await Promise.all([
         tx.get(targetRef),
         tx.get(queueRef),
@@ -992,10 +993,189 @@ exports.onReportCreated = onDocumentCreated("reports/{reportId}", async (event) 
         if (count >= REPORT_HIDE_THRESHOLD) update.hidden = true;
         tx.update(targetRef, update);
       }
+
+      // Un dossier qui *devient* prioritaire (ou qui est rouvert alors
+      // qu'il l'était) alerte l'équipe — pas à chaque signalement suivant.
+      const wasUrgentAndOpen = queue.exists &&
+        queue.get("priority") === "high" && queue.get("status") === "open";
+      return priority === "high" && !wasUrgentAndOpen ? {count} : null;
     });
   } catch (err) {
     logger.error(`Traitement du signalement échoué pour ${targetPath}`, err);
+    return;
   }
+
+  if (escalated) {
+    await notifyAdmins({
+      entryId: queueRef.id,
+      targetType,
+      reason,
+      count: escalated.count,
+    });
+  }
+});
+
+/** Libellés lus dans la notification envoyée aux administrateurs. */
+const REPORT_TYPE_LABELS = {
+  post: "Publication",
+  comment: "Commentaire",
+  user: "Profil",
+  marketItem: "Annonce",
+  message: "Message privé",
+  status: "Statut",
+};
+const REPORT_REASON_LABELS = {
+  spam: "spam",
+  harcelement: "harcèlement",
+  haine: "discours haineux",
+  violence: "violence ou menaces",
+  nuditeSexuel: "nudité ou contenu sexuel",
+  fausseInformation: "fausse information",
+  arnaque: "arnaque",
+  autre: "autre motif",
+};
+
+/**
+ * Prévient chaque administrateur (`admins/{uid}`) qu'un dossier de
+ * modération demande son attention. Ne bloque jamais le traitement du
+ * signalement : une notification ratée se rattrape dans l'écran de
+ * modération.
+ *
+ * @param {object} p Dossier concerné.
+ * @param {string} p.entryId Id dans `moderationQueue`.
+ * @param {string} p.targetType Type de contenu.
+ * @param {string} p.reason Motif du signalement déclencheur.
+ * @param {number} p.count Nombre de signalements du dossier.
+ * @return {Promise<void>} Résolue une fois les envois tentés.
+ */
+async function notifyAdmins({entryId, targetType, reason, count}) {
+  try {
+    const admins = await db.collection("admins").get();
+    const label = REPORT_TYPE_LABELS[targetType] || "Contenu";
+    const why = REPORT_REASON_LABELS[reason] || reason;
+    const body = `${label} · ${why} · ${count} signalement` +
+      (count > 1 ? "s" : "");
+    await Promise.all(admins.docs.map((admin) => notifyUser(admin.id, {
+      type: "moderation",
+      title: "Signalement prioritaire",
+      body,
+      data: {entryId},
+    }).catch((err) => logger.error(`Alerte modération ${admin.id}`, err))));
+  } catch (err) {
+    logger.error("Alerte des administrateurs échouée", err);
+  }
+}
+
+// ---------------------------------------------------------------------
+// Modération — décisions.
+//
+// Seule porte d'écriture sur les dossiers de `moderationQueue` et sur le
+// contenu d'autrui : l'écran de modération de l'app appelle cette
+// fonction, qui vérifie elle-même que l'appelant figure dans `admins`.
+//
+//  - `dismiss` : rien à reprocher ; un contenu masqué automatiquement
+//    est remis en ligne.
+//  - `remove`  : le contenu est retiré (supprimé, ou vidé pour un message
+//    privé, comme un « supprimer pour tout le monde »). Les triggers de
+//    suppression existants font le ménage (images, sous-collections).
+//  - `suspend` : le compte de l'auteur est désactivé dans Firebase Auth
+//    et ses sessions révoquées. Réversible depuis la console.
+// ---------------------------------------------------------------------
+
+/**
+ * Vérifie que l'appelant est administrateur.
+ *
+ * @param {object} request Requête `onCall`.
+ * @return {Promise<string>} Uid de l'administrateur.
+ */
+async function requireAdmin(request) {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Connexion requise.");
+  if (!(await db.doc(`admins/${uid}`).get()).exists) {
+    throw new HttpsError("permission-denied", "Réservé aux administrateurs.");
+  }
+  return uid;
+}
+
+exports.moderate = onCall(async (request) => {
+  const adminUid = await requireAdmin(request);
+  const {entryId, action} = request.data || {};
+  if (typeof entryId !== "string" || !entryId || entryId.includes("/")) {
+    throw new HttpsError("invalid-argument", "Dossier inconnu.");
+  }
+  if (!["dismiss", "remove", "suspend"].includes(action)) {
+    throw new HttpsError("invalid-argument", "Action inconnue.");
+  }
+
+  const entryRef = db.doc(`moderationQueue/${entryId}`);
+  const entry = await entryRef.get();
+  if (!entry.exists) throw new HttpsError("not-found", "Dossier introuvable.");
+  const {targetType, targetPath, targetOwnerUid} = entry.data();
+  const targetRef = db.doc(targetPath);
+  const target = await targetRef.get();
+
+  if (action === "dismiss") {
+    if (target.exists && HIDEABLE_TYPES.has(targetType)) {
+      await targetRef.update({hidden: false});
+    }
+  } else if (action === "remove") {
+    if (targetType === "user") {
+      throw new HttpsError("failed-precondition",
+          "Un profil ne se retire pas : suspendez le compte.");
+    }
+    if (target.exists) {
+      if (targetType === "message") {
+        await targetRef.update({
+          deleted: true,
+          content: "",
+          fileName: FieldValue.delete(),
+          thumbUrl: FieldValue.delete(),
+          removedByModeration: true,
+        });
+      } else if (targetType === "comment") {
+        const postRef = targetRef.parent.parent;
+        const batch = db.batch();
+        batch.delete(targetRef);
+        if ((await postRef.get()).exists) {
+          batch.update(postRef, {commentsCount: FieldValue.increment(-1)});
+        }
+        await batch.commit();
+      } else {
+        await targetRef.delete();
+      }
+    }
+  } else {
+    if (!targetOwnerUid) {
+      throw new HttpsError("failed-precondition", "Auteur inconnu.");
+    }
+    if (targetOwnerUid === adminUid ||
+        (await db.doc(`admins/${targetOwnerUid}`).get()).exists) {
+      throw new HttpsError("failed-precondition",
+          "Un administrateur ne peut pas être suspendu ici.");
+    }
+    try {
+      await getAuth().updateUser(targetOwnerUid, {disabled: true});
+      await getAuth().revokeRefreshTokens(targetOwnerUid);
+    } catch (err) {
+      if (err.code !== "auth/user-not-found") throw err;
+    }
+    const userRef = db.doc(`users/${targetOwnerUid}`);
+    if ((await userRef.get()).exists) {
+      await userRef.update({
+        suspended: true,
+        suspendedAt: FieldValue.serverTimestamp(),
+      });
+    }
+  }
+
+  const outcome = {dismiss: "dismissed", remove: "removed", suspend: "suspended"};
+  await entryRef.update({
+    status: outcome[action],
+    resolvedBy: adminUid,
+    resolvedAt: FieldValue.serverTimestamp(),
+  });
+  logger.info(`Modération ${entryId} : ${action} par ${adminUid}`);
+  return {status: outcome[action]};
 });
 
 // ---------------------------------------------------------------------
