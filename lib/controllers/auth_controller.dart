@@ -5,16 +5,31 @@ import '../models/account_type.dart';
 import '../services/auth_service.dart';
 import '../services/user_profile_service.dart';
 
-enum AuthStep { choice, emailForm, phoneForm, phoneOtp, accountSetup }
+/// Les trois écrans du parcours :
+/// 1. [credentials] — on dit ce qu'on veut faire (se connecter ou créer
+///    un compte) et avec quoi (numéro ou e-mail), sur un seul écran ;
+/// 2. [phoneOtp] — le code SMS, uniquement par le chemin téléphone ;
+/// 3. [accountSetup] — le profil, uniquement pour un nouveau compte.
+enum AuthStep { credentials, phoneOtp, accountSetup }
 
-enum EmailMode { signIn, signUp }
+/// Ce que l'utilisateur vient faire. Choisi **en premier**, en haut de
+/// l'écran : l'ancien parcours demandait la méthode avant l'intention, et
+/// on ne savait qu'au formulaire e-mail si l'on s'inscrivait ou non.
+enum AuthMode { signIn, signUp }
+
+/// Le moyen d'identification.
+enum AuthMethod { phone, email }
 
 class AuthController extends GetxController {
-  final step = AuthStep.choice.obs;
+  final step = AuthStep.credentials.obs;
   // La plupart des gens qui arrivent ici n'ont pas encore de compte —
-  // on démarre donc sur le formulaire de création, avec un lien pour
-  // basculer vers la connexion si besoin.
-  final emailMode = EmailMode.signUp.obs;
+  // on démarre donc sur la création, l'onglet « Se connecter » est juste
+  // à côté.
+  final mode = AuthMode.signUp.obs;
+
+  /// Le téléphone d'abord : pas d'adresse à posséder, pas de mot de passe
+  /// à retenir.
+  final method = AuthMethod.phone.obs;
   final isLoading = false.obs;
 
   /// Échec renvoyé par le serveur (identifiants refusés, réseau…) —
@@ -39,7 +54,9 @@ class AuthController extends GetxController {
 
   final emailCtrl = TextEditingController();
   final passwordCtrl = TextEditingController();
-  final phoneCtrl = TextEditingController();
+  // Indicatif pré-rempli : la quasi-totalité des numéros sont
+  // camerounais, et l'oubli du « + » était le premier refus.
+  final phoneCtrl = TextEditingController(text: '+237 ');
   final otpCtrl = TextEditingController();
   final nameCtrl = TextEditingController();
 
@@ -84,24 +101,28 @@ class AuthController extends GetxController {
   /// sur le code SMS, il n'y avait aucun moyen de revenir choisir
   /// l'e-mail sans tout recommencer.
   void back() {
-    switch (step.value) {
-      case AuthStep.emailForm:
-      case AuthStep.phoneForm:
-        goTo(AuthStep.choice);
-      case AuthStep.phoneOtp:
-        goTo(AuthStep.phoneForm);
-      case AuthStep.choice:
-      case AuthStep.accountSetup:
-        // La configuration du compte n'a pas de retour : la session est
-        // créée, revenir en arrière laisserait un compte sans profil.
-        break;
-    }
+    // La configuration du compte n'a pas de retour : la session est
+    // créée, revenir en arrière laisserait un compte sans profil.
+    if (step.value == AuthStep.phoneOtp) goTo(AuthStep.credentials);
   }
 
-  bool get canGoBack =>
-      step.value == AuthStep.emailForm ||
-      step.value == AuthStep.phoneForm ||
-      step.value == AuthStep.phoneOtp;
+  bool get canGoBack => step.value == AuthStep.phoneOtp;
+
+  void setMode(AuthMode next) {
+    if (mode.value == next) return;
+    mode.value = next;
+    _clearMessages();
+  }
+
+  void setMethod(AuthMethod next) {
+    if (method.value == next) return;
+    method.value = next;
+    _clearMessages();
+  }
+
+  /// Le bouton principal de l'écran d'identifiants.
+  Future<void> submitCredentials() =>
+      method.value == AuthMethod.phone ? submitPhone() : submitEmail();
 
   void _clearMessages() {
     errorMessage.value = null;
@@ -181,25 +202,18 @@ class AuthController extends GetxController {
     return null;
   }
 
-  void toggleEmailMode() {
-    emailMode.value = emailMode.value == EmailMode.signIn
-        ? EmailMode.signUp
-        : EmailMode.signIn;
-    _clearMessages();
-  }
-
   Future<void> submitEmail() async {
     _clearMessages();
     final email = emailCtrl.text.trim();
     final password = passwordCtrl.text;
-    final isSignUp = emailMode.value == EmailMode.signUp;
+    final isSignUp = mode.value == AuthMode.signUp;
 
     emailError.value = validateEmail(email);
     passwordError.value = validatePassword(password, isSignUp: isSignUp);
     if (emailError.value != null || passwordError.value != null) return;
 
     isLoading.value = true;
-    final error = emailMode.value == EmailMode.signIn
+    final error = !isSignUp
         ? await _auth.signInWithEmail(email, password)
         : await _auth.signUpWithEmail(email, password);
     isLoading.value = false;
