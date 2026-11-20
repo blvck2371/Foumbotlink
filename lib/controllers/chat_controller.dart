@@ -231,8 +231,21 @@ class ChatController extends GetxController {
     _watchOtherProfile();
     _watchMessages();
     _watchOtherActivity();
-    _ensureConversation();
+    _conversationReady = _ensureConversation();
   }
+
+  /// Création (ou lecture) du document de conversation, lancée à
+  /// l'ouverture. Le premier message l'attend : écrit avant, il partait
+  /// bien, mais son aperçu et le badge non lu étaient refusés (le document
+  /// n'existait pas encore) et la conversation n'apparaissait pas dans la
+  /// liste de l'autre. Borné dans le temps pour ne jamais bloquer un envoi
+  /// hors ligne.
+  Future<void> _conversationReady = Future.value();
+
+  Future<void> _awaitConversation() => _conversationReady.timeout(
+    const Duration(seconds: 6),
+    onTimeout: () {},
+  );
 
   @override
   void onClose() {
@@ -639,6 +652,11 @@ class ChatController extends GetxController {
     // dans une autre conversation, hors de portée de la consommation —
     // « vue unique » n'y voudrait plus rien dire.
     if (message.viewOnce) return false;
+    // Un média encore en cours d'envoi n'a qu'un chemin local, illisible
+    // depuis le téléphone d'en face.
+    final isFile = message.type != MessageType.text &&
+        message.type != MessageType.sticker;
+    if (isFile && !message.content.startsWith('http')) return false;
     final targetId = Conversation.buildId(myUid, toUid);
     try {
       await _chat.getOrCreateConversation(myUid, toUid);
@@ -651,6 +669,8 @@ class ChatController extends GetxController {
         content: message.content,
         fileName: message.fileName,
         durationMs: message.durationMs,
+        // Sans elle, une vidéo transférée arrivait sans aperçu.
+        thumbUrl: message.thumbUrl,
       );
       return true;
     } catch (e) {
@@ -919,6 +939,7 @@ class ChatController extends GetxController {
     ChatMessage? replyTo,
   }) async {
     try {
+      await _awaitConversation();
       await _chat.sendMessage(
         conversationId: _conversationId,
         messageId: id,
@@ -1007,6 +1028,7 @@ class ChatController extends GetxController {
           );
         }
       }
+      await _awaitConversation();
       await _chat.sendMessage(
         conversationId: _conversationId,
         messageId: id,

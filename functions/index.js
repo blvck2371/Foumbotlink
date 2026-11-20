@@ -287,9 +287,15 @@ exports.onMessageCreated = onDocumentCreated(
       const msg = snap.data();
       const {conversationId} = event.params;
 
-      const convDoc = await db.doc(`conversations/${conversationId}`).get();
-      if (!convDoc.exists) return;
-      const participants = convDoc.data().participants || [];
+      // Les participants se lisent dans l'id (`uidA_uidB`, uids triés,
+      // jamais de `_` dans un uid) : le premier message d'une nouvelle
+      // conversation peut arriver avant le document de conversation, et
+      // repartait alors sans notification.
+      const participants = conversationId.split("_");
+      if (participants.length !== 2 ||
+          !participants.includes(msg.senderUid)) {
+        return;
+      }
       const recipient = participants.find((p) => p !== msg.senderUid);
       if (!recipient) return;
 
@@ -305,7 +311,7 @@ exports.onMessageCreated = onDocumentCreated(
       const body = msg.viewOnce && viewOnceNouns[msg.type] ?
         `👁 ${viewOnceNouns[msg.type]} · vue unique` :
         msg.type === "document" ?
-          (msg.fileName || "📎 Document") :
+          `📎 ${msg.fileName || "Document"}` :
           (MESSAGE_PREVIEWS[msg.type] || preview(msg.content));
 
       await notifyUser(recipient, {

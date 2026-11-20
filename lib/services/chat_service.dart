@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/chat_attachment.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
 
@@ -169,7 +170,7 @@ class ChatService {
             MessageType.voice => '🎤 Message vocal',
             MessageType.image => '📷 Photo',
             MessageType.video => '🎥 Vidéo',
-            MessageType.document => fileName ?? '📎 Document',
+            MessageType.document => '📎 ${fileName ?? 'Document'}',
             MessageType.sticker => content,
             MessageType.text =>
               content.length > 80 ? '${content.substring(0, 80)}…' : content,
@@ -585,26 +586,49 @@ class ChatService {
     if (pending.isEmpty) _inFlight.remove(conversationId);
   }
 
+  /// Refuse avant l'envoi un fichier que la règle Storage refuserait
+  /// après l'avoir laissé monter en entier.
+  static Future<File> _checkedFile(
+    String filePath, {
+    required String what,
+    int maxBytes = ChatAttachment.maxFileBytes,
+  }) async {
+    final file = File(filePath);
+    final bytes = await file.length();
+    if (bytes >= maxBytes) {
+      throw ChatFileTooLarge(bytes: bytes, maxBytes: maxBytes, what: what);
+    }
+    return file;
+  }
+
   Future<String> uploadVoice(String filePath, String conversationId) async {
-    final fileName = '${_uuid.v4()}.m4a';
-    final ref = _storage.ref('chat/$conversationId/voice/$fileName');
-    await ref.putFile(File(filePath));
+    final file = await _checkedFile(filePath, what: 'Message vocal');
+    final ref = _storage.ref('chat/$conversationId/voice/${_uuid.v4()}.m4a');
+    // Sans type, le vocal était servi en `application/octet-stream` : le
+    // lecteur iOS (AVPlayer) refuse alors parfois de le lire en flux.
+    await ref.putFile(
+      file,
+      SettableMetadata(
+        contentType: 'audio/mp4',
+        cacheControl: 'public, max-age=31536000, immutable',
+      ),
+    );
     return ref.getDownloadURL();
   }
 
   Future<String> uploadImage(String filePath, String conversationId) async {
-    final ext = filePath.split('.').last;
-    final fileName = '${_uuid.v4()}.$ext';
+    final file = await _checkedFile(filePath, what: 'Photo');
+    final ext = ChatAttachment.extensionOf(filePath);
+    final fileName = '${_uuid.v4()}.${ext.isEmpty ? 'jpg' : ext}';
     final ref = _storage.ref('chat/$conversationId/images/$fileName');
     // Type MIME explicite : `putFile` n'en devine aucun côté Android, et
     // une pièce jointe servie en `application/octet-stream` est traitée
-    // comme un fichier binaire (téléchargement) par tout ce qui n'est pas
-    // l'app elle-même. ImagePicker recompresse en JPEG (voir
-    // `ChatController.pickImage`).
+    // comme un fichier binaire. Le type suit l'extension : le sélecteur
+    // recompresse en JPEG, mais une capture d'écran reste en PNG.
     await ref.putFile(
-      File(filePath),
+      file,
       SettableMetadata(
-        contentType: 'image/jpeg',
+        contentType: ChatAttachment.imageContentTypeFor(filePath),
         cacheControl: 'public, max-age=31536000, immutable',
       ),
     );
@@ -616,7 +640,7 @@ class ChatService {
   /// même endroit, un seul chiffre à retenir. Les autres pièces jointes
   /// restent à 20 Mo — c'est déjà beaucoup pour une photo ou un document,
   /// et une vidéo est le seul fichier qui pèse légitimement plus lourd.
-  static const maxVideoBytes = 60 * 1024 * 1024;
+  static const maxVideoBytes = ChatAttachment.maxVideoBytes;
 
   /// Le type réel du fichier, pas un type supposé : sur iOS, la galerie
   /// rend le plus souvent un `.mov` (QuickTime). L'annoncer en `video/mp4`
@@ -683,10 +707,24 @@ class ChatService {
     String conversationId,
     String originalName,
   ) async {
+    final file = await _checkedFile(filePath, what: 'Document');
+    // Le nom d'origine reste dans le message (`fileName`) ; le chemin, lui,
+    // n'en garde qu'une version sûre — un `#` ou un `?` y cassait l'URL.
     final ref = _storage.ref(
-      'chat/$conversationId/docs/${_uuid.v4()}_$originalName',
+      'chat/$conversationId/docs/${_uuid.v4()}_'
+      '${ChatAttachment.safeStorageName(originalName)}',
     );
-    await ref.putFile(File(filePath));
+    // Type réel et nom d'origine : sans eux, le téléphone d'en face
+    // recevait un fichier binaire anonyme au lieu d'un PDF qu'il sait
+    // ouvrir.
+    await ref.putFile(
+      file,
+      SettableMetadata(
+        contentType: ChatAttachment.contentTypeFor(originalName),
+        contentDisposition: ChatAttachment.contentDispositionFor(originalName),
+        cacheControl: 'private, max-age=31536000',
+      ),
+    );
     return ref.getDownloadURL();
   }
 }

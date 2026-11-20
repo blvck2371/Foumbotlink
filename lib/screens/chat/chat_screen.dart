@@ -10,8 +10,10 @@ import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart' show ImageSource;
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../controllers/chat_controller.dart';
+import '../../models/chat_attachment.dart';
 import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
 import '../../routes/app_routes.dart';
@@ -2286,44 +2288,95 @@ class _MessageBubbleState extends State<_MessageBubble> {
     );
   }
 
+  /// Ouvre un document reçu ou envoyé dans l'application du téléphone qui
+  /// sait le lire (visionneuse PDF, Word, navigateur…).
+  ///
+  /// La bulle annonçait « Appuyer pour ouvrir » sans qu'aucun geste n'y
+  /// soit branché : un PDF reçu ne s'ouvrait tout simplement pas. Le
+  /// fichier est servi avec son vrai type et son nom (voir
+  /// `ChatService.uploadDocument`), c'est ce qui permet au système de
+  /// choisir la bonne application.
+  Future<void> _openDocument(ChatMessage msg) async {
+    if (!_isRemote(msg.content)) {
+      Get.snackbar(
+        'Envoi en cours',
+        'Le document pourra être ouvert une fois envoyé.',
+        duration: const Duration(seconds: 3),
+      );
+      return;
+    }
+    var opened = false;
+    try {
+      opened = await launchUrl(
+        Uri.parse(msg.content),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      opened = false;
+    }
+    if (!opened) {
+      Get.snackbar(
+        'Ouverture impossible',
+        'Aucune application de ce téléphone ne sait ouvrir '
+            '${msg.fileName ?? 'ce document'}.',
+        duration: const Duration(seconds: 4),
+      );
+    }
+  }
+
   Widget _buildDocument(ChatMessage msg, Color textColor) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: textColor.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(12),
+    final badge = ChatAttachment.badgeFor(msg.fileName);
+    final icon = switch (badge) {
+      'PDF' => Icons.picture_as_pdf_outlined,
+      'DOC' || 'DOCX' || 'ODT' || 'TXT' || 'RTF' => Icons.article_outlined,
+      'XLS' || 'XLSX' || 'ODS' || 'CSV' => Icons.table_chart_outlined,
+      'PPT' || 'PPTX' => Icons.slideshow_outlined,
+      'ZIP' || 'RAR' || '7Z' => Icons.folder_zip_outlined,
+      'MP3' || 'M4A' || 'WAV' || 'AAC' || 'OGG' => Icons.audio_file_outlined,
+      _ => Icons.description_outlined,
+    };
+    final sending = !_isRemote(msg.content);
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => _openDocument(msg),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: textColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: textColor, size: 22),
           ),
-          child: Icon(Icons.description_outlined, color: textColor, size: 22),
-        ),
-        const SizedBox(width: 12),
-        Flexible(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                msg.fileName ?? 'Document',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.manrope(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: textColor,
+          const SizedBox(width: 12),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  msg.fileName ?? 'Document',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.manrope(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: textColor,
+                  ),
                 ),
-              ),
-              Text(
-                'Appuyer pour ouvrir',
-                style: GoogleFonts.manrope(
-                  fontSize: 11,
-                  color: textColor.withValues(alpha: 0.6),
+                Text(
+                  sending ? '$badge · envoi…' : '$badge · appuyer pour ouvrir',
+                  style: GoogleFonts.manrope(
+                    fontSize: 11,
+                    color: textColor.withValues(alpha: 0.6),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

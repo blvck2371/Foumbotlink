@@ -359,10 +359,14 @@ class ChatMessage {
     if (statusRef != null) 'statusRef': statusRef!.toMap(),
   };
 
-  factory ChatMessage.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
-    final d = doc.data()!;
+  factory ChatMessage.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) =>
+      ChatMessage.fromMap(doc.id, doc.data()!);
+
+  /// Décodage pur, sans Firestore : c'est ce que vérifient les tests
+  /// d'aller-retour (`toMap` → `fromMap`) de chaque type de message.
+  factory ChatMessage.fromMap(String id, Map<String, dynamic> d) {
     return ChatMessage(
-      id: doc.id,
+      id: id,
       senderUid: d['senderUid'] as String? ?? '',
       type: MessageType.values.firstWhere(
         (t) => t.name == d['type'],
