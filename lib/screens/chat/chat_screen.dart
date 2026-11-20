@@ -1210,6 +1210,14 @@ class _MessageBubbleState extends State<_MessageBubble> {
     final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
 
     HapticFeedback.selectionClick();
+    // Message pas encore parti : il n'existe que sur ce téléphone. Réagir,
+    // répondre, transférer ou « supprimer pour tous » viseraient un
+    // message que le serveur ne connaît pas — seuls le renvoi et
+    // l'abandon ont un sens.
+    if (msg.status != MessageDeliveryStatus.sent) {
+      _showPendingActions(context, msg, ink);
+      return;
+    }
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: isDark ? AppColors.blackElevated : AppColors.white,
@@ -1382,6 +1390,62 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   if (ok) await Get.find<ChatController>().deleteMessage(msg);
                 },
               ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showPendingActions(BuildContext context, ChatMessage msg, Color ink) {
+    final chat = Get.find<ChatController>();
+    final failed = msg.status == MessageDeliveryStatus.failed;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: widget.isDark ? AppColors.blackElevated : AppColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            if (failed)
+              ListTile(
+                leading: const Icon(Icons.refresh_rounded, color: AppColors.orange),
+                title: Text(
+                  'Renvoyer',
+                  style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w700,
+                    color: ink,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  widget.onRetry?.call();
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.close_rounded, color: AppColors.danger),
+              title: Text(
+                'Annuler l’envoi',
+                style: GoogleFonts.manrope(
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.danger,
+                ),
+              ),
+              subtitle: failed
+                  ? null
+                  : Text(
+                      'Le fichier ne sera pas envoyé.',
+                      style: GoogleFonts.manrope(fontSize: 12),
+                    ),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                chat.cancelPending(msg);
+              },
+            ),
             const SizedBox(height: 8),
           ],
         ),

@@ -4,11 +4,14 @@ import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/chat_attachment.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
+import '../models/outbox_entry.dart';
 
 /// Vidéo refusée avant même de partir, parce qu'elle dépasse le plafond
 /// de [ChatService.maxVideoBytes].
@@ -569,15 +572,160 @@ class ChatService {
   Map<String, ChatMessage> inFlightFor(String conversationId) =>
       Map.unmodifiable(_inFlight[conversationId] ?? const {});
 
-  void markInFlight(String conversationId, ChatMessage message) {
+  void markInFlight(
+    String conversationId,
+    ChatMessage message, {
+    String? videoQuality,
+  }) {
     (_inFlight[conversationId] ??= {})[message.id] = message;
+    if (videoQuality != null) _outboxQuality[message.id] = videoQuality;
+    if (OutboxEntry.isMedia(message.type)) _saveOutbox();
   }
 
   void clearInFlight(String conversationId, String messageId) {
     final pending = _inFlight[conversationId];
     if (pending == null) return;
-    pending.remove(messageId);
+    final removed = pending.remove(messageId);
     if (pending.isEmpty) _inFlight.remove(conversationId);
+    _outboxQuality.remove(messageId);
+    if (removed != null && OutboxEntry.isMedia(removed.type)) _saveOutbox();
+  }
+
+  // -----------------------------------------------------------------------
+  // File d'envoi persistante (médias)
+  // -----------------------------------------------------------------------
+  //
+  // Les envois de médias survivent à la fermeture de l'app : la file est
+  // recopiée sur le téléphone à chaque changement, et les fichiers mis à
+  // l'abri dans un dossier privé de l'app — le système vide sans prévenir
+  // les dossiers temporaires où la galerie et le micro les déposent.
+
+  static const _outboxKey = 'chat_outbox_v1';
+  final _outboxQuality = <String, String>{};
+  Future<void> _outboxWrites = Future.value();
+  Future<void>? _outboxRestore;
+
+  /// Qualité choisie pour une vidéo de la file (`standard` / `hd`).
+  String? outboxQualityFor(String messageId) => _outboxQuality[messageId];
+
+  /// Entrées d'un autre compte connecté auparavant sur ce téléphone :
+  /// conservées telles quelles, pour qu'il les retrouve à sa reconnexion.
+  final _foreignOutbox = <OutboxEntry>[];
+
+  void _saveOutbox() {
+    final entries = [
+      for (final e in _inFlight.entries)
+        for (final m in e.value.values)
+          if (OutboxEntry.isMedia(m.type))
+            OutboxEntry(
+              conversationId: e.key,
+              message: m,
+              videoQuality: _outboxQuality[m.id],
+            ),
+      ..._foreignOutbox,
+    ];
+    final raw = OutboxEntry.encodeAll(entries);
+    // Écritures en file : deux sauvegardes rapprochées ne se croisent pas,
+    // la dernière l'emporte toujours.
+    _outboxWrites = _outboxWrites.then((_) async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_outboxKey, raw);
+      } catch (e) {
+        developer.log('Sauvegarde de la file', name: 'ChatService', error: e);
+      }
+    });
+  }
+
+  /// Recharge, une fois par lancement, les envois interrompus de [myUid].
+  /// Ils reviennent en échec, prêts à être renvoyés. Ceux dont le fichier
+  /// a disparu sont abandonnés — il n'y a plus rien à envoyer.
+  Future<void> restoreOutbox(String myUid) =>
+      _outboxRestore ??= _restoreOutbox(myUid);
+
+  Future<void> _restoreOutbox(String myUid) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final entries = OutboxEntry.decodeAll(prefs.getString(_outboxKey));
+      for (final entry in entries) {
+        final m = entry.message;
+        if (m.senderUid != myUid) continue;
+        if (_inFlight[entry.conversationId]?.containsKey(m.id) ?? false) {
+          continue; // déjà en mémoire : envoi en cours dans ce lancement
+        }
+        if (!await File(m.content).exists()) continue;
+        (_inFlight[entry.conversationId] ??= {})[m.id] = m;
+        final q = entry.videoQuality;
+        if (q != null) _outboxQuality[m.id] = q;
+      }
+      // Les entrées d'autres comptes restent sauvegardées pour eux.
+      _foreignOutbox
+        ..clear()
+        ..addAll(entries.where((e) => e.message.senderUid != myUid));
+      _saveOutbox();
+      await _purgeOrphanFiles({
+        for (final e in entries) ...[e.message.content, ?e.message.thumbUrl],
+        for (final conv in _inFlight.values)
+          for (final m in conv.values) ...[m.content, ?m.thumbUrl],
+      });
+    } catch (e) {
+      developer.log('Relecture de la file', name: 'ChatService', error: e);
+    }
+  }
+
+  Future<Directory> _outboxDir() async {
+    final base = await getApplicationSupportDirectory();
+    final dir = Directory('${base.path}/chat_outbox');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir;
+  }
+
+  /// Met le fichier à l'abri dans le dossier privé de la file et renvoie
+  /// le nouveau chemin. En cas d'échec de la copie, l'original sert tel
+  /// quel : l'envoi immédiat marche toujours, seule la reprise après
+  /// fermeture est perdue.
+  Future<String> keepForOutbox(
+    String path,
+    String messageId, {
+    String suffix = '',
+  }) async {
+    try {
+      final dir = await _outboxDir();
+      if (path.startsWith(dir.path)) return path;
+      final ext = ChatAttachment.extensionOf(path);
+      final dest =
+          '${dir.path}/$messageId$suffix${ext.isEmpty ? '' : '.$ext'}';
+      await File(path).copy(dest);
+      return dest;
+    } catch (e) {
+      developer.log('Copie pour la file', name: 'ChatService', error: e);
+      return path;
+    }
+  }
+
+  /// Supprime une copie de la file. Ne touche jamais un fichier situé
+  /// ailleurs : l'original appartient à la galerie de la personne.
+  Future<void> releaseOutboxFile(String? path) async {
+    if (path == null || path.isEmpty) return;
+    try {
+      final dir = await _outboxDir();
+      if (!path.startsWith(dir.path)) return;
+      final f = File(path);
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
+  }
+
+  /// Retire du dossier de la file les fichiers qu'aucun envoi n'attend
+  /// plus (envoi abouti juste avant une fermeture, par exemple).
+  Future<void> _purgeOrphanFiles(Set<String> referenced) async {
+    final dir = await _outboxDir();
+    await for (final f in dir.list()) {
+      if (f is File && !referenced.contains(f.path)) {
+        try {
+          await f.delete();
+        } catch (_) {}
+      }
+    }
   }
 
   /// Refuse avant l'envoi un fichier que la règle Storage refuserait

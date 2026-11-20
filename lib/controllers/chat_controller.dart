@@ -228,6 +228,9 @@ class ChatController extends GetxController {
       _localMessages[pending.id] = pending;
       _retryActions[pending.id] = _retryActionFor(pending);
     }
+    // Et ceux d'un lancement précédent, gardés sur le téléphone : l'app
+    // fermée pendant un envoi ne fait plus disparaître la photo.
+    unawaited(_restoreOutbox());
 
     // Badge remis à zéro dès que le document existe (no-op si la
     // conversation n'a pas encore été créée — voir _ensureConversation).
@@ -254,8 +257,25 @@ class ChatController extends GetxController {
   /// réutilise le fichier au lieu de tout recompresser.
   final _preparedVideos = <String, PreparedVideo>{};
 
+  /// Envois annulés pendant leur upload : arrivés au bout, ils n'écrivent
+  /// pas de message et retirent le fichier monté pour rien.
+  final _cancelled = <String>{};
+
   /// Qualité choisie pour chaque vidéo en cours d'envoi.
   final _videoQuality = <String, VideoSendQuality>{};
+
+  Future<void> _restoreOutbox() async {
+    await _chat.restoreOutbox(myUid);
+    if (isClosed) return;
+    var added = false;
+    for (final pending in _chat.inFlightFor(_conversationId).values) {
+      if (_localMessages.containsKey(pending.id)) continue;
+      _localMessages[pending.id] = pending;
+      _retryActions[pending.id] = _retryActionFor(pending);
+      added = true;
+    }
+    if (added) _rebuildMessages();
+  }
 
   Future<void> _awaitConversation() =>
       _conversationReady.timeout(const Duration(seconds: 6), onTimeout: () {});
@@ -277,13 +297,11 @@ class ChatController extends GetxController {
     _activityHeartbeat?.cancel();
     _activityStaleTimer?.cancel();
     _pushActivity(ChatActivity.idle);
-    // Nettoie les vocaux dont l'envoi a échoué et n'a jamais été rejoué —
-    // sinon leur fichier temporaire reste orphelin sur le disque.
+    // Les médias en échec restent dans la file d'envoi (fichiers compris) :
+    // ils se renvoient en revenant dans la discussion, même après une
+    // fermeture de l'app. Seule la version compressée d'une vidéo part —
+    // elle se refait au renvoi.
     for (final msg in _localMessages.values) {
-      if (msg.type == MessageType.voice &&
-          msg.status == MessageDeliveryStatus.failed) {
-        _safeDeleteFile(msg.content);
-      }
       // Vidéo compressée dont l'envoi a échoué : le renvoi n'est plus
       // possible une fois l'écran quitté, le fichier temporaire part.
       if (msg.type == MessageType.video &&
@@ -379,6 +397,14 @@ class ChatController extends GetxController {
         // prend le relais, plus besoin de la copie locale ni de son
         // action de renvoi.
         final confirmedIds = list.map((m) => m.id).toSet();
+        // Un envoi relu de la file peut avoir abouti juste avant la
+        // fermeture de l'app : le serveur l'a, la file l'oublie.
+        for (final local in _localMessages.values) {
+          if (!confirmedIds.contains(local.id)) continue;
+          _chat.clearInFlight(_conversationId, local.id);
+          unawaited(_chat.releaseOutboxFile(local.content));
+          unawaited(_chat.releaseOutboxFile(local.thumbUrl));
+        }
         _localMessages.removeWhere((id, _) => confirmedIds.contains(id));
         _retryActions.removeWhere((id, _) => confirmedIds.contains(id));
 
@@ -507,14 +533,43 @@ class ChatController extends GetxController {
         replyTo: replyTo,
       );
     }
+    // Tout ce qui définit l'envoi doit suivre — la vue unique surtout :
+    // l'oublier ici renvoyait une photo « à vue unique » comme une photo
+    // ordinaire, lisible à volonté.
+    final thumb = pending.thumbUrl;
+    final quality = _chat.outboxQualityFor(pending.id);
+    if (quality != null) {
+      _videoQuality[pending.id] = VideoSendQuality.values.firstWhere(
+        (q) => q.name == quality,
+        orElse: () => VideoSendQuality.standard,
+      );
+    }
     return () => _uploadAndSend(
       id: pending.id,
       type: pending.type,
       localPath: pending.content,
       durationMs: pending.durationMs,
       fileName: pending.fileName,
+      thumbPath: thumb != null && !thumb.startsWith('http') ? thumb : null,
+      viewOnce: pending.viewOnce,
       replyTo: replyTo,
     );
+  }
+
+  /// Abandonne un envoi resté en attente ou en échec : la bulle disparaît,
+  /// la file et ses fichiers sont nettoyés.
+  void cancelPending(ChatMessage msg) {
+    if (msg.status == MessageDeliveryStatus.sent) return;
+    _cancelled.add(msg.id);
+    _localMessages.remove(msg.id);
+    _retryActions.remove(msg.id);
+    _chat.clearInFlight(_conversationId, msg.id);
+    unawaited(_chat.releaseOutboxFile(msg.content));
+    unawaited(_chat.releaseOutboxFile(msg.thumbUrl));
+    unawaited(_preparedVideos.remove(msg.id)?.discard());
+    _videoQuality.remove(msg.id);
+    videoProgress.remove(msg.id);
+    _rebuildMessages();
   }
 
   // -----------------------------------------------------------------------
@@ -929,7 +984,11 @@ class ChatController extends GetxController {
     // Confié aussi au service, qui survit à l'écran : quitter la
     // discussion pendant un envoi ne doit plus faire disparaître la bulle
     // « en cours » alors que l'envoi continue en arrière-plan.
-    _chat.markInFlight(_conversationId, msg);
+    _chat.markInFlight(
+      _conversationId,
+      msg,
+      videoQuality: _videoQuality[msg.id]?.name,
+    );
     _rebuildMessages();
     _scrollToBottom();
   }
@@ -939,7 +998,11 @@ class ChatController extends GetxController {
     if (msg == null) return;
     final updated = msg.copyWith(status: status);
     _localMessages[id] = updated;
-    _chat.markInFlight(_conversationId, updated);
+    _chat.markInFlight(
+      _conversationId,
+      updated,
+      videoQuality: _videoQuality[id]?.name,
+    );
     _rebuildMessages();
   }
 
@@ -1044,6 +1107,13 @@ class ChatController extends GetxController {
           );
         }
       }
+      if (_cancelled.remove(id)) {
+        unawaited(_chat.deleteViewOnceFile(url));
+        if (thumbUrl != null) unawaited(_chat.deleteViewOnceFile(thumbUrl));
+        unawaited(_chat.releaseOutboxFile(localPath));
+        unawaited(_chat.releaseOutboxFile(thumbPath));
+        return;
+      }
       await _awaitConversation();
       await _chat.sendMessage(
         conversationId: _conversationId,
@@ -1062,7 +1132,11 @@ class ChatController extends GetxController {
         replyToText: replyTo?.shortPreview,
       );
       _clearPending(id);
-      if (type == MessageType.voice) _safeDeleteFile(localPath);
+      // Envoyé : les copies de la file n'ont plus de raison d'être. Un
+      // fichier hors de la file (copie impossible) appartient à la
+      // galerie et n'est jamais touché.
+      unawaited(_chat.releaseOutboxFile(localPath));
+      unawaited(_chat.releaseOutboxFile(thumbPath));
       if (type == MessageType.video) {
         unawaited(_preparedVideos.remove(id)?.discard());
         _videoQuality.remove(id);
@@ -1208,6 +1282,11 @@ class ChatController extends GetxController {
 
     final durationMs = recordDuration.value * 1000;
     final id = _chat.newMessageId(_conversationId);
+    // Mis à l'abri pour survivre à une fermeture de l'app ; l'original
+    // n'était qu'un fichier temporaire du micro.
+    final recorded = path;
+    path = await _chat.keepForOutbox(recorded, id);
+    if (path != recorded) _safeDeleteFile(recorded);
     _addLocalMessage(
       _pendingMessage(
         id: id,
@@ -1265,11 +1344,12 @@ class ChatController extends GetxController {
     await sendImageFile(xfile.path, viewOnce: _consumeViewOnceArm());
   }
 
-  Future<void> sendImageFile(String path, {bool viewOnce = false}) async {
+  Future<void> sendImageFile(String original, {bool viewOnce = false}) async {
     final replyTo = replyingTo.value;
     replyingTo.value = null;
 
     final id = _chat.newMessageId(_conversationId);
+    final path = await _chat.keepForOutbox(original, id);
     _addLocalMessage(
       _pendingMessage(
         id: id,
@@ -1389,23 +1469,31 @@ class ChatController extends GetxController {
   }
 
   Future<void> sendVideoFile(
-    String path, {
+    String original, {
     bool viewOnce = false,
     VideoSendQuality quality = VideoSendQuality.standard,
     int? knownDurationMs,
   }) async {
-    final durationMs = knownDurationMs ?? await _probeVideoDuration(path);
+    final durationMs = knownDurationMs ?? await _probeVideoDuration(original);
+    final id = _chat.newMessageId(_conversationId);
+    final path = await _chat.keepForOutbox(original, id);
     // Pas de vignette pour une vidéo à vue unique : elle en montrerait le
     // contenu dans la conversation, ce qui est exactement ce qu'on cherche
     // à éviter.
-    final thumbPath = viewOnce
+    final extracted = viewOnce
         ? null
         : await _extractVideoThumb(path, durationMs);
+    final thumbPath = extracted == null
+        ? null
+        : await _chat.keepForOutbox(extracted, id, suffix: '_thumb');
+    if (extracted != null && thumbPath != extracted) {
+      _safeDeleteFile(extracted);
+    }
 
     final replyTo = replyingTo.value;
     replyingTo.value = null;
 
-    final id = _chat.newMessageId(_conversationId);
+    _videoQuality[id] = quality;
     _addLocalMessage(
       _pendingMessage(
         id: id,
@@ -1417,7 +1505,6 @@ class ChatController extends GetxController {
         replyTo: replyTo,
       ),
     );
-    _videoQuality[id] = quality;
     _retryActions[id] = () => _uploadAndSend(
       id: id,
       type: MessageType.video,
@@ -1444,11 +1531,12 @@ class ChatController extends GetxController {
     replyingTo.value = null;
 
     final id = _chat.newMessageId(_conversationId);
+    final path = await _chat.keepForOutbox(file.path!, id);
     _addLocalMessage(
       _pendingMessage(
         id: id,
         type: MessageType.document,
-        content: file.path!,
+        content: path,
         fileName: file.name,
         replyTo: replyTo,
       ),
@@ -1456,7 +1544,7 @@ class ChatController extends GetxController {
     _retryActions[id] = () => _uploadAndSend(
       id: id,
       type: MessageType.document,
-      localPath: file.path!,
+      localPath: path,
       fileName: file.name,
       replyTo: replyTo,
     );
