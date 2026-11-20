@@ -629,6 +629,19 @@ service cloud.firestore {
                'lastMessage', 'lastMessageType', 'lastMessageAt',
                'lastMessageSenderUid', 'ephemeralSeconds', 'unreadCounts',
              ])
+        // Le badge non lu est compté par le serveur (`onMessageCreated`).
+        // Un participant ne peut que remettre **le sien** à zéro — jamais
+        // toucher à celui de l'autre, ni se l'augmenter.
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['unreadCounts'])
+          || (
+            request.resource.data.unreadCounts
+              .diff(resource.data.get('unreadCounts', {}))
+              .affectedKeys().hasOnly([request.auth.uid])
+            && request.resource.data.unreadCounts[request.auth.uid] == 0
+          )
+        )
         // Remettre son badge à zéro reste possible malgré un blocage ;
         // l'aperçu du dernier message et le réglage éphémère, non — sans
         // quoi la personne bloquée écrirait encore dans la liste des

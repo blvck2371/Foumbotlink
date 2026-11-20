@@ -181,7 +181,6 @@ async function main() {
       lastMessageType: fields.type,
       lastMessageAt: Timestamp.now(),
       lastMessageSenderUid: from,
-      unreadCounts: {[to]: increment(1)},
     }, {merge: true});
     await onMessageCreated.run({
       params: {conversationId: conv, messageId: id},
@@ -268,13 +267,14 @@ async function main() {
         assert(n.data.conversationId === CONV, "conversation absente du push");
       });
 
-  // L'app crée ensuite la conversation (getOrCreateConversation).
-  await check("Alice ouvre la conversation", async () => {
-    await assertSucceeds(setDoc(doc(fsOf(ALICE), "conversations", CONV), {
-      participants: [ALICE, BOB],
-      lastMessageAt: serverTimestamp(),
-      createdAt: serverTimestamp(),
-    }));
+  // Le serveur a créé la conversation pour ce premier message : l'app la
+  // trouve (getOrCreateConversation lit avant de créer).
+  await check("la conversation existe, badge de Bob à 1", async () => {
+    const conv = await getDoc(doc(fsOf(ALICE), "conversations", CONV));
+    assert(conv.exists(), "conversation non créée par le serveur");
+    assert(conv.data().participants.includes(BOB), "participants");
+    assert(conv.data().unreadCounts[BOB] === 1,
+        `badge ${conv.data().unreadCounts[BOB]}`);
   });
 
   // --- Texte ----------------------------------------------------------------
@@ -285,7 +285,8 @@ async function main() {
     assert(got.content === "Ça va ?", "contenu altéré");
     assert((await lastNotification(BOB)).body === "Ça va ?", "push texte");
     const conv = (await getDoc(doc(fsOf(BOB), "conversations", CONV))).data();
-    assert(conv.unreadCounts[BOB] === 1, `badge ${conv.unreadCounts[BOB]}`);
+    assert(conv.unreadCounts[BOB] === 2, `badge ${conv.unreadCounts[BOB]}`);
+    assert(!conv.unreadCounts[ALICE], "l'expéditrice ne se compte pas");
     assert(conv.lastMessage === "Ça va ?", "aperçu de la liste");
   });
 
@@ -386,6 +387,48 @@ async function main() {
         where("participants", "array-contains", BOB)));
     assert(snap.docs.some((d) => d.id === CONV), "conversation absente");
   });
+
+  // --- Badge non lu : le serveur seul compte ---------------------------------
+  await check("Alice ne gonfle pas le badge de Bob", async () => {
+    const c = doc(fsOf(ALICE), "conversations", CONV);
+    await assertFails(updateDoc(c, {[`unreadCounts.${BOB}`]: increment(5)}));
+    await assertFails(updateDoc(c, {[`unreadCounts.${BOB}`]: 0}));
+    await assertFails(setDoc(c, {lastMessage: "…",
+      unreadCounts: {[BOB]: increment(1)}}, {merge: true}));
+  });
+
+  await check("Bob ne s'invente pas de non-lus", async () => {
+    await assertFails(updateDoc(doc(fsOf(BOB), "conversations", CONV),
+        {[`unreadCounts.${BOB}`]: 42}));
+  });
+
+  await check("l'aperçu reste écrit par l'app de l'expéditrice", async () => {
+    await assertSucceeds(setDoc(doc(fsOf(ALICE), "conversations", CONV), {
+      lastMessage: "…", lastMessageSenderUid: ALICE,
+    }, {merge: true}));
+  });
+
+  await check("un message déjà lu à l'arrivée du trigger n'est pas compté",
+      async () => {
+        await updateDoc(doc(fsOf(BOB), "conversations", CONV),
+            {[`unreadCounts.${BOB}`]: 0});
+        // Bob, discussion ouverte, lit le message avant que le trigger ne
+        // passe.
+        await setDoc(doc(fsOf(ALICE), "conversations", CONV, "messages",
+            "vu"), {senderUid: ALICE, type: "text", content: "Tu es là ?",
+          createdAt: Timestamp.now()});
+        await updateDoc(doc(fsOf(BOB), "conversations", CONV, "messages",
+            "vu"), {readAt: serverTimestamp()});
+        await onMessageCreated.run({
+          params: {conversationId: CONV, messageId: "vu"},
+          data: {id: "vu", data: () => ({senderUid: ALICE, type: "text",
+            content: "Tu es là ?"})},
+        });
+        const conv = (await getDoc(doc(fsOf(BOB), "conversations",
+            CONV))).data();
+        assert(conv.unreadCounts[BOB] === 0,
+            `badge ${conv.unreadCounts[BOB]} au lieu de 0`);
+      });
 
   // --- Après réception ------------------------------------------------------
   await check("Bob marque lu et remet son badge à zéro", async () => {

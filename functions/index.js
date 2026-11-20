@@ -279,6 +279,56 @@ const MESSAGE_PREVIEWS = {
   sticker: null, // le contenu est déjà l'emoji lui-même
 };
 
+/**
+ * Badge non lu du destinataire, tenu par le serveur seul.
+ *
+ * Il était écrit par le téléphone de l'expéditeur, que les règles
+ * laissaient donc modifier le compteur de l'autre : une app modifiée
+ * pouvait le gonfler à volonté, et un échec de cette écriture laissait
+ * le badge faux.
+ *
+ * Lu et écrit dans une transaction avec le message : si le destinataire,
+ * discussion ouverte, l'a déjà marqué lu (`readAt`) avant que ce trigger
+ * ne passe, il n'est pas compté — sinon un « 1 » resterait affiché sur
+ * un message lu. L'app pose `readAt` avant de remettre le badge à zéro
+ * (ChatService.markAsRead), ce qui ferme l'autre ordre possible.
+ *
+ * Le premier message peut précéder le document de conversation : il est
+ * alors créé ici, pour que la discussion apparaisse chez le destinataire.
+ *
+ * @param {string} conversationId Id `uidA_uidB`.
+ * @param {string} messageId Message créé.
+ * @param {string} senderUid Expéditeur.
+ * @param {string} recipient Destinataire.
+ * @return {Promise<void>} Résolue une fois le compteur à jour.
+ */
+async function countUnread(conversationId, messageId, senderUid, recipient) {
+  const convRef = db.doc(`conversations/${conversationId}`);
+  const msgRef = convRef.collection("messages").doc(messageId);
+  try {
+    await db.runTransaction(async (tx) => {
+      const [conv, message] = await Promise.all([tx.get(convRef),
+        tx.get(msgRef)]);
+      if (!message.exists || message.get("readAt")) return;
+      if (!conv.exists) {
+        tx.set(convRef, {
+          participants: [senderUid, recipient],
+          createdAt: FieldValue.serverTimestamp(),
+          lastMessageAt: FieldValue.serverTimestamp(),
+          unreadCounts: {[recipient]: 1},
+        });
+        return;
+      }
+      tx.update(convRef, {
+        [`unreadCounts.${recipient}`]: FieldValue.increment(1),
+      });
+    });
+  } catch (err) {
+    // Le badge ne doit jamais empêcher la notification de partir.
+    logger.error("Badge non lu", {conversationId, messageId, err});
+  }
+}
+
 exports.onMessageCreated = onDocumentCreated(
     "conversations/{conversationId}/messages/{messageId}",
     async (event) => {
@@ -298,6 +348,9 @@ exports.onMessageCreated = onDocumentCreated(
       }
       const recipient = participants.find((p) => p !== msg.senderUid);
       if (!recipient) return;
+
+      await countUnread(conversationId, event.params.messageId,
+          msg.senderUid, recipient);
 
       const senderName = await displayName(msg.senderUid, "Quelqu'un");
       // Un message à vue unique ne livre pas son type au-delà du

@@ -194,18 +194,10 @@ class ChatService {
             // liste sans attendre la résolution serveur.
             'lastMessageAt': Timestamp.fromDate(DateTime.now()),
             'lastMessageSenderUid': senderUid,
-            // Compteur dénormalisé par participant — affiché dans la liste
-            // des conversations (badge façon WhatsApp). Écrit comme map
-            // imbriquée, et non via la clé pointée `unreadCounts.$uid` :
-            // contrairement à `update()`, `set()` ne lit pas le point comme
-            // un chemin de champ et créait un champ de premier niveau
-            // littéralement nommé « unreadCounts.<uid> ». Les règles le
-            // voyaient donc dans `affectedKeys()` hors de la liste
-            // autorisée → PERMISSION_DENIED, et `Conversation.fromDoc` ne
-            // trouvait jamais la map qu'il lit. Avec `merge: true`, une map
-            // imbriquée fusionne clé par clé : le compteur de l'autre
-            // participant est préservé.
-            'unreadCounts': {recipientUid: FieldValue.increment(1)},
+            // Le badge non lu du destinataire n'est plus écrit ici : le
+            // serveur le compte (`onMessageCreated`), et les règles
+            // refusent désormais qu'un participant touche à celui de
+            // l'autre.
           }, SetOptions(merge: true))
           .catchError((Object e) {
             developer.log(
@@ -473,9 +465,19 @@ class ChatService {
   ) async {
     if (messageIds.isEmpty) return;
 
-    // Remise à zéro du badge : hors du batch, pour la même raison que dans
-    // [sendMessage] — un refus sur le document `conversations` ne doit pas
-    // emporter avec lui les accusés de lecture des messages.
+    final batch = _db.batch();
+    for (final id in messageIds) {
+      batch.update(_msgRef(conversationId).doc(id), {
+        'readAt': FieldValue.serverTimestamp(),
+      });
+    }
+    await batch.commit();
+
+    // Remise à zéro du badge **après** les accusés de lecture, et hors du
+    // batch : un refus sur le document `conversations` ne doit pas
+    // emporter les accusés. L'ordre compte — le serveur ne compte pas un
+    // message déjà marqué lu (voir `countUnread`), si bien qu'un message
+    // arrivé discussion ouverte ne laisse pas de « 1 » derrière lui.
     unawaited(
       clearUnread(conversationId, readerUid).catchError((Object e) {
         developer.log(
@@ -485,14 +487,6 @@ class ChatService {
         );
       }),
     );
-
-    final batch = _db.batch();
-    for (final id in messageIds) {
-      batch.update(_msgRef(conversationId).doc(id), {
-        'readAt': FieldValue.serverTimestamp(),
-      });
-    }
-    await batch.commit();
   }
 
   /// Remet à zéro le badge non lu dès l'ouverture d'une discussion.
