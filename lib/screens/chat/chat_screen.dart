@@ -1309,6 +1309,25 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   _showForwardPicker(context, msg);
                 },
               ),
+            // Signaler : seulement les messages reçus.
+            if (msg.senderUid != Get.find<ChatController>().myUid)
+              ListTile(
+                leading: const Icon(
+                  Icons.flag_outlined,
+                  color: AppColors.danger,
+                ),
+                title: Text(
+                  'Signaler',
+                  style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.danger,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  Get.find<ChatController>().reportMessage(msg);
+                },
+              ),
             // Retirer de son propre affichage : toujours offert, quel que
             // soit l'expéditeur et l'âge du message.
             ListTile(

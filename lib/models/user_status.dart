@@ -32,6 +32,7 @@ class UserStatus {
     this.repostOfId,
     this.repostOfAuthorUid,
     this.repostOfAuthorName,
+    this.hidden = false,
   });
 
   /// Durée de vie d'un statut. Une constante partagée : le client la
@@ -89,6 +90,10 @@ class UserStatus {
   final String? repostOfId;
   final String? repostOfAuthorUid;
   final String? repostOfAuthorName;
+
+  /// Masqué par la modération (`onReportCreated`, au-delà du seuil de
+  /// signalements). Son auteur le voit encore ; les autres, non.
+  final bool hidden;
 
   bool get isRepost => repostOfId != null && repostOfId!.isNotEmpty;
 
@@ -180,6 +185,7 @@ class UserStatus {
       repostOfId: repostOfId,
       repostOfAuthorUid: repostOfAuthorUid,
       repostOfAuthorName: repostOfAuthorName,
+      hidden: hidden,
     );
   }
 }

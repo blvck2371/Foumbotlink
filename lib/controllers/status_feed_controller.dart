@@ -174,6 +174,7 @@ class StatusFeedController extends GetxController {
   void _watchMine(String uid) {
     _mineSub = _statuses.watchUserStatuses(
       uid: uid,
+      includeHidden: true,
       viewedIds: _viewedIds,
       likedIds: _likedIds,
       onData: (list) {

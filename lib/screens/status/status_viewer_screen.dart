@@ -6,12 +6,16 @@ import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../models/report.dart';
 import '../../models/user_status.dart';
 import '../../services/auth_service.dart';
+import '../../services/moderation_service.dart';
 import '../../services/status_service.dart';
 import '../../services/user_profile_service.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/confirm_dialog.dart';
 import '../../widgets/feed_image.dart';
+import '../../widgets/report_sheet.dart';
 import '../../widgets/user_avatar.dart';
 
 /// Ouvre les statuts d'une personne en plein écran, à partir de [initialIndex].
@@ -455,6 +459,58 @@ class _StatusViewerScreenState extends State<StatusViewerScreen>
     Navigator.of(context).maybePop();
   }
 
+  /// Signale le statut affiché, puis propose de bloquer son auteur. La
+  /// lecture est en pause pendant toute l'opération.
+  Future<void> _report() async {
+    _pause();
+    final status = _statuses[_index];
+    final moderation = Get.find<ModerationService>();
+    try {
+      final choice = await showReportSheet(targetLabel: 'ce statut');
+      if (choice == null) return;
+      await moderation.report(
+        ContentReport(
+          targetType: ReportTargetType.status,
+          targetId: status.id,
+          targetPath: 'statuses/${status.id}',
+          targetOwnerUid: status.authorUid,
+          reporterUid: _auth.uid,
+          reason: choice.reason,
+          details: choice.details,
+          excerpt: [
+            status.text,
+            status.imageUrl ?? '',
+            status.videoUrl ?? '',
+          ].where((e) => e.trim().isNotEmpty).join('\n'),
+        ),
+      );
+      if (moderation.isBlocked(status.authorUid)) {
+        Get.snackbar('Signalement envoyé', 'Merci. Notre équipe va l\'examiner.');
+        return;
+      }
+      final block = await confirmAction(
+        title: 'Signalement envoyé',
+        message:
+            'Merci. Notre équipe va l\'examiner.\n\nVoulez-vous aussi '
+            'bloquer ${status.authorName} ? Vous ne verrez plus ses '
+            'statuts, et cette personne ne pourra plus vous écrire.',
+        confirmLabel: 'Bloquer',
+        cancelLabel: 'Plus tard',
+      );
+      if (!block) return;
+      await moderation.blockUser(
+        myUid: _auth.uid,
+        targetUid: status.authorUid,
+        targetName: status.authorName,
+      );
+      if (mounted) Navigator.of(context).maybePop();
+    } catch (e) {
+      Get.snackbar('Signalement impossible', '$e');
+    } finally {
+      if (mounted) _resume();
+    }
+  }
+
   void _showViewers() {
     _pause();
     final status = _statuses[_index];
@@ -518,6 +574,7 @@ class _StatusViewerScreenState extends State<StatusViewerScreen>
               progress: _progress,
               canDelete: widget.canDelete && isMine,
               onDelete: _confirmDelete,
+              onReport: isMine || !_auth.isSignedIn ? null : _report,
             ),
             Positioned(
               left: 0,
@@ -858,6 +915,7 @@ class _Header extends StatelessWidget {
     required this.progress,
     required this.canDelete,
     required this.onDelete,
+    this.onReport,
   });
 
   final List<UserStatus> statuses;
@@ -865,6 +923,9 @@ class _Header extends StatelessWidget {
   final Animation<double> progress;
   final bool canDelete;
   final VoidCallback onDelete;
+
+  /// Signaler le statut affiché — absent sur ses propres statuts.
+  final VoidCallback? onReport;
 
   @override
   Widget build(BuildContext context) {
@@ -939,6 +1000,15 @@ class _Header extends StatelessWidget {
                     onPressed: onDelete,
                     icon: const Icon(
                       Icons.delete_outline,
+                      color: AppColors.white,
+                    ),
+                  ),
+                if (onReport != null)
+                  IconButton(
+                    tooltip: 'Signaler',
+                    onPressed: onReport,
+                    icon: const Icon(
+                      Icons.flag_outlined,
                       color: AppColors.white,
                     ),
                   ),

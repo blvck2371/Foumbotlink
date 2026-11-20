@@ -901,14 +901,40 @@ service cloud.firestore {
     // La modération lit et traite depuis la console / l'Admin SDK, qui
     // ignore ces règles (voir onReportCreated dans functions/index.js).
     // -----------------------------------------------------------------
+    // Un message privé ne peut être signalé que par un participant de la
+    // conversation : sans ça, n'importe qui pourrait faire recopier par le
+    // serveur (`onReportCreated`) un message qu'il n'a jamais pu lire.
+    function canReportTarget(data) {
+      let parts = data.targetPath.split('/');
+      return data.targetType != 'message'
+        || (
+          parts.size() == 4
+          && parts[0] == 'conversations'
+          && parts[2] == 'messages'
+          && request.auth.uid in conversationPeers(parts[1])
+        );
+    }
+
     match /reports/{reportId} {
       allow read: if false;
       allow create: if request.auth != null
         && request.resource.data.reporterUid == request.auth.uid
         && request.resource.data.status == 'pending'
         && request.resource.data.targetPath is string
-        && request.resource.data.targetPath.size() < 300;
+        && request.resource.data.targetPath.size() < 300
+        && request.resource.data.targetType in
+             ['post', 'comment', 'user', 'marketItem', 'message', 'status']
+        && request.resource.data.reason in
+             ['spam', 'harcelement', 'haine', 'violence', 'nuditeSexuel',
+              'fausseInformation', 'arnaque', 'autre']
+        && canReportTarget(request.resource.data);
       allow update, delete: if false;
+    }
+
+    // File de modération — écrite par `onReportCreated`, lue par l'équipe
+    // via la console ou l'Admin SDK. Aucun accès depuis l'app.
+    match /moderationQueue/{entryId} {
+      allow read, write: if false;
     }
 
     // -----------------------------------------------------------------

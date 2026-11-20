@@ -16,8 +16,11 @@ import 'package:video_player/video_player.dart';
 import '../models/call.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
+import '../models/report.dart';
 import '../models/user_profile.dart';
 import '../routes/app_routes.dart';
+import '../widgets/confirm_dialog.dart';
+import '../widgets/report_sheet.dart';
 import '../services/scam_guard.dart';
 import '../services/auth_service.dart';
 import '../services/chat_service.dart';
@@ -1361,6 +1364,65 @@ class ChatController extends GetxController {
 
   void toggleStickers() {
     showStickers.value = !showStickers.value;
+  }
+
+  /// Signale un message reçu, puis propose de bloquer son expéditeur.
+  ///
+  /// Le texte joint au signalement n'est qu'un aperçu : le serveur
+  /// (`onReportCreated`) recopie lui-même le message dans la file de
+  /// modération, pour que la preuve survive à une suppression et ne
+  /// dépende pas de ce que l'app déclare.
+  Future<void> reportMessage(ChatMessage msg) async {
+    if (msg.senderUid == myUid || _conversationId.isEmpty) return;
+    final choice = await showReportSheet(targetLabel: 'ce message');
+    if (choice == null) return;
+
+    final excerpt = switch (msg.type) {
+      MessageType.text => msg.content,
+      MessageType.sticker => msg.content,
+      _ => '[${msg.type.name}] ${msg.fileName ?? ''}'.trim(),
+    };
+    try {
+      await _moderation.report(
+        ContentReport(
+          targetType: ReportTargetType.message,
+          targetId: msg.id,
+          targetPath: 'conversations/$_conversationId/messages/${msg.id}',
+          targetOwnerUid: msg.senderUid,
+          reporterUid: myUid,
+          reason: choice.reason,
+          details: choice.details,
+          excerpt: excerpt,
+        ),
+      );
+    } catch (e) {
+      Get.snackbar('Signalement impossible', '$e');
+      return;
+    }
+
+    if (iBlockedPeer) {
+      Get.snackbar('Signalement envoyé', 'Merci. Notre équipe va l\'examiner.');
+      return;
+    }
+    final name = otherProfile.value?.displayName ?? 'ce contact';
+    final block = await confirmAction(
+      title: 'Signalement envoyé',
+      message:
+          'Merci. Notre équipe va l\'examiner.\n\nVoulez-vous aussi bloquer '
+          '$name ? Cette personne ne pourra plus vous écrire ni vous appeler.',
+      confirmLabel: 'Bloquer',
+      cancelLabel: 'Plus tard',
+    );
+    if (!block) return;
+    try {
+      await _moderation.blockUser(
+        myUid: myUid,
+        targetUid: _otherUid,
+        targetName: otherProfile.value?.displayName ?? '',
+      );
+    } catch (e) {
+      Get.snackbar('Blocage impossible', '$e');
+    }
   }
 
   void startAudioCall() => _startCall(CallType.audio);

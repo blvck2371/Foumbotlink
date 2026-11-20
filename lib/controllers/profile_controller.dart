@@ -394,11 +394,6 @@ class ProfileController extends GetxController {
           excerpt: p.displayName,
         ),
       );
-      Get.snackbar(
-        'Signalement envoyé',
-        'Merci. Notre équipe examine ce profil.',
-        duration: const Duration(seconds: 4),
-      );
     } catch (e) {
       developer.log(
         'Signalement du profil',
@@ -410,7 +405,35 @@ class ProfileController extends GetxController {
         '$e',
         duration: const Duration(seconds: 6),
       );
+      return;
     }
+
+    if (isBlocked.value) {
+      Get.snackbar(
+        'Signalement envoyé',
+        'Merci. Notre équipe examine ce profil.',
+        duration: const Duration(seconds: 4),
+      );
+      return;
+    }
+    // Signaler sans pouvoir se protéger aussitôt laisserait la personne
+    // exposée en attendant la modération : on propose de bloquer.
+    final block = await confirmAction(
+      title: 'Signalement envoyé',
+      message:
+          'Merci. Notre équipe examine ce profil.\n\nVoulez-vous aussi '
+          'bloquer ${p.displayName} ? Cette personne ne pourra plus vous '
+          'écrire, vous appeler ni vous suivre.',
+      confirmLabel: 'Bloquer',
+      cancelLabel: 'Plus tard',
+    );
+    if (!block) return;
+    await _moderation.blockUser(
+      myUid: _auth.uid,
+      targetUid: p.uid,
+      targetName: p.displayName,
+    );
+    isBlocked.value = true;
   }
 
   /// Bascule le blocage. Le serveur coupe ensuite tout échange dans les

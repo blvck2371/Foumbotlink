@@ -886,51 +886,115 @@ exports.onPostDeleted = onDocumentDeleted("posts/{postId}", async (event) => {
 //
 // Un document `reports/{type}_{cible}_{signaleur}` par signalement : l'id
 // déterministe empêche un même utilisateur de gonfler le compteur en
-// signalant plusieurs fois le même contenu. Au-delà du seuil, le contenu
-// est masqué automatiquement, ce qui satisfait l'exigence de retrait sous
-// 24 h sans dépendre d'une intervention humaine immédiate. Le document
-// n'est jamais supprimé : la modération humaine tranche ensuite (remettre
-// `hidden` à false, ou supprimer définitivement).
+// signalant plusieurs fois le même contenu.
+//
+// Chaque signalement alimente aussi la file de modération
+// `moderationQueue/{type}_{cible}` — un dossier par contenu ou profil
+// visé, que seule l'équipe (Admin SDK, console) lit. Le dossier garde :
+//  - une copie du contenu faite **par le serveur** au premier
+//    signalement : la preuve survit à une suppression par son auteur
+//    (message « supprimé pour tout le monde », statut expiré…) et ne
+//    dépend pas de ce que l'app du signaleur a déclaré ;
+//  - le nombre de signalements et leur répartition par motif ;
+//  - une priorité, pour traiter d'abord ce qui presse.
+//
+// Masquage automatique au-delà du seuil pour les contenus publics
+// (publications, commentaires, annonces, statuts) : c'est ce qui assure le
+// retrait rapide sans attendre un humain. Un message privé n'est pas
+// masqué — le signaleur peut bloquer —, un profil non plus : suspendre un
+// compte relève d'une décision humaine.
 // ---------------------------------------------------------------------
 
 /** Nombre de signalements distincts au-delà duquel un contenu est masqué. */
 const REPORT_HIDE_THRESHOLD = 5;
 
+/** Signalements distincts d'un profil qui le font passer en priorité. */
+const USER_REPORT_PRIORITY_THRESHOLD = 3;
+
+/** Motifs traités en priorité dès le premier signalement. */
+const URGENT_REASONS = new Set(["nuditeSexuel", "violence"]);
+
+/** Types de contenus masquables automatiquement. */
+const HIDEABLE_TYPES = new Set(["post", "comment", "marketItem", "status"]);
+
+/**
+ * Auteur d'un contenu, lu dans le document lui-même plutôt que dans ce
+ * qu'a déclaré le signaleur.
+ *
+ * @param {string} targetType Type de contenu.
+ * @param {string} targetPath Chemin du document.
+ * @param {object|undefined} data Données du document, s'il existe.
+ * @return {string|null} Uid de l'auteur, ou null s'il est inconnu.
+ */
+function contentOwner(targetType, targetPath, data) {
+  if (targetType === "user") return targetPath.split("/")[1] || null;
+  if (!data) return null;
+  return data.authorUid || data.senderUid || data.sellerUid || null;
+}
+
 exports.onReportCreated = onDocumentCreated("reports/{reportId}", async (event) => {
   const snap = event.data;
   if (!snap) return;
   const report = snap.data();
-  const targetPath = report.targetPath;
-  if (!targetPath) return;
+  const {targetType, targetPath, reason} = report;
+  if (!targetPath || !targetType) return;
 
-  logger.warn("Signalement reçu", {
-    targetPath,
-    reason: report.reason,
-    reporterUid: report.reporterUid,
-  });
-
-  // Un signalement d'utilisateur ne masque rien : bloquer relève du
-  // signaleur (liste locale), suspendre un compte relève d'un humain.
-  if (report.targetType === "user") return;
+  logger.warn("Signalement reçu", {targetPath, reason, reporterUid: report.reporterUid});
 
   const targetRef = db.doc(targetPath);
+  const queueRef = db.doc(`moderationQueue/${targetType}_${targetRef.id}`);
 
   try {
-    const count = await db.runTransaction(async (tx) => {
-      const doc = await tx.get(targetRef);
-      if (!doc.exists) return 0;
-      const next = (doc.data().reportsCount || 0) + 1;
-      const update = {reportsCount: next};
-      if (next >= REPORT_HIDE_THRESHOLD) update.hidden = true;
-      tx.update(targetRef, update);
-      return next;
-    });
+    await db.runTransaction(async (tx) => {
+      const [target, queue] = await Promise.all([
+        tx.get(targetRef),
+        tx.get(queueRef),
+      ]);
+      const data = target.exists ? target.data() : undefined;
+      const count = (queue.exists ? queue.get("reportsCount") || 0 : 0) + 1;
 
-    if (count >= REPORT_HIDE_THRESHOLD) {
-      logger.warn(`Contenu masqué automatiquement : ${targetPath} (${count} signalements)`);
-    }
+      let priority = "normal";
+      if (URGENT_REASONS.has(reason)) priority = "high";
+      if (targetType === "user" && count >= USER_REPORT_PRIORITY_THRESHOLD) {
+        priority = "high";
+      }
+      if (count >= REPORT_HIDE_THRESHOLD) priority = "high";
+      if (queue.exists && queue.get("priority") === "high") priority = "high";
+
+      const entry = {
+        targetType,
+        targetPath,
+        targetId: targetRef.id,
+        targetOwnerUid: contentOwner(targetType, targetPath, data) ||
+          report.targetOwnerUid || null,
+        reportsCount: count,
+        // Objet imbriqué : avec `set(…, {merge})`, une clé pointée serait
+        // prise pour un nom de champ littéral.
+        reasons: {[reason]: FieldValue.increment(1)},
+        lastReportAt: FieldValue.serverTimestamp(),
+        lastReportId: snap.id,
+        priority,
+        // Un nouveau signalement rouvre un dossier déjà tranché.
+        status: "open",
+      };
+      if (!queue.exists) {
+        entry.firstReportAt = FieldValue.serverTimestamp();
+        // La preuve : copie du contenu tel qu'il est au premier
+        // signalement. Absent si le contenu avait déjà disparu.
+        entry.snapshot = data || null;
+        entry.snapshotTakenAt = FieldValue.serverTimestamp();
+        entry.excerpt = report.excerpt || "";
+      }
+      tx.set(queueRef, entry, {merge: true});
+
+      if (HIDEABLE_TYPES.has(targetType) && target.exists) {
+        const update = {reportsCount: FieldValue.increment(1)};
+        if (count >= REPORT_HIDE_THRESHOLD) update.hidden = true;
+        tx.update(targetRef, update);
+      }
+    });
   } catch (err) {
-    logger.error(`Comptage des signalements échoué pour ${targetPath}`, err);
+    logger.error(`Traitement du signalement échoué pour ${targetPath}`, err);
   }
 });
 

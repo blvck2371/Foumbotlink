@@ -133,6 +133,7 @@ class StatusService {
     Set<String> viewedIds = const {},
     Set<String> likedIds = const {},
     void Function(Object error)? onError,
+    bool includeHidden = false,
   }) {
     return _statusesRef
         .where('authorUid', isEqualTo: uid)
@@ -151,6 +152,7 @@ class StatusService {
                   ),
                 )
                 .where((status) => !status.isExpired)
+                .where((status) => includeHidden || !status.hidden)
                 .toList(),
           ),
           onError: (Object e) => onError?.call(e),
@@ -194,7 +196,7 @@ class StatusService {
 
     void publish() {
       final all = [for (final chunk in perChunk.values) ...chunk]
-          .where((status) => !status.isExpired)
+          .where((status) => !status.isExpired && !status.hidden)
           .toList()
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
       onData(all);
@@ -298,6 +300,7 @@ class StatusService {
       likesCount: d['likesCount'] as int? ?? 0,
       likedByMe: likedByMe,
       repostOfId: d['repostOfId'] as String?,
+      hidden: d['hidden'] as bool? ?? false,
       repostOfAuthorUid: d['repostOfAuthorUid'] as String?,
       repostOfAuthorName: d['repostOfAuthorName'] as String?,
     );
