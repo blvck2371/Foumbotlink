@@ -729,6 +729,75 @@ exports.onFollowerAdded = onDocumentCreated(
 );
 
 // ---------------------------------------------------------------------
+// Blocage — miroir et rupture des abonnements.
+//
+// `users/{uid}/blocked/{cible}` est écrit par le client et n'est lisible
+// que par celui qui bloque. Ce trigger en tient le miroir
+// `users/{cible}/blockedBy/{uid}`, que seule la personne bloquée peut lire :
+// son app s'en sert pour masquer à son tour les contenus de celui qui
+// l'a bloquée. Les règles Firestore, elles, lisent directement `blocked`.
+//
+// Bloquer rompt aussi les abonnements dans les deux sens : les règles
+// interdisent d'en créer de nouveaux, mais n'effacent pas ceux qui
+// existent, et le client n'a pas le droit de toucher à l'abonnement de
+// l'autre.
+// ---------------------------------------------------------------------
+
+/**
+ * Supprime l'abonnement de `followerUid` à `targetUid`, s'il existe, avec
+ * ses deux compteurs.
+ *
+ * @param {string} followerUid Compte abonné.
+ * @param {string} targetUid Compte suivi.
+ * @return {Promise<boolean>} `true` si un abonnement a été rompu.
+ */
+async function removeFollowEdge(followerUid, targetUid) {
+  const followingRef = db.doc(`users/${followerUid}/following/${targetUid}`);
+  const followerRef = db.doc(`users/${targetUid}/followers/${followerUid}`);
+  return db.runTransaction(async (tx) => {
+    const [following, follower, followerUser, targetUser] = await Promise.all([
+      tx.get(followingRef),
+      tx.get(followerRef),
+      tx.get(db.doc(`users/${followerUid}`)),
+      tx.get(db.doc(`users/${targetUid}`)),
+    ]);
+    if (!following.exists && !follower.exists) return false;
+    if (following.exists) {
+      tx.delete(followingRef);
+      if (followerUser.exists) {
+        tx.update(followerUser.ref, {followingCount: FieldValue.increment(-1)});
+      }
+    }
+    if (follower.exists) {
+      tx.delete(followerRef);
+      if (targetUser.exists) {
+        tx.update(targetUser.ref, {followersCount: FieldValue.increment(-1)});
+      }
+    }
+    return true;
+  });
+}
+
+exports.onBlockWritten = onDocumentWritten(
+    "users/{uid}/blocked/{blockedUid}",
+    async (event) => {
+      const {uid, blockedUid} = event.params;
+      if (uid === blockedUid) return;
+      const mirror = db.doc(`users/${blockedUid}/blockedBy/${uid}`);
+
+      if (!event.data.after.exists) {
+        await mirror.delete();
+        return;
+      }
+      if (event.data.before.exists) return; // simple réécriture
+
+      await mirror.set({createdAt: FieldValue.serverTimestamp()});
+      await removeFollowEdge(uid, blockedUid);
+      await removeFollowEdge(blockedUid, uid);
+    },
+);
+
+// ---------------------------------------------------------------------
 // Suppression d'une publication — purge en cascade.
 //
 // Firestore ne supprime pas les sous-collections avec leur document

@@ -94,7 +94,7 @@ class HomeController extends GetxController {
   StreamSubscription? _watchSub;
   StreamSubscription? _marketWatchSub;
   StreamSubscription? _notificationsSub;
-  StreamSubscription? _blockedSub;
+  Workers? _blockedSub;
 
   FeedService get _feed => Get.find<FeedService>();
   MarketService get _market => Get.find<MarketService>();
@@ -252,7 +252,7 @@ class HomeController extends GetxController {
     _watchSub?.cancel();
     _marketWatchSub?.cancel();
     _notificationsSub?.cancel();
-    _blockedSub?.cancel();
+    _blockedSub?.dispose();
     scrollController
       ..removeListener(_onScroll)
       ..dispose();
@@ -270,34 +270,32 @@ class HomeController extends GetxController {
   }
 
   void _watchBlocked() {
-    _blockedSub?.cancel();
-    _blockedSub = _moderation.watchBlocked(
-      myUid: _auth.uid,
-      onChanged: (blocked) {
-        // Un blocage doit retirer immédiatement les publications déjà
-        // affichées, pas seulement celles chargées ensuite.
-        final before = items.length;
-        items.removeWhere((e) => blocked.contains(e.authorUid));
-        if (items.length != before) items.refresh();
-        // Même règle sous « Vente & Achat » : bloquer quelqu'un doit aussi
-        // faire disparaître ses annonces de la grille du fil.
-        final marketBefore = marketItems.length;
-        marketItems.removeWhere((e) => blocked.contains(e.sellerUid));
-        if (marketItems.length != marketBefore) marketItems.refresh();
-      },
-    );
+    _blockedSub?.dispose();
+    _blockedSub = _moderation.watchHidden((hidden) {
+      // Un blocage — dans un sens comme dans l'autre — doit retirer
+      // immédiatement les publications déjà affichées, pas seulement
+      // celles chargées ensuite.
+      final before = items.length;
+      items.removeWhere((e) => hidden.contains(e.authorUid));
+      if (items.length != before) items.refresh();
+      // Même règle sous « Vente & Achat » : ses annonces disparaissent
+      // aussi de la grille du fil.
+      final marketBefore = marketItems.length;
+      marketItems.removeWhere((e) => hidden.contains(e.sellerUid));
+      if (marketItems.length != marketBefore) marketItems.refresh();
+    });
   }
 
   /// Un contenu d'un compte bloqué ne doit jamais atteindre la liste —
   /// filtré à chaque entrée (page, temps réel) plutôt qu'à l'affichage.
-  bool _isVisible(FeedItem item) => !_moderation.isBlocked(item.authorUid);
+  bool _isVisible(FeedItem item) => !_moderation.hides(item.authorUid);
 
   /// Pendant de [_isVisible] pour les annonces — même règle, autre champ
   /// d'auteur. `MarketController` filtre déjà sa propre grille ainsi ; le
   /// fil doit s'aligner, sinon un compte bloqué reste visible dès qu'on
   /// bascule sur « Vente & Achat ».
   bool _isListingVisible(MarketItem item) =>
-      !_moderation.isBlocked(item.sellerUid);
+      !_moderation.hides(item.sellerUid);
 
   /// Recale le badge « certifié » des cartes du fil sur le profil de leurs
   /// auteurs.
@@ -1025,8 +1023,9 @@ class HomeController extends GetxController {
     final confirmed = await confirmAction(
       title: 'Bloquer $authorName ?',
       message:
-          'Vous ne verrez plus ses publications ni ses commentaires. '
-          'Cette personne ne sera pas informée du blocage, et vous pourrez '
+          'Elle ne pourra plus vous écrire, vous appeler, vous suivre ni '
+          'commenter vos publications, et vous ne verrez plus ses '
+          'contenus. Elle ne recevra aucune notification, et vous pourrez '
           'la débloquer à tout moment depuis son profil.',
       confirmLabel: 'Bloquer',
     );

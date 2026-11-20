@@ -39,7 +39,7 @@ class SavedPostsController extends GetxController {
         for (final post in saved)
           // Un auteur bloqué après coup ne doit pas réapparaître ici sous
           // prétexte que sa publication avait été mise de côté avant.
-          if (!_moderation.isBlocked(post.authorUid))
+          if (!_moderation.hides(post.authorUid))
             // `likedByMe` ne se lit pas dans le document du post : c'est
             // HomeController qui fait autorité, ici comme dans le fil.
             post.copyWith(likedByMe: _home.isLikedByMe(post.id)),

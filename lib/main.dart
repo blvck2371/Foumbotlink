@@ -180,7 +180,8 @@ Future<void> main() async {
   Get.put(ContactMatchService(), permanent: true);
   Get.put(DossierService(), permanent: true);
   Get.put(DemarcheService(), permanent: true);
-  Get.put(ModerationService(), permanent: true);
+  Get.put(ModerationService(), permanent: true)
+      .bindAuth(Get.find<AuthService>().firebaseUser);
   Get.put(NotificationService(), permanent: true);
   Get.put(StatusService(), permanent: true);
   Get.put(ChatService(), permanent: true);

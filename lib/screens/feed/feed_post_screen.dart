@@ -9,6 +9,7 @@ import '../../models/feed_item.dart';
 import '../../routes/app_routes.dart';
 import '../../services/auth_service.dart';
 import '../../services/feed_service.dart';
+import '../../services/moderation_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/foumbot_app_bar.dart';
@@ -32,6 +33,8 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
   final _home = Get.find<HomeController>();
   final _feed = Get.find<FeedService>();
   final _auth = Get.find<AuthService>();
+  final _moderation = Get.find<ModerationService>();
+  Workers? _hiddenWorker;
 
   late String _postId;
   String? _replyToCommentId;
@@ -58,11 +61,17 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
     _loadPost();
     _watchPost();
     _watchComments();
+    // Bloquer quelqu'un (ou être bloqué) retire ses commentaires sans
+    // attendre le prochain chargement.
+    _hiddenWorker = _moderation.watchHidden((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
     _commentsSub?.cancel();
+    _hiddenWorker?.dispose();
     _postSub?.cancel();
     _commentCtrl.dispose();
     _commentFocus.dispose();
@@ -131,6 +140,14 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
       _commentCtrl.clear();
     });
   }
+
+  /// Commentaires et réponses, sans ceux des comptes masqués par un
+  /// blocage dans un sens ou dans l'autre.
+  List<FeedComment> get _visibleComments => [
+        for (final c in _comments)
+          if (!_moderation.hides(c.authorUid))
+            c..replies.removeWhere((r) => _moderation.hides(r.authorUid)),
+      ];
 
   void _watchComments() {
     _commentsSub = _feed.watchComments(
@@ -471,13 +488,13 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                           child: FoumbotLoader(),
                         ),
                       )
-                    else if (_comments.isEmpty)
+                    else if (_visibleComments.isEmpty)
                       Text(
                         'Soyez le premier à commenter.',
                         style: GoogleFonts.manrope(color: muted),
                       )
                     else
-                      ..._comments.map(
+                      ..._visibleComments.map(
                         (c) => _CommentNode(
                           postId: _postId,
                           comment: c,

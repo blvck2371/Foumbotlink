@@ -47,3 +47,4 @@ jobs:
       - run: node -e "require('./index.js')"
       - run: npm run test:rules:all
       - run: npm run test:delete-account
+      - run: npm run test:block

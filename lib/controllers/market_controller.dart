@@ -145,7 +145,7 @@ class MarketController extends GetxController {
       };
       _window
         ..clear()
-        ..addAll(window.where((e) => !_moderation.isBlocked(e.sellerUid)));
+        ..addAll(window.where((e) => !_moderation.hides(e.sellerUid)));
       _visibleCount = _pageSize;
       _applyLocal();
     } finally {

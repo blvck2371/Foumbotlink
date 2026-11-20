@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import '../models/user_status.dart';
 import '../services/auth_service.dart';
 import '../services/follow_service.dart';
+import '../services/moderation_service.dart';
 import '../services/status_service.dart';
 import '../services/user_profile_service.dart';
 
@@ -73,6 +74,8 @@ class StatusFeedController extends GetxController {
   AuthService get _auth => Get.find<AuthService>();
   FollowService get _follow => Get.find<FollowService>();
   UserProfileService get _profiles => Get.find<UserProfileService>();
+  ModerationService get _moderation => Get.find<ModerationService>();
+  Workers? _hiddenWorker;
 
   String? get _uid => _auth.isSignedIn ? _auth.uid : null;
 
@@ -95,12 +98,14 @@ class StatusFeedController extends GetxController {
     super.onInit();
     ever(_auth.firebaseUser, (_) => unawaited(_bind()));
     unawaited(_bind());
+    _hiddenWorker = _moderation.watchHidden((_) => _rebuild());
   }
 
   @override
   void onClose() {
     unawaited(_followedSub?.cancel());
     _mineSub?.cancel();
+    _hiddenWorker?.dispose();
     super.onClose();
   }
 
@@ -216,6 +221,7 @@ class StatusFeedController extends GetxController {
     final grouped = <String, List<UserStatus>>{};
     for (final status in _followedStatuses) {
       if (status.authorUid == uid) continue; // les miens ont leur pastille
+      if (_moderation.hides(status.authorUid)) continue; // blocage
       grouped.putIfAbsent(status.authorUid, () => []).add(status);
     }
 

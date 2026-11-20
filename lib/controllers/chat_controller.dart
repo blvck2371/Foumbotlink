@@ -22,6 +22,7 @@ import '../services/scam_guard.dart';
 import '../services/auth_service.dart';
 import '../services/chat_service.dart';
 import '../services/follow_service.dart';
+import '../services/moderation_service.dart';
 
 /// Durée d'inactivité de saisie après laquelle on repasse à "idle" côté
 /// local (indépendamment du côté distant, qui a sa propre marge — voir
@@ -153,6 +154,24 @@ class ChatController extends GetxController {
   AuthService get _auth => Get.find<AuthService>();
   ChatService get _chat => Get.find<ChatService>();
   FollowService get _follow => Get.find<FollowService>();
+  ModerationService get _moderation => Get.find<ModerationService>();
+
+  /// J'ai bloqué mon interlocuteur : la saisie laisse place à « Débloquer ».
+  /// Lu dans un `Obx`, réagit au blocage comme au déblocage.
+  bool get iBlockedPeer => _moderation.isBlocked(_otherUid);
+
+  /// Mon interlocuteur m'a bloqué : le serveur refuserait tout envoi.
+  bool get peerBlockedMe => _moderation.isBlockedBy(_otherUid);
+
+  /// Débloque l'interlocuteur depuis la discussion.
+  Future<void> unblockPeer() async {
+    if (_otherUid.isEmpty || !_auth.isSignedIn) return;
+    try {
+      await _moderation.unblockUser(myUid: _auth.uid, targetUid: _otherUid);
+    } catch (e) {
+      Get.snackbar('Déblocage impossible', '$e');
+    }
+  }
 
   String get myUid => _auth.uid;
 
@@ -1350,6 +1369,19 @@ class ChatController extends GetxController {
 
   void _startCall(CallType type) {
     if (_otherUid.isEmpty) return;
+    // Le serveur refuserait de toute façon l'appel (règles `calls`) ; on
+    // l'explique plutôt que de laisser sonner dans le vide.
+    if (iBlockedPeer) {
+      Get.snackbar(
+        'Contact bloqué',
+        'Débloquez ce contact pour pouvoir l\'appeler.',
+      );
+      return;
+    }
+    if (peerBlockedMe) {
+      Get.snackbar('Appel impossible', 'Vous ne pouvez pas appeler ce contact.');
+      return;
+    }
     Get.toNamed(
       AppRoutes.call,
       arguments: {

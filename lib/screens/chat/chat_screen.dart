@@ -2721,6 +2721,48 @@ class _ReplyComposerBanner extends StatelessWidget {
   }
 }
 
+/// Remplace la barre de saisie quand un blocage empêche d'écrire.
+class _BlockedBar extends StatelessWidget {
+  const _BlockedBar({
+    required this.isDark,
+    required this.muted,
+    required this.text,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final bool isDark;
+  final Color muted;
+  final String text;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        children: [
+          Icon(Icons.block, size: 18, color: muted),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: GoogleFonts.manrope(fontSize: 14, color: muted),
+            ),
+          ),
+          if (actionLabel != null && onAction != null)
+            TextButton(
+              onPressed: onAction,
+              style: TextButton.styleFrom(foregroundColor: AppColors.orange),
+              child: Text(actionLabel!),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _InputBar extends GetView<ChatController> {
   const _InputBar({
     required this.isDark,
@@ -2752,6 +2794,25 @@ class _InputBar extends GetView<ChatController> {
         ],
       ),
       child: Obx(() {
+        // Blocage, dans un sens ou dans l'autre : plus d'envoi possible.
+        // Les règles Firestore le refusent ; l'écran le dit.
+        if (controller.iBlockedPeer) {
+          return _BlockedBar(
+            isDark: isDark,
+            muted: muted,
+            text: 'Vous avez bloqué ce contact.',
+            actionLabel: 'Débloquer',
+            onAction: controller.unblockPeer,
+          );
+        }
+        if (controller.peerBlockedMe) {
+          return _BlockedBar(
+            isDark: isDark,
+            muted: muted,
+            text: 'Vous ne pouvez plus répondre à cette conversation.',
+          );
+        }
+
         final recording = controller.isRecording.value;
 
         if (recording) return _RecordingBar(isDark: isDark);

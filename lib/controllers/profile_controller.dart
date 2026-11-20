@@ -413,8 +413,8 @@ class ProfileController extends GetxController {
     }
   }
 
-  /// Bascule le blocage. Bloquer masque aussi les contenus de ce compte
-  /// partout ailleurs (fil, commentaires) via ModerationService.
+  /// Bascule le blocage. Le serveur coupe ensuite tout échange dans les
+  /// deux sens (voir ModerationService).
   Future<void> toggleBlock() async {
     final p = profile.value;
     if (p == null || isOwnProfile) return;
@@ -428,8 +428,7 @@ class ProfileController extends GetxController {
       isBlocked.value = false;
       Get.snackbar(
         'Compte débloqué',
-        'Vous reverrez les contenus de '
-            '${p.displayName}.',
+        'Vous pouvez de nouveau échanger avec ${p.displayName}.',
         duration: const Duration(seconds: 4),
       );
       return;
@@ -438,8 +437,9 @@ class ProfileController extends GetxController {
     final confirmed = await confirmAction(
       title: 'Bloquer ${p.displayName} ?',
       message:
-          'Vous ne verrez plus ses publications ni ses commentaires. '
-          'Cette personne ne sera pas informée du blocage, et vous pourrez '
+          'Elle ne pourra plus vous écrire, vous appeler, vous suivre ni '
+          'commenter vos publications, et vous ne verrez plus ses '
+          'contenus. Elle ne recevra aucune notification, et vous pourrez '
           'la débloquer à tout moment depuis cet écran.',
       confirmLabel: 'Bloquer',
     );
@@ -464,6 +464,17 @@ class ProfileController extends GetxController {
       await Get.toNamed(AppRoutes.auth);
       if (!_auth.isSignedIn) return;
       _watchFollowStatus(targetUid.value);
+    }
+    // Pas d'abonnement entre deux comptes dont l'un a bloqué l'autre
+    // (refusé par les règles) ; se désabonner reste toujours possible.
+    if (!isFollowing.value && _moderation.hides(targetUid.value)) {
+      Get.snackbar(
+        'Abonnement impossible',
+        _moderation.isBlocked(targetUid.value)
+            ? 'Débloquez ce compte pour pouvoir le suivre.'
+            : 'Vous ne pouvez pas suivre ce compte.',
+      );
+      return;
     }
     isToggling.value = true;
     try {
