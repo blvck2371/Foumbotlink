@@ -2107,19 +2107,21 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   ),
                 ),
                 Center(
-                  child: Container(
-                    width: 52,
-                    height: 52,
-                    decoration: const BoxDecoration(
-                      color: AppColors.orange,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.play_arrow_rounded,
-                      color: AppColors.white,
-                      size: 32,
-                    ),
-                  ),
+                  child: msg.status == MessageDeliveryStatus.sending
+                      ? _VideoSendProgress(messageId: msg.id)
+                      : Container(
+                          width: 52,
+                          height: 52,
+                          decoration: const BoxDecoration(
+                            color: AppColors.orange,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.play_arrow_rounded,
+                            color: AppColors.white,
+                            size: 32,
+                          ),
+                        ),
                 ),
                 if (msg.durationMs != null)
                   Positioned(
@@ -2378,6 +2380,59 @@ class _MessageBubbleState extends State<_MessageBubble> {
         ],
       ),
     );
+  }
+}
+
+/// Progression d'une vidéo en cours d'envoi : « Compression 42 % » puis
+/// « Envoi 60 % ». Une vidéo peut mettre une minute à partir sur un réseau
+/// mobile ; sans ce retour, la bulle paraissait bloquée.
+class _VideoSendProgress extends StatelessWidget {
+  const _VideoSendProgress({required this.messageId});
+
+  final String messageId;
+
+  @override
+  Widget build(BuildContext context) {
+    final chat = Get.find<ChatController>();
+    return Obx(() {
+      final state = chat.videoProgress[messageId];
+      final value = state?.value;
+      final label = state == null
+          ? 'Préparation…'
+          : '${state.compressing ? 'Compression' : 'Envoi'} '
+                '${((value ?? 0) * 100).round()} %';
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 46,
+            height: 46,
+            child: CircularProgressIndicator(
+              value: (value == null || value == 0) ? null : value,
+              strokeWidth: 3.5,
+              color: AppColors.orange,
+              backgroundColor: AppColors.white.withValues(alpha: 0.25),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: AppColors.black.withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              label,
+              style: GoogleFonts.manrope(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: AppColors.white,
+              ),
+            ),
+          ),
+        ],
+      );
+    });
   }
 }
 

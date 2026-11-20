@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:get/get.dart';
 
+import 'video_compression_service.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
 import '../models/user_status.dart';
@@ -195,10 +196,11 @@ class StatusService {
     final subs = <StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>[];
 
     void publish() {
-      final all = [for (final chunk in perChunk.values) ...chunk]
-          .where((status) => !status.isExpired && !status.hidden)
-          .toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      final all =
+          [
+              for (final chunk in perChunk.values) ...chunk,
+            ].where((status) => !status.isExpired && !status.hidden).toList()
+            ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
       onData(all);
     }
 
@@ -206,7 +208,9 @@ class StatusService {
       final index = i;
       final chunk = uids.sublist(
         i,
-        i + _whereInChunkSize > uids.length ? uids.length : i + _whereInChunkSize,
+        i + _whereInChunkSize > uids.length
+            ? uids.length
+            : i + _whereInChunkSize,
       );
       subs.add(
         _statusesRef
@@ -215,21 +219,18 @@ class StatusService {
             .orderBy('expiresAt')
             .limit(200)
             .snapshots()
-            .listen(
-              (snap) {
-                perChunk[index] = snap.docs
-                    .map(
-                      (doc) => _fromDoc(
-                        doc,
-                        viewedIds.contains(doc.id),
-                        likedByMe: likedIds.contains(doc.id),
-                      ),
-                    )
-                    .toList();
-                publish();
-              },
-              onError: (Object e) => onError?.call(e),
-            ),
+            .listen((snap) {
+              perChunk[index] = snap.docs
+                  .map(
+                    (doc) => _fromDoc(
+                      doc,
+                      viewedIds.contains(doc.id),
+                      likedByMe: likedIds.contains(doc.id),
+                    ),
+                  )
+                  .toList();
+              publish();
+            }, onError: (Object e) => onError?.call(e)),
       );
     }
 
@@ -288,7 +289,8 @@ class StatusService {
       authorName: d['authorName'] as String? ?? '',
       authorPhotoUrl: d['authorPhotoUrl'] as String?,
       createdAt: createdAt,
-      expiresAt: (d['expiresAt'] as Timestamp?)?.toDate() ??
+      expiresAt:
+          (d['expiresAt'] as Timestamp?)?.toDate() ??
           createdAt.add(UserStatus.lifetime),
       imageUrl: d['imageUrl'] as String?,
       videoUrl: d['videoUrl'] as String?,
@@ -335,16 +337,25 @@ class StatusService {
     String? imageUrl;
     String? videoUrl;
     if (localVideoPath != null && localVideoPath.isNotEmpty) {
-      final file = File(localVideoPath);
-      await _ensureFitsUnder(file, maxVideoBytes);
-      // L'extension du fichier envoyé suit celle de l'original : un `.mov`
-      // stocké sous `.mp4` se lirait mal côté Android.
-      final extension = localVideoPath.toLowerCase().endsWith('.mov')
-          ? 'mov'
-          : 'mp4';
-      final ref = _storage.ref('statuses/$authorUid/${docRef.id}.$extension');
-      await ref.putFile(file, _videoMetadataFor(localVideoPath));
-      videoUrl = await ref.getDownloadURL();
+      // Compressée avant tout : chaque spectateur la télécharge, le gain
+      // se multiplie par le nombre de vues. Une vidéo trop lourde au
+      // départ peut ainsi passer sous le plafond.
+      final prepared = await VideoCompressionService.prepare(localVideoPath);
+      final sentPath = prepared.path;
+      final file = File(sentPath);
+      try {
+        await _ensureFitsUnder(file, maxVideoBytes);
+        // L'extension du fichier envoyé suit celle du fichier réel : un
+        // `.mov` stocké sous `.mp4` se lirait mal côté Android.
+        final extension = sentPath.toLowerCase().endsWith('.mov')
+            ? 'mov'
+            : 'mp4';
+        final ref = _storage.ref('statuses/$authorUid/${docRef.id}.$extension');
+        await ref.putFile(file, _videoMetadataFor(sentPath));
+        videoUrl = await ref.getDownloadURL();
+      } finally {
+        await prepared.discard();
+      }
     } else if (localImagePath != null && localImagePath.isNotEmpty) {
       final file = File(localImagePath);
       await _ensureFitsUnder(file, maxImageBytes);
@@ -396,7 +407,8 @@ class StatusService {
   /// Supprime un statut avant son expiration. La photo dans Storage et la
   /// sous-collection des vues sont purgées par `onStatusDeleted`
   /// (functions/index.js) — l'auteur n'a pas à attendre ce ménage.
-  Future<void> deleteStatus(String statusId) => _statusesRef.doc(statusId).delete();
+  Future<void> deleteStatus(String statusId) =>
+      _statusesRef.doc(statusId).delete();
 
   /// Repartage un statut dans les siens, façon « ajouter à ma story ».
   ///
@@ -420,8 +432,9 @@ class StatusService {
     // On remonte toujours à la source : repartager un repartage doit
     // créditer l'auteur d'origine, pas l'intermédiaire.
     final sourceId = original.isRepost ? original.repostOfId! : original.id;
-    final sourceUid =
-        original.isRepost ? original.repostOfAuthorUid! : original.authorUid;
+    final sourceUid = original.isRepost
+        ? original.repostOfAuthorUid!
+        : original.authorUid;
     final sourceName = original.isRepost
         ? (original.repostOfAuthorName ?? original.authorName)
         : original.authorName;
@@ -535,14 +548,14 @@ class StatusService {
   /// Le message porte une copie du statut ([StatusRef]) : un statut vit
   /// 24 heures, la citation doit rester lisible bien après.
   StatusRef _refFor(UserStatus status, {required bool isLike}) => StatusRef(
-        statusId: status.id,
-        authorUid: status.authorUid,
-        previewUrl: status.imageUrl,
-        text: status.shortPreview,
-        backgroundColor: status.backgroundColor,
-        isLike: isLike,
-        isVideo: status.hasVideo,
-      );
+    statusId: status.id,
+    authorUid: status.authorUid,
+    previewUrl: status.imageUrl,
+    text: status.shortPreview,
+    backgroundColor: status.backgroundColor,
+    isLike: isLike,
+    isVideo: status.hasVideo,
+  );
 
   /// Envoie [content] à l'auteur du statut, avec le statut en citation.
   ///
@@ -616,13 +629,12 @@ class StatusService {
   Future<void> notifyRepost({
     required UserStatus status,
     required String uid,
-  }) =>
-      _notifyAuthor(
-        status: status,
-        fromUid: uid,
-        content: 'a repartagé votre statut',
-        isLike: false,
-      );
+  }) => _notifyAuthor(
+    status: status,
+    fromUid: uid,
+    content: 'a repartagé votre statut',
+    isLike: false,
+  );
 
   // -----------------------------------------------------------------------
   // Vues

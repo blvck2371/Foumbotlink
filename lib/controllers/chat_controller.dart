@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:get_thumbnail_video/index.dart';
+import '../services/video_compression_service.dart';
 import 'package:get_thumbnail_video/video_thumbnail.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -65,6 +66,7 @@ class ChatController extends GetxController {
     viewOnceArmed.value = false;
     return armed;
   }
+
   final showStickers = false.obs;
 
   /// Avertissement anti-arnaque déclenché par le dernier message reçu,
@@ -242,10 +244,16 @@ class ChatController extends GetxController {
   /// hors ligne.
   Future<void> _conversationReady = Future.value();
 
-  Future<void> _awaitConversation() => _conversationReady.timeout(
-    const Duration(seconds: 6),
-    onTimeout: () {},
-  );
+  /// Où en est l'envoi d'une vidéo, par id de message : d'abord la
+  /// compression, puis la montée vers Storage. Lu par la bulle.
+  final videoProgress = <String, ({bool compressing, double value})>{}.obs;
+
+  /// Vidéos déjà compressées, par id de message : un renvoi après échec
+  /// réutilise le fichier au lieu de tout recompresser.
+  final _preparedVideos = <String, PreparedVideo>{};
+
+  Future<void> _awaitConversation() =>
+      _conversationReady.timeout(const Duration(seconds: 6), onTimeout: () {});
 
   @override
   void onClose() {
@@ -270,6 +278,12 @@ class ChatController extends GetxController {
       if (msg.type == MessageType.voice &&
           msg.status == MessageDeliveryStatus.failed) {
         _safeDeleteFile(msg.content);
+      }
+      // Vidéo compressée dont l'envoi a échoué : le renvoi n'est plus
+      // possible une fois l'écran quitté, le fichier temporaire part.
+      if (msg.type == MessageType.video &&
+          msg.status == MessageDeliveryStatus.failed) {
+        unawaited(_preparedVideos.remove(msg.id)?.discard());
       }
     }
     _recorder.dispose();
@@ -654,8 +668,8 @@ class ChatController extends GetxController {
     if (message.viewOnce) return false;
     // Un média encore en cours d'envoi n'a qu'un chemin local, illisible
     // depuis le téléphone d'en face.
-    final isFile = message.type != MessageType.text &&
-        message.type != MessageType.sticker;
+    final isFile =
+        message.type != MessageType.text && message.type != MessageType.sticker;
     if (isFile && !message.content.startsWith('http')) return false;
     final targetId = Conversation.buildId(myUid, toUid);
     try {
@@ -1000,10 +1014,7 @@ class ChatController extends GetxController {
           localPath,
           _conversationId,
         ),
-        MessageType.video => await _chat.uploadVideo(
-          localPath,
-          _conversationId,
-        ),
+        MessageType.video => await _uploadVideo(id, localPath),
         MessageType.document => await _chat.uploadDocument(
           localPath,
           _conversationId,
@@ -1047,10 +1058,39 @@ class ChatController extends GetxController {
       );
       _clearPending(id);
       if (type == MessageType.voice) _safeDeleteFile(localPath);
+      if (type == MessageType.video) {
+        unawaited(_preparedVideos.remove(id)?.discard());
+      }
     } on Exception catch (e) {
       _reportSendError('uploadAndSend failed for $id ($type)', e);
       _updateLocalStatus(id, MessageDeliveryStatus.failed);
+    } finally {
+      videoProgress.remove(id);
     }
+  }
+
+  /// Compresse (une seule fois, même après un échec d'envoi) puis monte la
+  /// vidéo, en publiant la progression de chaque étape pour la bulle.
+  Future<String> _uploadVideo(String id, String localPath) async {
+    var prepared = _preparedVideos[id];
+    if (prepared == null) {
+      videoProgress[id] = (compressing: true, value: 0);
+      prepared = await VideoCompressionService.prepare(
+        localPath,
+        onProgress: (p) {
+          if (!isClosed) videoProgress[id] = (compressing: true, value: p);
+        },
+      );
+      _preparedVideos[id] = prepared;
+    }
+    videoProgress[id] = (compressing: false, value: 0);
+    return _chat.uploadVideo(
+      prepared.path,
+      _conversationId,
+      onProgress: (p) {
+        if (!isClosed) videoProgress[id] = (compressing: false, value: p);
+      },
+    );
   }
 
   /// Rejoue l'envoi d'un message resté en `failed` — l'appui sur la
@@ -1463,7 +1503,10 @@ class ChatController extends GetxController {
       return;
     }
     if (peerBlockedMe) {
-      Get.snackbar('Appel impossible', 'Vous ne pouvez pas appeler ce contact.');
+      Get.snackbar(
+        'Appel impossible',
+        'Vous ne pouvez pas appeler ce contact.',
+      );
       return;
     }
     Get.toNamed(
@@ -1512,8 +1555,7 @@ class ChatController extends GetxController {
   );
 
   /// Efface le fichier d'un message à vue unique, une fois refermé.
-  void releaseViewOnce(String url) =>
-      unawaited(_chat.deleteViewOnceFile(url));
+  void releaseViewOnce(String url) => unawaited(_chat.deleteViewOnceFile(url));
 
   Future<void> setEphemeral(int? seconds) async {
     ephemeralSeconds.value = seconds;

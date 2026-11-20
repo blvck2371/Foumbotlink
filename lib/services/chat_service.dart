@@ -664,7 +664,11 @@ class ChatService {
   /// l'envoi : la règle Storage refuserait de toute façon, mais après
   /// avoir fait grimper tout le fichier sur le réseau de la personne, et
   /// avec un « unauthorized » qui ne dit pas pourquoi.
-  Future<String> uploadVideo(String filePath, String conversationId) async {
+  Future<String> uploadVideo(
+    String filePath,
+    String conversationId, {
+    void Function(double progress)? onProgress,
+  }) async {
     final file = File(filePath);
     final bytes = await file.length();
     if (bytes >= maxVideoBytes) {
@@ -679,7 +683,21 @@ class ChatService {
     final ref = _storage.ref(
       'chat/$conversationId/videos/${_uuid.v4()}.$safeExtension',
     );
-    await ref.putFile(file, _videoMetadataFor(filePath));
+    final task = ref.putFile(file, _videoMetadataFor(filePath));
+    // Une vidéo met de longues secondes à monter sur un réseau mobile :
+    // sans progression, la bulle semble figée.
+    final sub = onProgress == null
+        ? null
+        : task.snapshotEvents.listen((snap) {
+            if (snap.totalBytes > 0) {
+              onProgress(snap.bytesTransferred / snap.totalBytes);
+            }
+          }, onError: (_) {});
+    try {
+      await task;
+    } finally {
+      await sub?.cancel();
+    }
     return ref.getDownloadURL();
   }
 

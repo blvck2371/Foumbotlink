@@ -72,6 +72,7 @@ dependencies:
   flutter_contacts: ^2.5.0
   crypto: ^3.0.7
   cloud_functions: ^6.4.0
+  video_compress: ^3.1.4
 
 dev_dependencies:
   flutter_test:
