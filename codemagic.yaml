@@ -22,7 +22,11 @@ workflows:
         - google_play
       vars:
         PACKAGE_NAME: com.foumbotlink.app
-        GOOGLE_PLAY_TRACK: internal
+        # Test fermé (Alpha). Contrairement au test interne, chaque version
+        # passe par l'examen de Google avant d'atteindre les testeurs
+        # (quelques heures, parfois plus). Revenir à `internal` pour une
+        # diffusion immédiate.
+        GOOGLE_PLAY_TRACK: alpha
 
     triggering:
       events:
@@ -74,6 +78,6 @@ workflows:
       google_play:
         credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
         track: $GOOGLE_PLAY_TRACK
-        # Publiée directement auprès des testeurs du canal, sans validation
-        # manuelle dans la Play Console.
+        # Envoyée directement à l'examen puis aux testeurs du canal, sans
+        # validation manuelle dans la Play Console.
         submit_as_draft: false
