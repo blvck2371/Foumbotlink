@@ -270,6 +270,10 @@ class AuthController extends GetxController {
   }
 
   Future<void> submitOtp() async {
+    // Le code se vérifie tout seul au sixième chiffre : la touche
+    // « Terminé » du clavier ou le bouton ne doivent pas relancer la
+    // même vérification pendant qu'elle tourne.
+    if (isLoading.value) return;
     _clearMessages();
     final verificationId = _verificationId;
     final code = otpCtrl.text.trim();

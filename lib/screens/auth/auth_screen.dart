@@ -2,13 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../controllers/auth_controller.dart';
+import '../../controllers/home_controller.dart';
 import '../../models/account_type.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/foumbot_loader.dart';
-import '../../widgets/three_js_view.dart';
 
 /// Parcours d'entrée dans l'application.
 ///
@@ -17,15 +18,16 @@ import '../../widgets/three_js_view.dart';
 /// 1. **Identifiants** — un seul écran. En haut, l'intention : « Créer un
 ///    compte » ou « Se connecter ». Dessous, le formulaire de la méthode
 ///    retenue (numéro par défaut), puis le bouton. Changer de méthode se
-///    fait par un bouton secondaire sous l'action principale. L'ancien
-///    parcours demandait la méthode *avant* l'intention : on ne savait
-///    qu'au formulaire si l'on était en train de s'inscrire.
+///    fait par un bouton secondaire sous l'action principale.
 /// 2. **Code SMS** — uniquement par le chemin téléphone.
 /// 3. **Profil** — uniquement pour un compte qui n'en a pas encore.
 ///
-/// Chaque écran a la même ossature : bandeau orange (titre + sous-titre),
-/// une carte qui contient *tout* ce qu'il y a à faire, l'action
-/// principale en bas de la carte. Rien d'autre à lire.
+/// Chaque écran a la même ossature, sur un fond uni à peine réchauffé
+/// d'un halo orange : un pictogramme, le titre, une phrase, les champs,
+/// l'action principale. L'ancien bandeau orange incurvé (avec sa scène
+/// 3D en WebView) prenait le tiers de l'écran, écrasait le texte blanc à
+/// un contraste insuffisant et se rétractait brusquement à l'ouverture du
+/// clavier : il est remplacé par cette mise en page plus calme.
 class AuthScreen extends GetView<AuthController> {
   const AuthScreen({super.key});
 
@@ -46,33 +48,68 @@ class AuthScreen extends GetView<AuthController> {
       );
       final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
 
-      return Scaffold(
-        backgroundColor: palette.background,
-        resizeToAvoidBottomInset: true,
-        body: Column(
-          children: [
-            _CurvedHeader(palette: palette, state: state, compact: keyboardUp),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
-                child: AutofillGroup(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // Chevauchement de la courbe : la carte paraît posée
-                      // sur le bandeau.
-                      Transform.translate(
-                        offset: const Offset(0, -28),
-                        child: _StepBody(palette: palette, state: state),
+      return AnnotatedRegion<SystemUiOverlayStyle>(
+        value: palette.isDark
+            ? SystemUiOverlayStyle.light.copyWith(
+                statusBarColor: Colors.transparent,
+              )
+            : SystemUiOverlayStyle.dark.copyWith(
+                statusBarColor: Colors.transparent,
+              ),
+        child: Scaffold(
+          backgroundColor: palette.background,
+          resizeToAvoidBottomInset: true,
+          body: Stack(
+            children: [
+              // Le halo : la seule touche de couleur de fond. Assez discret
+              // pour ne jamais gêner la lecture, assez présent pour qu'on
+              // reconnaisse l'app.
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: RadialGradient(
+                        center: const Alignment(-0.6, -1.15),
+                        radius: 1.1,
+                        colors: [
+                          AppColors.orange.withValues(
+                            alpha: palette.isDark ? 0.20 : 0.14,
+                          ),
+                          AppColors.orange.withValues(alpha: 0),
+                        ],
                       ),
-                      _FeedbackBanner(palette: palette),
-                      _LegalNote(palette: palette, state: state),
-                    ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+              SafeArea(
+                child: Column(
+                  children: [
+                    _TopBar(palette: palette, state: state),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(24, 8, 24, 28),
+                        child: Center(
+                          // Sur tablette, un formulaire étiré sur toute la
+                          // largeur se lit mal.
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 440),
+                            child: AutofillGroup(
+                              child: _StepBody(
+                                palette: palette,
+                                state: state,
+                                compact: keyboardUp,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       );
     });
@@ -98,160 +135,31 @@ class _AuthState {
 
   /// Clé de l'écran courant pour l'animation de transition. Le mode et la
   /// méthode n'en font pas partie : basculer d'onglet ne doit pas faire
-  /// clignoter toute la carte.
+  /// clignoter tout l'écran.
   String get key => step.name;
-}
-
-// ---------------------------------------------------------------------------
-// Bandeau incurvé
-// ---------------------------------------------------------------------------
-
-/// Bandeau de tête : dégradé orange, scène 3D décorative, titre de l'écran.
-class _CurvedHeader extends GetView<AuthController> {
-  const _CurvedHeader({
-    required this.palette,
-    required this.state,
-    required this.compact,
-  });
-
-  final _AuthPalette palette;
-  final _AuthState state;
-
-  /// Clavier ouvert : le bandeau se rétracte pour rendre la hauteur au
-  /// formulaire.
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final topInset = MediaQuery.paddingOf(context).top;
-    final height = (compact ? 128.0 : 236.0) + topInset;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-      height: height,
-      child: ClipPath(
-        clipper: _HeaderClipper(),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            DecoratedBox(
-              decoration: BoxDecoration(gradient: palette.headerGradient),
-            ),
-            // Montée en permanence : la retirer quand le bandeau se
-            // rétracte détruirait la WebView, rechargée à chaque fermeture
-            // du clavier.
-            const Opacity(
-              opacity: 0.9,
-              child: ThreeJsView(scene: 'auth', fallback: SizedBox.shrink()),
-            ),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.transparent,
-                    AppColors.orangeDeep.withValues(alpha: 0.35),
-                  ],
-                ),
-              ),
-            ),
-            SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 50),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        _leading(),
-                        const Spacer(),
-                        if (_progress case (final position, final total))
-                          _StepPill(position: position, total: total),
-                      ],
-                    ),
-                    const Spacer(),
-                    Text(
-                      _title,
-                      style: GoogleFonts.spaceGrotesk(
-                        fontSize: compact ? 23 : 30,
-                        fontWeight: FontWeight.w700,
-                        height: 1.1,
-                        color: AppColors.white,
-                      ),
-                    ),
-                    if (!compact) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        _subtitle,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.manrope(
-                          fontSize: 13.5,
-                          height: 1.4,
-                          color: AppColors.white.withValues(alpha: 0.9),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// En haut à gauche, toujours le geste attendu à cet endroit :
-  /// fermer sur le premier écran, revenir sur le code SMS. Le profil n'a
-  /// ni l'un ni l'autre (le compte est déjà créé), d'où le logo.
-  Widget _leading() => switch (state.step) {
-    AuthStep.credentials => _CircleButton(
-      icon: Icons.close_rounded,
-      tooltip: 'Fermer',
-      onTap: Get.back,
-    ),
-    AuthStep.phoneOtp => _CircleButton(
-      icon: Icons.arrow_back_rounded,
-      tooltip: 'Retour',
-      onTap: controller.back,
-    ),
-    AuthStep.accountSetup => ClipRRect(
-      borderRadius: BorderRadius.circular(11),
-      child: Image.asset(
-        'assets/branding/app_icon.png',
-        width: 38,
-        height: 38,
-        fit: BoxFit.cover,
-      ),
-    ),
-  };
 
   /// Progression, affichée seulement là où elle a un sens : pendant une
   /// inscription. Une connexion se fait en un écran (deux par SMS) —
   /// « 1/3 » y laissait croire à un long parcours.
-  (int, int)? get _progress {
-    final total = state.isPhone ? 3 : 2;
-    return switch (state.step) {
-      AuthStep.credentials => state.isSignUp ? (1, total) : null,
-      AuthStep.phoneOtp => state.isSignUp ? (2, 3) : null,
+  (int, int)? get progress {
+    final total = isPhone ? 3 : 2;
+    return switch (step) {
+      AuthStep.credentials => isSignUp ? (1, total) : null,
+      AuthStep.phoneOtp => isSignUp ? (2, 3) : null,
       AuthStep.accountSetup => (total, total),
     };
   }
 
-  String get _title => switch (state.step) {
-    AuthStep.credentials => state.isSignUp ? 'Créer un compte' : 'Bon retour !',
-    AuthStep.phoneOtp => 'Code de vérification',
+  String get title => switch (step) {
+    AuthStep.credentials => isSignUp ? 'Bienvenue à Foumbot' : 'Bon retour',
+    AuthStep.phoneOtp => 'Vérifiez votre numéro',
     AuthStep.accountSetup => 'Votre profil',
   };
 
-  String get _subtitle => switch (state.step) {
+  String get subtitle => switch (step) {
     AuthStep.credentials =>
-      state.isSignUp
-          ? 'L’actualité, le marché et les démarches de Foumbot, au même '
+      isSignUp
+          ? 'L’actualité, le marché et les démarches de la ville, au même '
                 'endroit.'
           : 'Connectez-vous pour retrouver votre fil et vos discussions.',
     AuthStep.phoneOtp => 'Saisissez les six chiffres reçus par SMS.',
@@ -260,28 +168,59 @@ class _CurvedHeader extends GetView<AuthController> {
   };
 }
 
-/// La courbe du bas du bandeau : une vague qui descend à gauche et remonte
-/// à droite.
-class _HeaderClipper extends CustomClipper<Path> {
-  @override
-  Path getClip(Size size) {
-    final w = size.width;
-    final h = size.height;
-    return Path()
-      ..lineTo(0, h - 46)
-      ..quadraticBezierTo(w * 0.30, h + 8, w * 0.58, h - 26)
-      ..quadraticBezierTo(w * 0.82, h - 52, w, h - 92)
-      ..lineTo(w, 0)
-      ..close();
-  }
+// ---------------------------------------------------------------------------
+// Barre du haut
+// ---------------------------------------------------------------------------
+
+/// En haut à gauche, toujours le geste attendu à cet endroit : fermer sur
+/// le premier écran, revenir sur le code SMS. Le profil n'a ni l'un ni
+/// l'autre (le compte est déjà créé). À droite, la progression.
+class _TopBar extends GetView<AuthController> {
+  const _TopBar({required this.palette, required this.state});
+
+  final _AuthPalette palette;
+  final _AuthState state;
 
   @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
+  Widget build(BuildContext context) {
+    final leading = switch (state.step) {
+      AuthStep.credentials => _CircleButton(
+        palette: palette,
+        icon: Icons.close_rounded,
+        tooltip: 'Fermer',
+        onTap: Get.back,
+      ),
+      AuthStep.phoneOtp => _CircleButton(
+        palette: palette,
+        icon: Icons.arrow_back_rounded,
+        tooltip: 'Retour',
+        onTap: controller.back,
+      ),
+      AuthStep.accountSetup => const SizedBox(width: 40, height: 40),
+    };
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 20, 0),
+      child: Row(
+        children: [
+          leading,
+          const Spacer(),
+          if (state.progress case (final position, final total))
+            _StepDots(palette: palette, position: position, total: total),
+        ],
+      ),
+    );
+  }
 }
 
-class _StepPill extends StatelessWidget {
-  const _StepPill({required this.position, required this.total});
+class _StepDots extends StatelessWidget {
+  const _StepDots({
+    required this.palette,
+    required this.position,
+    required this.total,
+  });
 
+  final _AuthPalette palette;
   final int position;
   final int total;
 
@@ -290,40 +229,25 @@ class _StepPill extends StatelessWidget {
     return Semantics(
       label: 'Étape $position sur $total',
       excludeSemantics: true,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-          color: AppColors.white.withValues(alpha: 0.18),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var i = 1; i <= total; i++) ...[
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                width: i == position ? 16 : 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: AppColors.white.withValues(
-                    alpha: i <= position ? 1 : 0.4,
-                  ),
-                  borderRadius: BorderRadius.circular(3),
-                ),
-              ),
-              if (i != total) const SizedBox(width: 4),
-            ],
-            const SizedBox(width: 9),
-            Text(
-              'Étape $position/$total',
-              style: GoogleFonts.manrope(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w800,
-                color: AppColors.white,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 1; i <= total; i++) ...[
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeOutCubic,
+              width: i == position ? 22 : 7,
+              height: 7,
+              decoration: BoxDecoration(
+                color: i <= position
+                    ? palette.accent
+                    : palette.ink.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(4),
               ),
             ),
+            if (i != total) const SizedBox(width: 5),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -334,16 +258,24 @@ class _StepPill extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _StepBody extends StatelessWidget {
-  const _StepBody({required this.palette, required this.state});
+  const _StepBody({
+    required this.palette,
+    required this.state,
+    required this.compact,
+  });
 
   final _AuthPalette palette;
   final _AuthState state;
 
+  /// Clavier ouvert : le pictogramme et la phrase d'accroche s'effacent
+  /// pour laisser la place au champ en cours de saisie.
+  final bool compact;
+
   @override
   Widget build(BuildContext context) {
     return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 280),
-      switchInCurve: Curves.easeOut,
+      duration: const Duration(milliseconds: 320),
+      switchInCurve: Curves.easeOutCubic,
       switchOutCurve: Curves.easeIn,
       layoutBuilder: (current, previous) => Stack(
         alignment: Alignment.topCenter,
@@ -353,17 +285,19 @@ class _StepBody extends StatelessWidget {
         opacity: animation,
         child: SlideTransition(
           position: Tween<Offset>(
-            begin: const Offset(0, 0.03),
+            begin: const Offset(0.04, 0),
             end: Offset.zero,
           ).animate(animation),
           child: child,
         ),
       ),
-      child: KeyedSubtree(
+      child: Column(
         key: ValueKey(state.key),
-        child: _FloatingCard(
-          palette: palette,
-          child: switch (state.step) {
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _Heading(palette: palette, state: state, compact: compact),
+          SizedBox(height: compact ? 18 : 28),
+          switch (state.step) {
             AuthStep.credentials => _CredentialsStep(
               palette: palette,
               state: state,
@@ -374,7 +308,91 @@ class _StepBody extends StatelessWidget {
               state: state,
             ),
           },
+          _LegalNote(palette: palette, state: state),
+        ],
+      ),
+    );
+  }
+}
+
+/// Pictogramme, titre, phrase d'accroche.
+class _Heading extends StatelessWidget {
+  const _Heading({
+    required this.palette,
+    required this.state,
+    required this.compact,
+  });
+
+  final _AuthPalette palette;
+  final _AuthState state;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topLeft,
+          child: compact
+              ? const SizedBox(width: double.infinity)
+              : Padding(
+                  padding: const EdgeInsets.only(top: 12, bottom: 22),
+                  child: _badge(),
+                ),
         ),
+        Text(
+          state.title,
+          style: GoogleFonts.spaceGrotesk(
+            fontSize: compact ? 24 : 30,
+            fontWeight: FontWeight.w700,
+            height: 1.15,
+            letterSpacing: -0.6,
+            color: palette.ink,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          state.subtitle,
+          style: GoogleFonts.manrope(
+            fontSize: 15,
+            height: 1.45,
+            color: palette.muted,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Le logo pour entrer, un pictogramme pour les étapes suivantes : on
+  /// voit d'un coup d'œil ce que l'écran demande.
+  Widget _badge() {
+    if (state.step == AuthStep.credentials) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: Image.asset(
+          'assets/branding/app_icon.png',
+          width: 60,
+          height: 60,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+    return Container(
+      width: 60,
+      height: 60,
+      decoration: BoxDecoration(
+        color: palette.accentTint,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Icon(
+        state.step == AuthStep.phoneOtp
+            ? Icons.sms_outlined
+            : Icons.person_outline_rounded,
+        size: 28,
+        color: palette.accent,
       ),
     );
   }
@@ -424,7 +442,7 @@ class _CredentialsStepState extends State<_CredentialsStep> {
             (AuthMode.signIn, 'Se connecter'),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
         // 2. Le formulaire de la méthode choisie.
         AnimatedSize(
@@ -435,10 +453,13 @@ class _CredentialsStepState extends State<_CredentialsStep> {
               ? _phoneFields(palette, controller)
               : _emailFields(palette, controller, state.isSignUp),
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
 
-        // 3. L'action.
+        // 3. L'action, avec la réponse du serveur juste au-dessus : on la
+        // lit là où l'on regarde.
+        _FeedbackBanner(palette: palette),
         _PrimaryButton(
+          palette: palette,
           label: switch ((state.method, state.mode)) {
             (AuthMethod.phone, _) => 'Recevoir le code',
             (AuthMethod.email, AuthMode.signUp) => 'Créer mon compte',
@@ -448,9 +469,9 @@ class _CredentialsStepState extends State<_CredentialsStep> {
         ),
 
         // 4. L'autre méthode, en retrait.
-        const SizedBox(height: 18),
+        const SizedBox(height: 20),
         _OrDivider(palette: palette),
-        const SizedBox(height: 18),
+        const SizedBox(height: 20),
         _SecondaryButton(
           palette: palette,
           icon: state.isPhone
@@ -505,7 +526,7 @@ class _CredentialsStepState extends State<_CredentialsStep> {
           autofillHints: const [AutofillHints.email, AutofillHints.username],
           onSubmitted: (_) => _passwordFocus.requestFocus(),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 18),
         Obx(
           () => _LabeledField(
             palette: palette,
@@ -515,6 +536,7 @@ class _CredentialsStepState extends State<_CredentialsStep> {
             labelAction: isSignUp
                 ? null
                 : _InlineLink(
+                    palette: palette,
                     label: 'Oublié ?',
                     onTap: controller.sendPasswordReset,
                   ),
@@ -567,69 +589,218 @@ class _OtpStep extends GetView<AuthController> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // À qui le code a été envoyé, et comment corriger le numéro.
-        Row(
-          children: [
-            Expanded(
-              child: Text.rich(
-                TextSpan(
-                  text: 'Envoyé au ',
+        Container(
+          padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+          decoration: BoxDecoration(
+            color: palette.fieldFill,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.phone_iphone_rounded, size: 18, color: palette.muted),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  controller.phoneCtrl.text.trim(),
                   style: GoogleFonts.manrope(
-                    fontSize: 13.5,
-                    color: palette.muted,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w700,
+                    color: palette.ink,
                   ),
-                  children: [
-                    TextSpan(
-                      text: controller.phoneCtrl.text.trim(),
-                      style: GoogleFonts.manrope(
-                        fontWeight: FontWeight.w800,
-                        color: palette.ink,
-                      ),
-                    ),
-                  ],
                 ),
               ),
-            ),
-            _InlineLink(
-              label: 'Modifier',
-              onTap: () => controller.goTo(AuthStep.credentials),
-            ),
-          ],
-        ),
-        const SizedBox(height: 18),
-        _LabeledField(
-          palette: palette,
-          label: 'Code à 6 chiffres',
-          hint: '••••••',
-          controller: controller.otpCtrl,
-          error: controller.otpError,
-          keyboardType: TextInputType.number,
-          textInputAction: TextInputAction.done,
-          // Ce seul indice suffit à ce que le système propose le code dès
-          // l'arrivée du SMS.
-          autofillHints: const [AutofillHints.oneTimeCode],
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-            LengthLimitingTextInputFormatter(6),
-          ],
-          textAlign: TextAlign.center,
-          textStyle: GoogleFonts.spaceGrotesk(
-            fontSize: 24,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 10,
-            color: palette.ink,
+              _InlineLink(
+                palette: palette,
+                label: 'Modifier',
+                onTap: () => controller.goTo(AuthStep.credentials),
+              ),
+            ],
           ),
-          onSubmitted: (_) => controller.submitOtp(),
         ),
         const SizedBox(height: 22),
-        _PrimaryButton(label: 'Vérifier', onPressed: controller.submitOtp),
-        const SizedBox(height: 10),
+        _OtpBoxes(palette: palette),
+        const SizedBox(height: 24),
+        _FeedbackBanner(palette: palette),
+        _PrimaryButton(
+          palette: palette,
+          label: 'Vérifier',
+          onPressed: controller.submitOtp,
+        ),
+        const SizedBox(height: 12),
         Center(
           child: _InlineLink(
+            palette: palette,
             label: 'Je n’ai rien reçu — renvoyer le code',
             onTap: controller.submitPhone,
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Six cases, une par chiffre — on voit combien il en reste à taper.
+///
+/// Un seul vrai champ, invisible, posé sur les cases : il garde le
+/// clavier numérique, le collage et surtout la suggestion automatique du
+/// code à l'arrivée du SMS, que six champs séparés casseraient.
+class _OtpBoxes extends StatefulWidget {
+  const _OtpBoxes({required this.palette});
+
+  final _AuthPalette palette;
+
+  @override
+  State<_OtpBoxes> createState() => _OtpBoxesState();
+}
+
+class _OtpBoxesState extends State<_OtpBoxes> {
+  static const _length = 6;
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(_onFocusChange);
+  }
+
+  void _onFocusChange() => setState(() {});
+
+  @override
+  void dispose() {
+    _focus
+      ..removeListener(_onFocusChange)
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = widget.palette;
+    final auth = Get.find<AuthController>();
+
+    return Obx(() {
+      final error = auth.otpError.value;
+      final enabled = !auth.isLoading.value;
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Semantics(
+            label: 'Code à 6 chiffres',
+            textField: true,
+            child: SizedBox(
+              height: 58,
+              child: Stack(
+                children: [
+                  ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: auth.otpCtrl,
+                    builder: (context, value, _) {
+                      final code = value.text;
+                      return Row(
+                        children: [
+                          for (var i = 0; i < _length; i++) ...[
+                            if (i > 0) const SizedBox(width: 8),
+                            Expanded(
+                              child: _OtpCell(
+                                palette: palette,
+                                digit: i < code.length ? code[i] : null,
+                                active:
+                                    _focus.hasFocus &&
+                                    (i == code.length ||
+                                        (code.length == _length &&
+                                            i == _length - 1)),
+                                hasError: error != null,
+                              ),
+                            ),
+                          ],
+                        ],
+                      );
+                    },
+                  ),
+                  Positioned.fill(
+                    child: Opacity(
+                      opacity: 0,
+                      child: TextField(
+                        controller: auth.otpCtrl,
+                        focusNode: _focus,
+                        // En lecture seule plutôt que désactivé : le
+                        // clavier reste ouvert si le code est refusé.
+                        readOnly: !enabled,
+                        autofocus: true,
+                        keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.done,
+                        // Ce seul indice suffit à ce que le système propose
+                        // le code dès l'arrivée du SMS.
+                        autofillHints: const [AutofillHints.oneTimeCode],
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(_length),
+                        ],
+                        showCursor: false,
+                        enableInteractiveSelection: false,
+                        onChanged: (v) {
+                          if (auth.otpError.value != null) {
+                            auth.otpError.value = null;
+                          }
+                          // Six chiffres : on vérifie sans attendre le
+                          // bouton.
+                          if (v.length == _length) auth.submitOtp();
+                        },
+                        onSubmitted: (_) => auth.submitOtp(),
+                        decoration: const InputDecoration(
+                          border: InputBorder.none,
+                          counterText: '',
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (error != null) _FieldError(message: error),
+        ],
+      );
+    });
+  }
+}
+
+class _OtpCell extends StatelessWidget {
+  const _OtpCell({
+    required this.palette,
+    required this.digit,
+    required this.active,
+    required this.hasError,
+  });
+
+  final _AuthPalette palette;
+  final String? digit;
+  final bool active;
+  final bool hasError;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderColor = hasError
+        ? AppColors.danger
+        : active
+        ? palette.accent
+        : Colors.transparent;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: active ? palette.accentTint : palette.fieldFill,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor, width: 1.6),
+      ),
+      child: Text(
+        digit ?? '',
+        style: GoogleFonts.spaceGrotesk(
+          fontSize: 24,
+          fontWeight: FontWeight.w700,
+          color: palette.ink,
+        ),
+      ),
     );
   }
 }
@@ -655,26 +826,42 @@ class _AccountSetupStep extends GetView<AuthController> {
         // (« votre nom » ou « nom de la structure »). Dans l'autre ordre,
         // le champ changeait de sens après qu'on l'avait rempli.
         _FieldLabel(palette: palette, text: 'Vous êtes'),
-        const SizedBox(height: 8),
-        _SegmentedTabs<AccountType>(
-          palette: palette,
-          value: state.accountType,
-          onChanged: (t) => controller.accountType.value = t,
-          options: const [
-            (AccountType.personal, 'Un habitant'),
-            (AccountType.structure, 'Une structure'),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _ChoiceTile(
+                palette: palette,
+                icon: Icons.person_outline_rounded,
+                label: 'Un habitant',
+                selected: !isStructure,
+                onTap: () =>
+                    controller.accountType.value = AccountType.personal,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _ChoiceTile(
+                palette: palette,
+                icon: Icons.apartment_outlined,
+                label: 'Une structure',
+                selected: isStructure,
+                onTap: () =>
+                    controller.accountType.value = AccountType.structure,
+              ),
+            ),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
         Text(
           state.accountType.description,
           style: GoogleFonts.manrope(
-            fontSize: 12.5,
-            height: 1.4,
+            fontSize: 13,
+            height: 1.45,
             color: palette.muted,
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 22),
         _LabeledField(
           palette: palette,
           label: isStructure ? 'Nom de la structure' : 'Votre nom',
@@ -705,8 +892,10 @@ class _AccountSetupStep extends GetView<AuthController> {
                 'consulter le fil, aimer et commenter.',
           ),
         ],
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
+        _FeedbackBanner(palette: palette),
         _PrimaryButton(
+          palette: palette,
           label: 'Terminer',
           onPressed: controller.submitAccountSetup,
         ),
@@ -715,35 +904,93 @@ class _AccountSetupStep extends GetView<AuthController> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Briques communes
-// ---------------------------------------------------------------------------
-
-/// La carte qui porte tout l'écran, détachée du fond par son ombre.
-class _FloatingCard extends StatelessWidget {
-  const _FloatingCard({required this.palette, required this.child});
+/// Une carte à choisir parmi deux : l'icône dit la différence avant même
+/// qu'on lise le libellé.
+class _ChoiceTile extends StatelessWidget {
+  const _ChoiceTile({
+    required this.palette,
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
 
   final _AuthPalette palette;
-  final Widget child;
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: palette.card,
-      borderRadius: BorderRadius.circular(22),
-      shadowColor: AppColors.black.withValues(
-        alpha: palette.isDark ? 0.6 : 0.16,
-      ),
-      elevation: 12,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-        child: child,
+    return Semantics(
+      selected: selected,
+      button: true,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: selected ? palette.accentTint : palette.fieldFill,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: selected ? palette.accent : Colors.transparent,
+                width: 1.6,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      icon,
+                      size: 24,
+                      color: selected ? palette.accent : palette.muted,
+                    ),
+                    const Spacer(),
+                    AnimatedOpacity(
+                      duration: const Duration(milliseconds: 200),
+                      opacity: selected ? 1 : 0,
+                      child: Icon(
+                        Icons.check_circle_rounded,
+                        size: 18,
+                        color: palette.accent,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.manrope(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w700,
+                    color: palette.ink,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
 }
 
-/// Sélecteur à deux (ou plusieurs) onglets, l'actif en orange plein.
+// ---------------------------------------------------------------------------
+// Briques communes
+// ---------------------------------------------------------------------------
+
+/// Sélecteur à deux onglets : une pastille claire glisse sous l'onglet
+/// actif. L'ancien aplat orange criait plus fort que le bouton principal,
+/// alors que ce n'est qu'un réglage.
 class _SegmentedTabs<T> extends StatelessWidget {
   const _SegmentedTabs({
     required this.palette,
@@ -759,58 +1006,76 @@ class _SegmentedTabs<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final index = options.indexWhere((o) => o.$1 == value);
+    final n = options.length;
+
     return Container(
+      height: 50,
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: palette.fieldFill,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
       ),
-      child: Row(
+      child: Stack(
         children: [
-          for (final (option, label) in options)
-            Expanded(
-              child: Semantics(
-                selected: option == value,
-                button: true,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => onChanged(option),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOut,
-                    height: 42,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: option == value
-                          ? AppColors.orange
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(11),
-                      boxShadow: option == value
-                          ? [
-                              BoxShadow(
-                                color: AppColors.orange.withValues(alpha: 0.3),
-                                blurRadius: 10,
-                                offset: const Offset(0, 3),
-                              ),
-                            ]
-                          : null,
+          AnimatedAlign(
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment(n == 1 ? 0 : -1 + 2 * index / (n - 1), 0),
+            child: FractionallySizedBox(
+              widthFactor: 1 / n,
+              heightFactor: 1,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: palette.thumb,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.black.withValues(
+                        alpha: palette.isDark ? 0.4 : 0.08,
+                      ),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
                     ),
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.manrope(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w800,
-                        color: option == value
-                            ? AppColors.white
-                            : palette.muted,
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              for (final (option, label) in options)
+                Expanded(
+                  child: Semantics(
+                    selected: option == value,
+                    button: true,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => onChanged(option),
+                      child: Center(
+                        child: AnimatedDefaultTextStyle(
+                          duration: const Duration(milliseconds: 200),
+                          style: GoogleFonts.manrope(
+                            fontSize: 14,
+                            fontWeight: option == value
+                                ? FontWeight.w800
+                                : FontWeight.w600,
+                            color: option == value
+                                ? palette.ink
+                                : palette.muted,
+                          ),
+                          child: Text(
+                            label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ),
+            ],
+          ),
         ],
       ),
     );
@@ -828,9 +1093,43 @@ class _FieldLabel extends StatelessWidget {
     return Text(
       text,
       style: GoogleFonts.manrope(
-        fontSize: 13,
+        fontSize: 13.5,
         fontWeight: FontWeight.w700,
         color: palette.ink,
+      ),
+    );
+  }
+}
+
+class _FieldError extends StatelessWidget {
+  const _FieldError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, left: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+            size: 15,
+            color: AppColors.danger,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              message,
+              style: GoogleFonts.manrope(
+                fontSize: 12.5,
+                height: 1.3,
+                color: AppColors.danger,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -840,7 +1139,8 @@ class _FieldLabel extends StatelessWidget {
 /// dès qu'on commence à taper, et l'on ne sait plus ce que le champ
 /// attendait.
 ///
-/// L'erreur s'affiche sous le champ concerné et le cadre passe au rouge :
+/// Au repos, un aplat doux sans bordure ; en saisie, un liseré orange qui
+/// dit où l'on écrit ; en erreur, un liseré rouge et le message dessous —
 /// la couleur et le texte disent la même chose.
 class _LabeledField extends StatelessWidget {
   const _LabeledField({
@@ -859,9 +1159,6 @@ class _LabeledField extends StatelessWidget {
     this.keyboardType,
     this.textInputAction,
     this.autofillHints,
-    this.inputFormatters,
-    this.textAlign = TextAlign.start,
-    this.textStyle,
     this.textCapitalization = TextCapitalization.none,
     this.onSubmitted,
   });
@@ -880,130 +1177,102 @@ class _LabeledField extends StatelessWidget {
   final TextInputType? keyboardType;
   final TextInputAction? textInputAction;
   final List<String>? autofillHints;
-  final List<TextInputFormatter>? inputFormatters;
-  final TextAlign textAlign;
-  final TextStyle? textStyle;
   final TextCapitalization textCapitalization;
   final ValueChanged<String>? onSubmitted;
 
   @override
   Widget build(BuildContext context) {
     final auth = Get.find<AuthController>();
-    final baseStyle =
-        textStyle ?? GoogleFonts.manrope(fontSize: 15, color: palette.ink);
+    final style = GoogleFonts.manrope(
+      fontSize: 15.5,
+      fontWeight: FontWeight.w600,
+      color: palette.ink,
+    );
+
+    OutlineInputBorder border(Color color, [double width = 1.6]) =>
+        OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(color: color, width: width),
+        );
 
     return Obx(() {
       final message = error.value;
       final hasError = message != null;
-      final enabled = !auth.isLoading.value;
+      final idle = hasError ? AppColors.danger : Colors.transparent;
 
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: _FieldLabel(palette: palette, text: label),
-              ),
-              ?labelAction,
-            ],
-          ),
-          const SizedBox(height: 8),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: EdgeInsets.only(
-              left: icon != null ? 14 : 4,
-              right: trailing != null ? 2 : 4,
-            ),
-            decoration: BoxDecoration(
-              color: palette.fieldFill,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: hasError ? AppColors.danger : Colors.transparent,
-                width: 1.4,
-              ),
-            ),
+          SizedBox(
+            height: 28,
             child: Row(
               children: [
-                if (icon != null) ...[
-                  Icon(
-                    icon,
-                    size: 19,
-                    color: hasError ? AppColors.danger : palette.muted,
-                  ),
-                  const SizedBox(width: 10),
-                ],
                 Expanded(
-                  child: TextField(
-                    controller: controller,
-                    focusNode: focusNode,
-                    enabled: enabled,
-                    obscureText: obscure,
-                    keyboardType: keyboardType,
-                    textInputAction: textInputAction,
-                    autofillHints: autofillHints,
-                    inputFormatters: inputFormatters,
-                    textAlign: textAlign,
-                    textCapitalization: textCapitalization,
-                    onSubmitted: onSubmitted,
-                    // L'erreur s'efface dès la première correction.
-                    onChanged: (_) {
-                      if (error.value != null) error.value = null;
-                    },
-                    style: baseStyle,
-                    cursorColor: AppColors.orange,
-                    decoration: InputDecoration(
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      disabledBorder: InputBorder.none,
-                      filled: false,
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 15),
-                      hintText: hint,
-                      hintStyle: baseStyle.copyWith(
-                        color: palette.muted.withValues(alpha: 0.7),
-                      ),
-                    ),
-                  ),
+                  child: _FieldLabel(palette: palette, text: label),
                 ),
-                ?trailing,
+                ?labelAction,
               ],
             ),
           ),
-          if (hasError)
-            Padding(
-              padding: const EdgeInsets.only(top: 7, left: 2),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(
-                    Icons.error_outline_rounded,
-                    size: 15,
-                    color: AppColors.danger,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      message,
-                      style: GoogleFonts.manrope(
-                        fontSize: 12.5,
-                        height: 1.3,
-                        color: AppColors.danger,
-                      ),
-                    ),
-                  ),
-                ],
+          const SizedBox(height: 6),
+          TextField(
+            controller: controller,
+            focusNode: focusNode,
+            enabled: !auth.isLoading.value,
+            obscureText: obscure,
+            keyboardType: keyboardType,
+            textInputAction: textInputAction,
+            autofillHints: autofillHints,
+            textCapitalization: textCapitalization,
+            onSubmitted: onSubmitted,
+            // L'erreur s'efface dès la première correction.
+            onChanged: (_) {
+              if (error.value != null) error.value = null;
+            },
+            style: style,
+            cursorColor: palette.accent,
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: palette.fieldFill,
+              hoverColor: Colors.transparent,
+              isDense: true,
+              contentPadding: EdgeInsets.fromLTRB(
+                icon == null ? 16 : 0,
+                17,
+                trailing == null ? 16 : 0,
+                17,
               ),
-            )
+              prefixIcon: icon == null
+                  ? null
+                  : Icon(
+                      icon,
+                      size: 20,
+                      color: hasError ? AppColors.danger : palette.muted,
+                    ),
+              suffixIcon: trailing,
+              hintText: hint,
+              hintStyle: style.copyWith(
+                fontWeight: FontWeight.w500,
+                color: palette.muted.withValues(alpha: 0.65),
+              ),
+              border: border(idle),
+              enabledBorder: border(idle),
+              disabledBorder: border(idle),
+              focusedBorder: border(
+                hasError ? AppColors.danger : palette.accent,
+              ),
+            ),
+          ),
+          if (hasError)
+            _FieldError(message: message)
           else if (helper != null)
             Padding(
-              padding: const EdgeInsets.only(top: 7, left: 2),
+              padding: const EdgeInsets.only(top: 8, left: 2),
               child: Text(
                 helper!,
                 style: GoogleFonts.manrope(
-                  fontSize: 12,
-                  height: 1.35,
+                  fontSize: 12.5,
+                  height: 1.4,
                   color: palette.muted,
                 ),
               ),
@@ -1015,10 +1284,16 @@ class _LabeledField extends StatelessWidget {
 }
 
 /// Bouton d'action principal — même hauteur et même place sur tous les
-/// écrans, pour qu'on sache toujours où appuyer.
+/// écrans, pour qu'on sache toujours où appuyer. Aplat orange profond :
+/// le blanc y reste lisible (4,6:1), là où l'orange vif tombait à 3:1.
 class _PrimaryButton extends StatelessWidget {
-  const _PrimaryButton({required this.label, required this.onPressed});
+  const _PrimaryButton({
+    required this.palette,
+    required this.label,
+    required this.onPressed,
+  });
 
+  final _AuthPalette palette;
   final String label;
   final VoidCallback onPressed;
 
@@ -1028,50 +1303,39 @@ class _PrimaryButton extends StatelessWidget {
 
     return Obx(() {
       final isLoading = auth.isLoading.value;
-      return Opacity(
-        opacity: isLoading ? 0.75 : 1,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            gradient: const LinearGradient(
-              colors: [AppColors.orangeDeep, AppColors.orange],
+      return SizedBox(
+        height: 56,
+        child: FilledButton(
+          onPressed: isLoading ? null : onPressed,
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.orangeDeep,
+            disabledBackgroundColor: AppColors.orangeDeep.withValues(
+              alpha: 0.75,
             ),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.orange.withValues(alpha: 0.35),
-                blurRadius: 18,
-                offset: const Offset(0, 8),
-              ),
-            ],
+            foregroundColor: AppColors.white,
+            disabledForegroundColor: AppColors.white,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            textStyle: GoogleFonts.manrope(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
           ),
-          child: SizedBox(
-            height: 54,
-            child: ElevatedButton(
-              onPressed: isLoading ? null : onPressed,
-              style: ElevatedButton.styleFrom(
-                // Le dégradé est peint par le conteneur ; le bouton
-                // n'apporte que la surface tactile et l'ondulation.
-                backgroundColor: Colors.transparent,
-                disabledBackgroundColor: Colors.transparent,
-                foregroundColor: AppColors.white,
-                disabledForegroundColor: AppColors.white,
-                shadowColor: Colors.transparent,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                textStyle: GoogleFonts.manrope(
-                  fontSize: 15.5,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                child: isLoading
-                    ? const FoumbotLoader.button(key: ValueKey('loading'))
-                    : Text(label, key: ValueKey(label)),
-              ),
-            ),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: isLoading
+                ? const FoumbotLoader.button(key: ValueKey('loading'))
+                : Row(
+                    key: ValueKey(label),
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(label),
+                      const SizedBox(width: 8),
+                      const Icon(Icons.arrow_forward_rounded, size: 19),
+                    ],
+                  ),
           ),
         ),
       );
@@ -1099,14 +1363,14 @@ class _SecondaryButton extends StatelessWidget {
     final auth = Get.find<AuthController>();
     return Obx(
       () => SizedBox(
-        height: 50,
+        height: 54,
         child: OutlinedButton.icon(
           onPressed: auth.isLoading.value ? null : onPressed,
           icon: Icon(icon, size: 19),
           label: Text(label),
           style: OutlinedButton.styleFrom(
             foregroundColor: palette.ink,
-            side: BorderSide(color: palette.ink.withValues(alpha: 0.14)),
+            side: BorderSide(color: palette.ink.withValues(alpha: 0.12)),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
             ),
@@ -1139,10 +1403,10 @@ class _OrDivider extends StatelessWidget {
       children: [
         line,
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           child: Text(
             'ou',
-            style: GoogleFonts.manrope(fontSize: 12.5, color: palette.muted),
+            style: GoogleFonts.manrope(fontSize: 13, color: palette.muted),
           ),
         ),
         line,
@@ -1151,10 +1415,15 @@ class _OrDivider extends StatelessWidget {
   }
 }
 
-/// Lien texte orange, cible tactile confortable.
+/// Lien texte dans la couleur d'accent lisible, cible tactile confortable.
 class _InlineLink extends StatelessWidget {
-  const _InlineLink({required this.label, required this.onTap});
+  const _InlineLink({
+    required this.palette,
+    required this.label,
+    required this.onTap,
+  });
 
+  final _AuthPalette palette;
   final String label;
   final VoidCallback onTap;
 
@@ -1165,21 +1434,25 @@ class _InlineLink extends StatelessWidget {
       () => TextButton(
         onPressed: auth.isLoading.value ? null : onTap,
         style: TextButton.styleFrom(
-          foregroundColor: AppColors.orange,
-          padding: const EdgeInsets.symmetric(horizontal: 6),
+          foregroundColor: palette.accent,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
           minimumSize: const Size(0, 36),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
         child: Text(
           label,
-          style: GoogleFonts.manrope(fontSize: 13, fontWeight: FontWeight.w700),
+          style: GoogleFonts.manrope(
+            fontSize: 13.5,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ),
     );
   }
 }
 
-/// Retour du serveur : refus en rouge, confirmation en vert.
+/// Retour du serveur : refus en rouge, confirmation en vert. Posé juste
+/// au-dessus du bouton qui l'a provoqué.
 class _FeedbackBanner extends GetView<AuthController> {
   const _FeedbackBanner({required this.palette});
 
@@ -1190,19 +1463,26 @@ class _FeedbackBanner extends GetView<AuthController> {
     return Obx(() {
       final error = controller.errorMessage.value;
       final success = controller.successMessage.value;
-      if (error == null && success == null) return const SizedBox.shrink();
-
       final isError = error != null;
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 14),
-        child: _Notice(
-          palette: palette,
-          color: isError ? AppColors.danger : AppColors.success,
-          icon: isError
-              ? Icons.error_outline_rounded
-              : Icons.check_circle_outline_rounded,
-          body: isError ? error : success!,
-        ),
+      final text = error ?? success;
+
+      return AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.topCenter,
+        child: text == null
+            ? const SizedBox(width: double.infinity)
+            : Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: _Notice(
+                  palette: palette,
+                  color: isError ? AppColors.danger : AppColors.success,
+                  icon: isError
+                      ? Icons.error_outline_rounded
+                      : Icons.check_circle_outline_rounded,
+                  body: text,
+                ),
+              ),
       );
     });
   }
@@ -1230,9 +1510,8 @@ class _Notice extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: palette.isDark ? 0.14 : 0.07),
+        color: color.withValues(alpha: palette.isDark ? 0.16 : 0.08),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1247,7 +1526,7 @@ class _Notice extends StatelessWidget {
                   Text(
                     title!,
                     style: GoogleFonts.manrope(
-                      fontSize: 13,
+                      fontSize: 13.5,
                       fontWeight: FontWeight.w800,
                       color: palette.ink,
                     ),
@@ -1257,9 +1536,9 @@ class _Notice extends StatelessWidget {
                 Text(
                   body,
                   style: GoogleFonts.manrope(
-                    fontSize: 12.5,
+                    fontSize: 13,
                     height: 1.4,
-                    color: palette.muted,
+                    color: palette.isDark ? palette.muted : palette.ink,
                   ),
                 ),
               ],
@@ -1272,7 +1551,7 @@ class _Notice extends StatelessWidget {
 }
 
 /// Mention de fin de page, affichée seulement là où l'on s'engage : à la
-/// création du compte.
+/// création du compte. La politique de confidentialité est à un geste.
 class _LegalNote extends StatelessWidget {
   const _LegalNote({required this.palette, required this.state});
 
@@ -1285,16 +1564,28 @@ class _LegalNote extends StatelessWidget {
       return const SizedBox.shrink();
     }
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Text(
-        'En créant un compte, vous acceptez de respecter les règles de la '
-        'communauté Foumbot Link.',
-        textAlign: TextAlign.center,
-        style: GoogleFonts.manrope(
-          fontSize: 11.5,
-          height: 1.4,
-          color: palette.muted.withValues(alpha: 0.85),
-        ),
+      padding: const EdgeInsets.only(top: 24),
+      child: Column(
+        children: [
+          Text(
+            'En créant un compte, vous acceptez de respecter les règles de '
+            'la communauté Foumbot Link.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.manrope(
+              fontSize: 12,
+              height: 1.45,
+              color: palette.muted,
+            ),
+          ),
+          _InlineLink(
+            palette: palette,
+            label: 'Politique de confidentialité',
+            onTap: () => launchUrl(
+              HomeController.privacyPolicyUrl,
+              mode: LaunchMode.externalApplication,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1302,11 +1593,13 @@ class _LegalNote extends StatelessWidget {
 
 class _CircleButton extends StatelessWidget {
   const _CircleButton({
+    required this.palette,
     required this.icon,
     required this.onTap,
     required this.tooltip,
   });
 
+  final _AuthPalette palette;
   final IconData icon;
   final VoidCallback onTap;
   final String tooltip;
@@ -1316,7 +1609,7 @@ class _CircleButton extends StatelessWidget {
     return Tooltip(
       message: tooltip,
       child: Material(
-        color: AppColors.white.withValues(alpha: 0.18),
+        color: palette.fieldFill,
         shape: const CircleBorder(),
         child: InkWell(
           onTap: onTap,
@@ -1324,7 +1617,7 @@ class _CircleButton extends StatelessWidget {
           child: SizedBox(
             width: 40,
             height: 40,
-            child: Icon(icon, size: 20, color: AppColors.white),
+            child: Icon(icon, size: 20, color: palette.ink),
           ),
         ),
       ),
@@ -1338,31 +1631,51 @@ class _AuthPalette {
     required this.isDark,
     required this.ink,
     required this.muted,
-    required this.card,
     required this.fieldFill,
+    required this.thumb,
     required this.background,
-    required this.headerGradient,
+    required this.accent,
+    required this.accentTint,
   });
 
-  factory _AuthPalette.of(bool isDark) => _AuthPalette(
-    isDark: isDark,
-    ink: isDark ? AppColors.white : AppColors.black,
-    muted: isDark ? AppColors.whiteMuted : AppColors.gray,
-    card: isDark ? AppColors.blackElevated : AppColors.white,
-    fieldFill: isDark ? AppColors.blackSoft : AppColors.whiteSoft,
-    background: isDark ? AppColors.black : AppColors.white,
-    headerGradient: const LinearGradient(
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-      colors: [AppColors.orangeDeep, AppColors.orange, AppColors.orangeSoft],
-    ),
-  );
+  factory _AuthPalette.of(bool isDark) => isDark
+      ? _AuthPalette(
+          isDark: true,
+          ink: AppColors.white,
+          muted: AppColors.whiteMuted,
+          fieldFill: AppColors.blackSoft,
+          thumb: AppColors.blackElevated,
+          background: AppColors.black,
+          // L'orange clair se lit très bien sur fond noir (plus de 9:1).
+          accent: AppColors.orangeSoft,
+          accentTint: AppColors.orange.withValues(alpha: 0.14),
+        )
+      : _AuthPalette(
+          isDark: false,
+          ink: AppColors.black,
+          muted: AppColors.gray,
+          fieldFill: const Color(0xFFF3F1EF),
+          thumb: AppColors.white,
+          // Blanc cassé chaud : moins dur que le blanc pur, plus doux à
+          // l'œil, et les champs s'en détachent sans bordure.
+          background: const Color(0xFFFCFAF8),
+          // Sur fond clair, seul l'orange profond se lit (5:1).
+          accent: AppColors.orangeReadable,
+          accentTint: AppColors.orange.withValues(alpha: 0.08),
+        );
 
   final bool isDark;
   final Color ink;
   final Color muted;
-  final Color card;
   final Color fieldFill;
+
+  /// La pastille glissante du sélecteur d'onglets.
+  final Color thumb;
   final Color background;
-  final Gradient headerGradient;
+
+  /// Liens, focus, cases actives — jamais du texte blanc posé dessus.
+  final Color accent;
+
+  /// Fond teinté des éléments sélectionnés.
+  final Color accentTint;
 }
