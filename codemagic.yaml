@@ -81,3 +81,7 @@ workflows:
         # Envoyée directement à l'examen puis aux testeurs du canal, sans
         # validation manuelle dans la Play Console.
         submit_as_draft: false
+        # Notes de version (« Nouveautés ») : Codemagic envoie tout seul
+        # release_notes_fr-FR.txt, à la racine du dépôt. À réécrire avant
+        # chaque push qui change quelque chose pour les utilisateurs ;
+        # test/release_notes_test.dart bloque au-delà de 500 caractères.

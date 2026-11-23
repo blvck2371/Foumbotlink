@@ -91,6 +91,12 @@ Configuration dans Codemagic :
   `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS` = JSON du compte de service ayant
   accès à l'app dans la Play Console.
 
+**Notes de version** : le texte de `release_notes_fr-FR.txt` (racine du
+dépôt) est publié par Codemagic dans la rubrique « Nouveautés » de chaque
+version. Le réécrire avant un push qui change quelque chose pour les
+utilisateurs, sinon les mêmes notes repartent avec la version suivante.
+500 caractères maximum (vérifié par `test/release_notes_test.dart`).
+
 Le tout premier `.aab` doit être envoyé à la main dans la Play Console
 (l'API Google Play refuse une app qui n'a encore aucune version).
 
