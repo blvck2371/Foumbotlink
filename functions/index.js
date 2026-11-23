@@ -1078,7 +1078,10 @@ exports.onLiveViewerWritten = lives.onLiveViewerWritten;
 exports.cleanupLives = lives.cleanupLives;
 exports.onLiveSessionCreated = lives.onLiveSessionCreated;
 // Pour les tests.
-exports._lives = lives;
+// Accès des tests aux rouages des lives. Non énumérable : Firebase parcourt
+// les objets exportés et y aurait redécouvert startLive, joinLive… sous des
+// noms invalides (« _lives-startLive »).
+Object.defineProperty(exports, "_lives", {value: lives, enumerable: false});
 
 /** Nombre de signalements distincts au-delà duquel un contenu est masqué. */
 const REPORT_HIDE_THRESHOLD = 5;
