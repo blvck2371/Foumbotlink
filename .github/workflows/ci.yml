@@ -49,3 +49,4 @@ jobs:
       - run: npm run test:delete-account
       - run: npm run test:block
       - run: npm run test:chat
+      - run: npm run test:lives

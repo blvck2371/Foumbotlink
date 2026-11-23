@@ -35,6 +35,10 @@ class AppColors {
   /// parti » de « ça a échoué ». Les deux partageaient la même couleur.
   static const success = Color(0xFF2E7D32);
 
+  /// Rouge « en direct » des lives : le code universel du direct, distinct
+  /// de l'orange de la marque et du rouge d'erreur.
+  static const live = Color(0xFFE5263D);
+
   // ---------------------------------------------------------------------
   // Bulles de conversation
   //

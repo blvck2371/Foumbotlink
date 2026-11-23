@@ -35,4 +35,13 @@ abstract class AppRoutes {
   static const notifications = '/notifications';
   static const settings = '/settings';
   static const moderation = '/moderation';
+
+  /// Menu Lives : lancer son direct ou entrer dans un live en cours.
+  static const lives = '/lives';
+
+  /// L'antenne de l'hôte.
+  static const liveHost = '/lives/host';
+
+  /// Regarder les lives en plein écran (`{'liveId': …}`).
+  static const liveViewer = '/lives/watch';
 }

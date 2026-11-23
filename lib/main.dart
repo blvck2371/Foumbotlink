@@ -16,6 +16,7 @@ import 'routes/app_pages.dart';
 import 'screens/offline/offline_screen.dart';
 import 'services/auth_service.dart';
 import 'services/call_service.dart';
+import 'services/live_service.dart';
 import 'services/callkit_helper.dart';
 import 'services/feed_service.dart';
 import 'services/chat_service.dart';
@@ -186,6 +187,8 @@ Future<void> main() async {
   Get.put(StatusService(), permanent: true);
   Get.put(ChatService(), permanent: true);
   Get.put(CallService(), permanent: true);
+  Get.put(LiveService(), permanent: true)
+      .bindAuth(Get.find<AuthService>().firebaseUser);
   await Get.putAsync<LocalNotificationsService>(
     () async => LocalNotificationsService().init(),
     permanent: true,

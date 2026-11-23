@@ -8,6 +8,7 @@ import '../../models/feed_item.dart';
 import '../../models/market_item.dart';
 import '../../routes/app_routes.dart';
 import '../../services/auth_service.dart';
+import '../../services/live_service.dart';
 import '../../services/user_profile_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
@@ -45,6 +46,28 @@ class HomeScreen extends GetView<HomeController> {
         appBar: FoumbotAppBar(
           isDark: isDark,
           actions: [
+            // Lives : le point rouge et le nombre disent tout de suite
+            // si quelqu'un est en direct.
+            IconButton(
+              tooltip: 'Lives',
+              onPressed: controller.openLives,
+              icon: Obx(() {
+                final count = Get.find<LiveService>().lives.length;
+                return Badge(
+                  isLabelVisible: count > 0,
+                  label: Text(
+                    '$count',
+                    style: GoogleFonts.manrope(
+                      color: AppColors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  backgroundColor: AppColors.live,
+                  child: Icon(Icons.live_tv_outlined, color: ink),
+                );
+              }),
+            ),
             IconButton(
               tooltip: 'Notifications',
               onPressed: controller.openNotifications,

@@ -24,13 +24,15 @@
     "test:rules:counters": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_counters.js\"",
     "test:delete-account": "firebase emulators:exec --only firestore,auth,storage --project demo-delete \"node scripts/test_delete_account.js\"",
     "test:rules:blocking": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_blocking.js\"",
-    "test:block": "firebase emulators:exec --only firestore,auth --project demo-block \"node scripts/test_block_function.js && node scripts/test_report_function.js\"",
+    "test:block": "firebase emulators:exec --only firestore,auth,database --project demo-block \"node scripts/test_block_function.js && node scripts/test_report_function.js\"",
     "test:rules:reports": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_reports.js\"",
-    "test:chat": "firebase emulators:exec --only firestore,storage --project demo-chat \"node scripts/test_chat_end_to_end.js\""
+    "test:chat": "firebase emulators:exec --only firestore,storage --project demo-chat \"node scripts/test_chat_end_to_end.js\"",
+    "test:lives": "firebase emulators:exec --only database,firestore,auth --project demo-lives \"node scripts/test_lives.js\""
   },
   "dependencies": {
     "firebase-admin": "^14.3.0",
-    "firebase-functions": "^7.3.2"
+    "firebase-functions": "^7.3.2",
+    "livekit-server-sdk": "^2.20.1"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.2",

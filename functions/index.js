@@ -1066,6 +1066,20 @@ exports.onPostDeleted = onDocumentDeleted("posts/{postId}", async (event) => {
 // compte relève d'une décision humaine.
 // ---------------------------------------------------------------------
 
+// ---------------------------------------------------------------------
+// Lives (voir lives.js).
+// ---------------------------------------------------------------------
+const lives = require("./lives")({db, notifyUser});
+exports.startLive = lives.startLive;
+exports.joinLive = lives.joinLive;
+exports.endLive = lives.endLive;
+exports.expelFromLive = lives.expelFromLive;
+exports.onLiveViewerWritten = lives.onLiveViewerWritten;
+exports.cleanupLives = lives.cleanupLives;
+exports.onLiveSessionCreated = lives.onLiveSessionCreated;
+// Pour les tests.
+exports._lives = lives;
+
 /** Nombre de signalements distincts au-delà duquel un contenu est masqué. */
 const REPORT_HIDE_THRESHOLD = 5;
 
@@ -1090,10 +1104,15 @@ const HIDEABLE_TYPES = new Set(["post", "comment", "marketItem", "status"]);
 function contentOwner(targetType, targetPath, data) {
   if (targetType === "user") return targetPath.split("/")[1] || null;
   if (!data) return null;
-  return data.authorUid || data.senderUid || data.sellerUid || null;
+  return data.authorUid || data.senderUid || data.sellerUid ||
+    data.hostUid || null;
 }
 
-exports.onReportCreated = onDocumentCreated("reports/{reportId}", async (event) => {
+exports.onReportCreated = onDocumentCreated({
+  document: "reports/{reportId}",
+  // Couper un live signalé ferme aussi sa salle LiveKit.
+  secrets: lives.LIVEKIT_SECRETS,
+}, async (event) => {
   const snap = event.data;
   if (!snap) return;
   const report = snap.data();
@@ -1159,14 +1178,30 @@ exports.onReportCreated = onDocumentCreated("reports/{reportId}", async (event) 
       // qu'il l'était) alerte l'équipe — pas à chaque signalement suivant.
       const wasUrgentAndOpen = queue.exists &&
         queue.get("priority") === "high" && queue.get("status") === "open";
-      return priority === "high" && !wasUrgentAndOpen ? {count} : null;
+      return {
+        count,
+        escalate: priority === "high" && !wasUrgentAndOpen,
+      };
     });
   } catch (err) {
     logger.error(`Traitement du signalement échoué pour ${targetPath}`, err);
     return;
   }
 
-  if (escalated) {
+  // Un live ne se masque pas : au seuil, il est coupé. L'équipe tranche
+  // ensuite sur le dossier (suspension de l'hôte, ou rien).
+  if (targetType === "live" &&
+      escalated.count >= lives.LIVE_REPORT_END_THRESHOLD) {
+    try {
+      await lives.endLiveInternal(targetRef.id, {
+        by: "moderation", reason: "reports",
+      });
+    } catch (err) {
+      logger.error(`Coupure du live ${targetRef.id} échouée`, err);
+    }
+  }
+
+  if (escalated.escalate) {
     await notifyAdmins({
       entryId: queueRef.id,
       targetType,
@@ -1184,6 +1219,7 @@ const REPORT_TYPE_LABELS = {
   marketItem: "Annonce",
   message: "Message privé",
   status: "Statut",
+  live: "Live",
 };
 const REPORT_REASON_LABELS = {
   spam: "spam",
@@ -1258,7 +1294,7 @@ async function requireAdmin(request) {
   return uid;
 }
 
-exports.moderate = onCall(async (request) => {
+exports.moderate = onCall({secrets: lives.LIVEKIT_SECRETS}, async (request) => {
   const adminUid = await requireAdmin(request);
   const {entryId, action} = request.data || {};
   if (typeof entryId !== "string" || !entryId || entryId.includes("/")) {
@@ -1293,6 +1329,12 @@ exports.moderate = onCall(async (request) => {
           thumbUrl: FieldValue.delete(),
           removedByModeration: true,
         });
+      } else if (targetType === "live") {
+        // La fiche reste : c'est la mémoire de la décision.
+        await lives.endLiveInternal(targetRef.id, {
+          by: adminUid, reason: "moderation",
+        });
+        await targetRef.update({removedByModeration: true});
       } else if (targetType === "comment") {
         const postRef = targetRef.parent.parent;
         const batch = db.batch();
@@ -1326,6 +1368,14 @@ exports.moderate = onCall(async (request) => {
         suspended: true,
         suspendedAt: FieldValue.serverTimestamp(),
       });
+    }
+    // Un compte suspendu ne garde pas l'antenne. Une panne de la base
+    // temps réel ne doit pas faire échouer la suspension elle-même : le
+    // compte est déjà désactivé, et le ménage des lives le rattrapera.
+    try {
+      await lives.endLivesOf(targetOwnerUid, adminUid);
+    } catch (err) {
+      logger.error(`Lives de ${targetOwnerUid} non coupés`, err);
     }
   }
 

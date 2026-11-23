@@ -6,6 +6,7 @@ enum AppFeatureId {
   demarches,
   communaute,
   messages,
+  lives,
   enregistres,
   notifications,
   profil,
@@ -54,6 +55,13 @@ class AppFeature {
       title: 'Messages',
       subtitle: 'Discuter avec les membres',
       icon: Icons.chat_outlined,
+      section: AppFeatureSection.community,
+    ),
+    AppFeature(
+      id: AppFeatureId.lives,
+      title: 'Lives',
+      subtitle: 'Regarder ou lancer un direct',
+      icon: Icons.live_tv_outlined,
       section: AppFeatureSection.community,
     ),
     AppFeature(

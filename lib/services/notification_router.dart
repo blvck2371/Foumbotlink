@@ -95,6 +95,12 @@ class NotificationRouter {
         }
       case 'moderation':
         return (route: AppRoutes.moderation, args: null);
+      case 'live':
+        final liveId = d['liveId'] as String?;
+        if (liveId != null && liveId.isNotEmpty) {
+          return (route: AppRoutes.liveViewer, args: {'liveId': liveId});
+        }
+        return (route: AppRoutes.lives, args: null);
       // 'appUpdate' : purement informatif, aucune navigation.
     }
     return null;

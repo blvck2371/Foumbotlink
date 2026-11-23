@@ -57,6 +57,7 @@ class ModerationEntry {
         'marketItem' => 'Annonce',
         'message' => 'Message privé',
         'status' => 'Statut',
+        'live' => 'Live',
         _ => 'Contenu',
       };
 

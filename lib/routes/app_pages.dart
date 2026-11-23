@@ -1,6 +1,8 @@
 import 'package:get/get.dart';
 
 import '../bindings/auth_binding.dart';
+import '../controllers/live_host_controller.dart';
+import '../controllers/live_viewer_controller.dart';
 import '../bindings/call_binding.dart';
 import '../bindings/chat_binding.dart';
 import '../bindings/community_binding.dart';
@@ -25,6 +27,9 @@ import '../screens/compose/compose_screen.dart';
 import '../screens/feed/feed_post_screen.dart';
 import '../screens/feature/feature_placeholder_screen.dart';
 import '../screens/home/home_screen.dart';
+import '../screens/lives/live_host_screen.dart';
+import '../screens/lives/live_viewer_screen.dart';
+import '../screens/lives/lives_screen.dart';
 import '../screens/market/market_compose_screen.dart';
 import '../screens/market/market_detail_screen.dart';
 import '../screens/market/market_alerts_screen.dart';
@@ -225,6 +230,31 @@ class AppPages {
       binding: ContactsBinding(),
       transition: Transition.cupertino,
       transitionDuration: const Duration(milliseconds: 320),
+    ),
+
+    GetPage(
+      name: AppRoutes.lives,
+      page: () => const LivesScreen(),
+      transition: Transition.cupertino,
+      transitionDuration: const Duration(milliseconds: 320),
+    ),
+    GetPage(
+      name: AppRoutes.liveHost,
+      page: () => const LiveHostScreen(),
+      binding: BindingsBuilder(() {
+        Get.put(LiveHostController());
+      }),
+      transition: Transition.downToUp,
+      transitionDuration: const Duration(milliseconds: 280),
+    ),
+    GetPage(
+      name: AppRoutes.liveViewer,
+      page: () => const LiveViewerScreen(),
+      binding: BindingsBuilder(() {
+        Get.put(LiveViewerController());
+      }),
+      transition: Transition.fadeIn,
+      transitionDuration: const Duration(milliseconds: 220),
     ),
 
     GetPage(

@@ -919,12 +919,18 @@ service cloud.firestore {
     // serveur (`onReportCreated`) un message qu'il n'a jamais pu lire.
     function canReportTarget(data) {
       let parts = data.targetPath.split('/');
-      return data.targetType != 'message'
+      return (data.targetType != 'message' && data.targetType != 'live')
         || (
-          parts.size() == 4
+          data.targetType == 'message'
+          && parts.size() == 4
           && parts[0] == 'conversations'
           && parts[2] == 'messages'
           && request.auth.uid in conversationPeers(parts[1])
+        )
+        || (
+          data.targetType == 'live'
+          && parts.size() == 2
+          && parts[0] == 'liveSessions'
         );
     }
 
@@ -936,12 +942,20 @@ service cloud.firestore {
         && request.resource.data.targetPath is string
         && request.resource.data.targetPath.size() < 300
         && request.resource.data.targetType in
-             ['post', 'comment', 'user', 'marketItem', 'message', 'status']
+             ['post', 'comment', 'user', 'marketItem', 'message', 'status',
+              'live']
         && request.resource.data.reason in
              ['spam', 'harcelement', 'haine', 'violence', 'nuditeSexuel',
               'fausseInformation', 'arnaque', 'autre']
         && canReportTarget(request.resource.data);
       allow update, delete: if false;
+    }
+
+    // Lives — fiche de chaque live (`liveSessions/{liveId}`), tenue par
+    // les fonctions startLive/endLive : c'est la cible des signalements.
+    // Le direct lui-même vit dans la Realtime Database (database.rules.json).
+    match /liveSessions/{liveId} {
+      allow read, write: if false;
     }
 
     // Administrateurs : un document par compte, créé à la main dans la

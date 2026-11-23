@@ -4,6 +4,10 @@
          SHA-256 partent au serveur (voir ContactMatchService). -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Lives (LiveKit) : suivre les changements de réseau pour basculer
+         Wi-Fi / données mobiles sans couper le direct. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>
     <!-- Requis par flutter_webrtc pour les appels audio/vidéo en direct. -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>

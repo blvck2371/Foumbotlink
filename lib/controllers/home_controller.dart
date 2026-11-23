@@ -1174,6 +1174,10 @@ class HomeController extends GetxController {
       Get.toNamed(AppRoutes.conversations);
       return;
     }
+    if (feature.id == AppFeatureId.lives) {
+      openLives();
+      return;
+    }
     if (feature.id == AppFeatureId.enregistres) {
       if (!_auth.isSignedIn) {
         Get.toNamed(AppRoutes.auth);
@@ -1205,6 +1209,17 @@ class HomeController extends GetxController {
       return;
     }
     Get.toNamed(AppRoutes.feature, arguments: feature);
+  }
+
+  /// Menu Lives — depuis l'icône de la barre du haut ou le tiroir. Les
+  /// lives demandent un compte : chaque spectateur est identifié (blocages,
+  /// exclusions, signalements).
+  void openLives() {
+    if (!_auth.isSignedIn) {
+      Get.toNamed(AppRoutes.auth);
+      return;
+    }
+    Get.toNamed(AppRoutes.lives);
   }
 
   void openNotifications() {
