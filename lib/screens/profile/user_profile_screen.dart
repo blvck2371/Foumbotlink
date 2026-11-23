@@ -19,6 +19,7 @@ import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
 import '../status/status_composer_screen.dart';
 import '../status/status_viewer_screen.dart';
+import '../../services/profile_gate.dart';
 
 class UserProfileScreen extends GetView<ProfileController> {
   const UserProfileScreen({super.key});
@@ -352,7 +353,29 @@ class _ProfileHeader extends GetView<ProfileController> {
             // retrouver. Le profil personnel n'avait jusqu'ici aucune
             // zone d'action — les boutons ci-dessous ne concernent que
             // les profils d'autrui.
-            if (isOwn) const _OwnProfileContacts(),
+            if (isOwn) ...[
+              SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: OutlinedButton.icon(
+                  onPressed: () => Get.toNamed(AppRoutes.editProfile),
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  label: Text(
+                    'Modifier mon profil',
+                    style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: ink,
+                    side: BorderSide(color: muted.withValues(alpha: 0.35)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              const _OwnProfileContacts(),
+            ],
 
             // Action buttons — TikTok style
             if (!isOwn)
@@ -545,16 +568,15 @@ class _ProfileHeader extends GetView<ProfileController> {
     );
   }
 
-  void _openChat(String otherUid) {
-    final auth = Get.find<AuthService>();
-    if (!auth.isSignedIn) {
-      Get.toNamed(AppRoutes.auth);
-      return;
-    }
+  Future<void> _openChat(String otherUid) async {
+    if (!await ProfileGate.ensure(reason: 'Pour écrire ou appeler')) return;
     Get.toNamed(
       AppRoutes.chat,
       arguments: {
-        'conversationId': Conversation.buildId(auth.uid, otherUid),
+        'conversationId': Conversation.buildId(
+          Get.find<AuthService>().uid,
+          otherUid,
+        ),
         'otherUid': otherUid,
       },
     );

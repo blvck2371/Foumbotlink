@@ -101,6 +101,8 @@ class NotificationRouter {
           return (route: AppRoutes.liveViewer, args: {'liveId': liveId});
         }
         return (route: AppRoutes.lives, args: null);
+      case 'certification':
+        return (route: AppRoutes.editProfile, args: null);
       // 'appUpdate' : purement informatif, aucune navigation.
     }
     return null;

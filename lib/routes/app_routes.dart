@@ -12,6 +12,7 @@ abstract class AppRoutes {
   static const marketCompose = '/market/compose';
   static const marketAlerts = '/market/alerts';
   static const userProfile = '/user-profile';
+  static const editProfile = '/user-profile/edit';
   static const community = '/community';
 
   /// Retrouver ses contacts du répertoire déjà présents sur l'app.

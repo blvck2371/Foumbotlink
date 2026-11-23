@@ -1,5 +1,7 @@
 import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart';
+
 import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 
@@ -14,6 +16,13 @@ import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 /// L'`id` CallKit est le `callId` Firestore : si le même appel arrive à la
 /// fois par le push FCM et par le listener Firestore [CallService._watchIncoming],
 /// le second `showCallkitIncoming` est dédupliqué par l'OS.
+/// Vrai entre le `didActivate` et le `didDeactivate` de la session audio
+/// CallKit (iOS). Relayé par PushService depuis l'évènement
+/// `actionCallToggleAudioSession` : un appel décroché depuis l'UI native ne
+/// doit faire tourner son micro et son haut-parleur que dans cette fenêtre
+/// (voir CallController._useCallkitAudio).
+final callkitAudioActive = ValueNotifier<bool>(false);
+
 Future<void> showCallkitIncomingFromData(Map<String, dynamic> data) async {
   final callId = (data['callId'] as String?)?.trim() ?? '';
   if (callId.isEmpty) return;
@@ -38,7 +47,7 @@ Future<void> showCallkitIncomingFromData(Map<String, dynamic> data) async {
       subtitle: 'Appel manqué',
     ),
     // Récupéré tel quel dans les évènements CallKit (accept/decline) pour
-    // rouvrir l'écran d'appel WebRTC avec les bons arguments.
+    // rouvrir l'écran d'appel avec les bons arguments.
     extra: <String, dynamic>{
       'callId': callId,
       'callerUid': data['callerUid'] ?? '',

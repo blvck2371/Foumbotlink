@@ -8,6 +8,7 @@ import '../models/dossier.dart';
 import '../services/auth_service.dart';
 import '../services/dossier_service.dart';
 import '../services/user_profile_service.dart';
+import '../services/profile_gate.dart';
 
 /// Côté habitant : mon code de suivi, et l'état de mes dossiers.
 class DossierController extends GetxController {
@@ -41,6 +42,14 @@ class DossierController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    _bootstrap();
+  }
+
+  /// « Se connecter » depuis l'écran de suivi : connexion et profil si
+  /// besoin, puis chargement du code et des dossiers.
+  Future<void> signInAndLoad() async {
+    if (!await ProfileGate.ensure(reason: 'Pour suivre vos démarches')) return;
+    isLoading.value = true;
     _bootstrap();
   }
 

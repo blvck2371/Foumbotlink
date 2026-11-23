@@ -789,10 +789,15 @@ service cloud.firestore {
       // object", et donc "permission-denied" sur toute la requête. `get`
       // (lecture d'un document précis par id, ex. watchCall) peut en
       // revanche vérifier les deux champs sans restriction.
+      //
+      // Appel de groupe (calls.js) : tout membre lit le document ; un invité
+      // dont le téléphone sonne le trouve par `ringingUids`.
       allow get: if request.auth != null
-        && request.auth.uid in [resource.data.callerUid, resource.data.calleeUid];
+        && (request.auth.uid in [resource.data.callerUid, resource.data.calleeUid]
+            || request.auth.uid in resource.data.get('memberUids', []));
       allow list: if request.auth != null
-        && request.auth.uid == resource.data.calleeUid;
+        && (request.auth.uid == resource.data.calleeUid
+            || request.auth.uid in resource.data.get('ringingUids', []));
 
       // Seul l'appelant crée le document, à l'état "ringing".
       allow create: if request.auth != null
@@ -817,7 +822,31 @@ service cloud.firestore {
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['offer'])
              || request.auth.uid == resource.data.callerUid)
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['answer', 'answeredAt'])
-             || request.auth.uid == resource.data.calleeUid);
+             || request.auth.uid == resource.data.calleeUid)
+        // En groupe, raccrocher ne coupe pas l'appel des autres : le statut
+        // n'est plus réglé que par le serveur (settleGroupCall).
+        && !(resource.data.get('group', false) == true
+             && request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'endedAt']));
+
+      // Appel de groupe : chaque membre ne met à jour que sa propre ligne
+      // (`members.{uid}` : décroché, quitté, refusé…) et ne peut que se
+      // retirer de `ringingUids`. Les invitations passent par la fonction
+      // inviteToCall.
+      allow update: if request.auth != null
+        && resource.data.get('group', false) == true
+        && request.auth.uid in resource.data.memberUids
+        && request.auth.uid in resource.data.members
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['members', 'ringingUids'])
+        && request.resource.data.members.diff(resource.data.members).affectedKeys()
+             .hasOnly([request.auth.uid])
+        && request.resource.data.members[request.auth.uid]
+             .diff(resource.data.members[request.auth.uid]).affectedKeys()
+             .hasOnly(['state', 'at'])
+        && request.resource.data.members[request.auth.uid].state
+             in ['joined', 'left', 'declined', 'missed', 'busy']
+        && request.resource.data.get('ringingUids', [])
+             == resource.data.get('ringingUids', []).removeAll([request.auth.uid]);
 
       // Candidats ICE : chacun ne peut écrire que dans sa propre
       // sous-collection, lisible par les deux participants de l'appel.
@@ -986,6 +1015,13 @@ service cloud.firestore {
     // -----------------------------------------------------------------
     match /config/{docId} {
       allow read: if request.auth != null;
+    }
+
+    // Demandes de certification (functions/certification.js) : écrites par
+    // le serveur seul, lues par leur auteur. Un administrateur les valide
+    // ou les refuse depuis la console (`status`).
+    match /certificationRequests/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
     }
   }
 }

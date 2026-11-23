@@ -27,7 +27,10 @@
     "test:block": "firebase emulators:exec --only firestore,auth,database --project demo-block \"node scripts/test_block_function.js && node scripts/test_report_function.js\"",
     "test:rules:reports": "firebase emulators:exec --only firestore --project demo-rules \"node scripts/test_rules_reports.js\"",
     "test:chat": "firebase emulators:exec --only firestore,storage --project demo-chat \"node scripts/test_chat_end_to_end.js\"",
-    "test:lives": "firebase emulators:exec --only database,firestore,auth --project demo-lives \"node scripts/test_lives.js\""
+    "test:lives": "firebase emulators:exec --only database,firestore,auth --project demo-lives \"node scripts/test_lives.js\"",
+    "test:calls": "firebase emulators:exec --only firestore,auth --project demo-calls \"node scripts/test_calls.js\"",
+    "test:profile-sync": "firebase emulators:exec --only firestore --project demo-profile \"node scripts/test_profile_sync.js\"",
+    "test:certification": "firebase emulators:exec --only firestore --project demo-certif \"node scripts/test_certification.js\""
   },
   "dependencies": {
     "firebase-admin": "^14.3.0",

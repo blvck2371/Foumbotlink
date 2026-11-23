@@ -175,6 +175,14 @@ class _NotificationTile extends GetView<NotificationsController> {
       icon: Icons.shield_outlined,
       color: AppColors.danger,
     ),
+    AppNotificationType.live => (
+      icon: Icons.live_tv_rounded,
+      color: AppColors.danger,
+    ),
+    AppNotificationType.certification => (
+      icon: Icons.verified_rounded,
+      color: AppColors.blue,
+    ),
   };
 
   @override

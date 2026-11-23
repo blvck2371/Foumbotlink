@@ -45,6 +45,7 @@ class AuthScreen extends GetView<AuthController> {
         mode: controller.mode.value,
         method: controller.method.value,
         accountType: controller.accountType.value,
+        reason: controller.reason,
       );
       final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
 
@@ -123,7 +124,11 @@ class _AuthState {
     required this.mode,
     required this.method,
     required this.accountType,
+    this.reason,
   });
+
+  /// Action qui a demandé le profil (« Pour publier… »), s'il y en a une.
+  final String? reason;
 
   final AuthStep step;
   final AuthMode mode;
@@ -153,7 +158,7 @@ class _AuthState {
   String get title => switch (step) {
     AuthStep.credentials => isSignUp ? 'Bienvenue à Foumbot' : 'Bon retour',
     AuthStep.phoneOtp => 'Vérifiez votre numéro',
-    AuthStep.accountSetup => 'Votre profil',
+    AuthStep.accountSetup => 'Complétez votre profil',
   };
 
   String get subtitle => switch (step) {
@@ -164,7 +169,10 @@ class _AuthState {
           : 'Connectez-vous pour retrouver votre fil et vos discussions.',
     AuthStep.phoneOtp => 'Saisissez les six chiffres reçus par SMS.',
     AuthStep.accountSetup =>
-      'Dernière étape : comment doit-on vous présenter ?',
+      reason != null
+          ? '$reason, présentez-vous : votre nom s’affichera sur ce que vous '
+                'partagez.'
+          : 'Comment doit-on vous présenter ?',
   };
 }
 
@@ -173,8 +181,8 @@ class _AuthState {
 // ---------------------------------------------------------------------------
 
 /// En haut à gauche, toujours le geste attendu à cet endroit : fermer sur
-/// le premier écran, revenir sur le code SMS. Le profil n'a ni l'un ni
-/// l'autre (le compte est déjà créé). À droite, la progression.
+/// le premier écran, revenir sur le code SMS, « plus tard » sur le profil
+/// (le compte est créé, la session ouverte). À droite, la progression.
 class _TopBar extends GetView<AuthController> {
   const _TopBar({required this.palette, required this.state});
 
@@ -196,7 +204,14 @@ class _TopBar extends GetView<AuthController> {
         tooltip: 'Retour',
         onTap: controller.back,
       ),
-      AuthStep.accountSetup => const SizedBox(width: 40, height: 40),
+      // Le compte existe et la session est ouverte : on peut remettre le
+      // profil à plus tard, il sera redemandé à la prochaine publication.
+      AuthStep.accountSetup => _CircleButton(
+        palette: palette,
+        icon: Icons.close_rounded,
+        tooltip: 'Plus tard',
+        onTap: Get.back,
+      ),
     };
 
     return Padding(

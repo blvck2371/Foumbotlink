@@ -10,19 +10,15 @@ import '../routes/app_routes.dart';
 import 'auth_service.dart';
 import 'callkit_helper.dart';
 
-/// Signalisation WebRTC via Firestore : chaque appel est un document
-/// `calls/{callId}` (offer/answer SDP + statut) accompagné de deux
-/// sous-collections de candidats ICE. Le média (audio/vidéo) ne passe
-/// jamais par Firestore — seul le "poignée de main" nécessaire à établir
-/// la connexion pair-à-pair transite ici.
+/// Les appels : chaque appel est un document `calls/{callId}` qui porte la
+/// sonnerie (ringing → accepted → ended…). La voix et l'image passent par
+/// LiveKit : les deux téléphones rejoignent la salle `call_{callId}` avec
+/// un jeton remis par la Cloud Function `joinCall` ([joinRoom]).
 ///
 /// Enregistré comme service permanent : c'est ce qui permet de détecter
 /// un appel entrant tant que l'app est ouverte (premier ou arrière-plan),
 /// même si l'utilisateur n'est pas sur l'écran de discussion concerné.
 class CallService extends GetxService {
-  static const callerCandidates = 'callerCandidates';
-  static const calleeCandidates = 'calleeCandidates';
-
   final _db = FirebaseFirestore.instance;
 
   /// Appel entrant détecté pour l'utilisateur courant, ou `null`. Piloté
@@ -31,17 +27,15 @@ class CallService extends GetxService {
   final incomingCall = Rxn<Call>();
 
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _incomingSub;
+
+  /// Invitations à un appel de groupe déjà en cours (voir [_watchInvites]).
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _invitesSub;
   String? _activeCallId;
 
   AuthService get _auth => Get.find<AuthService>();
 
   CollectionReference<Map<String, dynamic>> get _callsRef =>
       _db.collection('calls');
-
-  CollectionReference<Map<String, dynamic>> _candidatesRef(
-    String callId,
-    String who,
-  ) => _callsRef.doc(callId).collection(who);
 
   @override
   void onInit() {
@@ -51,6 +45,7 @@ class CallService extends GetxService {
         _watchIncoming(user.uid);
       } else {
         _incomingSub?.cancel();
+        _invitesSub?.cancel();
         incomingCall.value = null;
       }
     });
@@ -71,7 +66,7 @@ class CallService extends GetxService {
       // signale occupé plutôt que de laisser sonner dans le vide jusqu'au
       // timeout de l'appelant.
       if (Get.currentRoute == AppRoutes.call) {
-        updateStatus(call.id, CallStatus.busy);
+        leave(call.id, CallStatus.busy);
         return;
       }
       _presentIncoming(call);
@@ -81,15 +76,20 @@ class CallService extends GetxService {
   /// Lève l'écran d'appel entrant CallKit, en résolvant le nom de
   /// l'appelant pour l'affichage.
   Future<void> _presentIncoming(Call call) async {
+    // Invitation à un appel de groupe : c'est celui qui nous ajoute qui
+    // « appelle », pas l'appelant d'origine.
+    final me = call.members[_auth.uid];
+    final fromUid = me?.invitedBy ?? call.callerUid;
     var callerName = 'Appel entrant';
     try {
-      final doc = await _db.collection('users').doc(call.callerUid).get();
+      final doc = await _db.collection('users').doc(fromUid).get();
       final name = (doc.data()?['displayName'] as String?)?.trim();
       if (name != null && name.isNotEmpty) callerName = name;
     } on FirebaseException catch (_) {}
+    if (me != null) callerName = '$callerName · appel de groupe';
     await showCallkitIncomingFromData({
       'callId': call.id,
-      'callerUid': call.callerUid,
+      'callerUid': fromUid,
       'callerName': callerName,
       'callType': call.type.name,
       'conversationId': call.conversationId,
@@ -97,10 +97,8 @@ class CallService extends GetxService {
   }
 
   void _watchIncoming(String myUid) {
+    _watchInvites(myUid);
     _incomingSub?.cancel();
-    // Préchauffe les serveurs ICE : sans ça, l'aller-retour vers
-    // getIceServers retarderait le décrochage du premier appel.
-    unawaited(_iceServers());
     developer.log('watching incoming calls for $myUid', name: 'CallService');
     // Filtre sur `createdAt` : au lancement de l'app, la première snapshot
     // renvoie tous les documents déjà "ringing" comme docChanges "added" —
@@ -153,6 +151,35 @@ class CallService extends GetxService {
         );
   }
 
+  /// Quelqu'un nous ajoute à un appel déjà en cours : le serveur nous inscrit
+  /// dans `ringingUids` le temps que notre téléphone sonne.
+  void _watchInvites(String myUid) {
+    _invitesSub?.cancel();
+    _invitesSub = _callsRef
+        .where('ringingUids', arrayContains: myUid)
+        .snapshots()
+        .listen(
+          (snap) {
+            for (final change in snap.docChanges) {
+              if (change.type != DocumentChangeType.added) continue;
+              final call = Call.fromDoc(change.doc);
+              if (call.status != CallStatus.accepted) continue;
+              if (call.members[myUid]?.state != CallMemberState.ringing) {
+                continue;
+              }
+              if (call.id == _activeCallId) continue;
+              developer.log('invitation ${call.id}', name: 'CallService');
+              incomingCall.value = call;
+            }
+          },
+          onError: (Object e) => developer.log(
+            'invitations listener error',
+            name: 'CallService',
+            error: e,
+          ),
+        );
+  }
+
   /// Marque l'appel courant comme "traité" (accepté, refusé ou ouvert)
   /// pour que [incomingCall] ne redéclenche pas l'écran automatiquement.
   void markHandled(String callId) {
@@ -194,35 +221,80 @@ class CallService extends GetxService {
         .map((snap) => snap.exists ? Call.fromDoc(snap) : null);
   }
 
-  Future<void> setOffer(String callId, Map<String, dynamic> offer) {
-    return _callsRef.doc(callId).update({'offer': offer});
-  }
-
-  Future<void> setAnswer(String callId, Map<String, dynamic> answer) {
+  /// L'appelé a décroché. `answeredAt` (horloge serveur) sert de référence
+  /// commune aux deux appareils pour la durée affichée.
+  Future<void> markAccepted(String callId) {
     return _callsRef.doc(callId).update({
-      'answer': answer,
       'status': CallStatus.accepted.name,
-      // Horloge serveur : référence commune aux deux appareils pour la durée
-      // affichée (voir Call.answeredAt).
       'answeredAt': FieldValue.serverTimestamp(),
     });
   }
 
-  /// Renégociation (ICE restart) : l'appelant réécrit son offer, l'appelé y
-  /// répond. Le statut reste `accepted` — la communication n'est pas
-  /// interrompue, seul le chemin réseau est reconstruit.
-  Future<void> setRenegotiationOffer(
-    String callId,
-    Map<String, dynamic> offer,
-  ) {
-    return _callsRef.doc(callId).update({'offer': offer});
+  /// Invité d'un appel de groupe : on a décroché et rejoint la salle.
+  Future<void> markJoined(String callId) {
+    final me = _auth.uid;
+    return _callsRef.doc(callId).update({
+      'members.$me.state': CallMemberState.joined.name,
+      'members.$me.at': FieldValue.serverTimestamp(),
+      'ringingUids': FieldValue.arrayRemove([me]),
+    });
   }
 
-  Future<void> setRenegotiationAnswer(
-    String callId,
-    Map<String, dynamic> answer,
-  ) {
-    return _callsRef.doc(callId).update({'answer': answer});
+  /// Met fin à l'appel **pour cet appareil** : raccrocher, refuser, ne pas
+  /// répondre, être occupé.
+  ///
+  /// Appel à deux : le statut de l'appel change, l'autre est coupé aussi.
+  /// Appel de groupe : on n'écrit que notre propre ligne — les autres
+  /// continuent, et le serveur clôt l'appel quand il ne reste personne.
+  /// Le document est relu à chaque fois : un appel à deux peut être passé
+  /// en groupe à tout moment.
+  Future<void> leave(String callId, CallStatus reason) async {
+    if (callId.isEmpty) return;
+    try {
+      final snap = await _callsRef.doc(callId).get();
+      if (!snap.exists) return;
+      final call = Call.fromDoc(snap);
+      final me = _auth.uid;
+      if (!call.isGroup || !call.members.containsKey(me)) {
+        await updateStatus(callId, reason);
+        return;
+      }
+      if (!(call.members[me]?.isActive ?? false)) return;
+      final state = switch (reason) {
+        CallStatus.declined => CallMemberState.declined,
+        CallStatus.missed => CallMemberState.missed,
+        CallStatus.busy => CallMemberState.busy,
+        _ => CallMemberState.left,
+      };
+      await _callsRef.doc(callId).update({
+        'members.$me.state': state.name,
+        'members.$me.at': FieldValue.serverTimestamp(),
+        'ringingUids': FieldValue.arrayRemove([me]),
+      });
+    } on FirebaseException catch (e) {
+      developer.log('leave $callId', name: 'CallService', error: e);
+    }
+  }
+
+  /// Ajoute [uid] à l'appel en cours. Rend son nom ; lève une
+  /// [CallException] lisible si le serveur refuse.
+  Future<String> invite(String callId, String uid) async {
+    try {
+      final response = await FirebaseFunctions.instance
+          .httpsCallable(
+            'inviteToCall',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)),
+          )
+          .call<Map<String, dynamic>>({'callId': callId, 'uid': uid});
+      return (response.data['name'] as String?) ?? 'Cette personne';
+    } on FirebaseFunctionsException catch (e) {
+      developer.log('inviteToCall: ${e.code}', name: 'CallService', error: e);
+      throw CallException(switch (e.code) {
+        'unavailable' || 'deadline-exceeded' || 'internal' =>
+          'Serveur d’appel injoignable. Vérifiez votre connexion.',
+        _ => e.message ?? 'Impossible d’ajouter cette personne.',
+      }, retryable: true);
+    }
   }
 
   Future<void> updateStatus(String callId, CallStatus status) async {
@@ -238,28 +310,6 @@ class CallService extends GetxService {
     } on FirebaseException catch (_) {}
   }
 
-  Future<void> addCandidate(
-    String callId,
-    String who,
-    Map<String, dynamic> candidate,
-  ) {
-    return _candidatesRef(callId, who).add(candidate);
-  }
-
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>> watchCandidates(
-    String callId,
-    String who,
-    void Function(Map<String, dynamic>) onCandidate,
-  ) {
-    return _candidatesRef(callId, who).snapshots().listen((snap) {
-      for (final change in snap.docChanges) {
-        if (change.type == DocumentChangeType.added) {
-          onCandidate(change.doc.data()!);
-        }
-      }
-    });
-  }
-
   void clearActiveCall(String callId) {
     if (_activeCallId == callId) _activeCallId = null;
   }
@@ -273,151 +323,72 @@ class CallService extends GetxService {
       callId != null && callId.isNotEmpty && callId == _activeCallId;
 
   // ---------------------------------------------------------------------
-  // Configuration WebRTC
+  // LiveKit
   // ---------------------------------------------------------------------
 
-  /// Serveurs STUN/TURN de secours, compilés dans l'app.
-  ///
-  /// ⚠️ `openrelay.metered.ca` est un service de démonstration public : il est
-  /// régulièrement saturé ou hors service. Quand il ne répond pas, deux
-  /// téléphones en 4G/5G (NAT opérateur symétrique) échangent bien
-  /// offer/answer via Firestore mais **aucun flux audio ne s'établit** — ICE
-  /// part en `failed` et l'appel se coupe juste après le décrochage.
-  ///
-  /// Ce n'est donc qu'un dernier recours : [rtcConfiguration] demande
-  /// d'abord des identifiants TURN temporaires à la Cloud Function
-  /// `getIceServers` (Cloudflare), puis lit `config/webrtc` dans Firestore,
-  /// et seulement ensuite retombe sur cette liste.
-  static const fallbackIceServers = [
-    {
-      'urls': [
-        'stun:stun.l.google.com:19302',
-        'stun:stun1.l.google.com:19302',
-        'stun:stun2.l.google.com:19302',
-      ],
-    },
-    {
-      'urls': 'turn:openrelay.metered.ca:80',
-      'username': 'openrelayproject',
-      'credential': 'openrelayproject',
-    },
-    {
-      'urls': 'turn:openrelay.metered.ca:443',
-      'username': 'openrelayproject',
-      'credential': 'openrelayproject',
-    },
-    {
-      'urls': 'turns:openrelay.metered.ca:443',
-      'username': 'openrelayproject',
-      'credential': 'openrelayproject',
-    },
-    {
-      'urls': 'turn:openrelay.metered.ca:443?transport=tcp',
-      'username': 'openrelayproject',
-      'credential': 'openrelayproject',
-    },
-  ];
-
-  List<Map<String, dynamic>>? _cachedIceServers;
-
-  /// Fin de validité de [_cachedIceServers]. Les identifiants TURN de
-  /// `getIceServers` expirent : on les renouvelle une heure avant.
-  DateTime? _cachedIceServersUntil;
-
-  /// Configuration passée à `createPeerConnection`, serveurs ICE inclus.
-  ///
-  /// Format attendu dans `config/webrtc` (lisible par tout utilisateur
-  /// authentifié, écrit seulement depuis la console — voir firestore.rules) :
-  /// ```json
-  /// { "iceServers": [
-  ///     { "urls": ["stun:stun.l.google.com:19302"] },
-  ///     { "urls": "turns:mon-turn.example:443?transport=tcp",
-  ///       "username": "...", "credential": "..." }
-  /// ] }
-  /// ```
-  Future<Map<String, dynamic>> rtcConfiguration() async {
-    return {
-      'iceServers': await _iceServers(),
-      // Évite tout décalage Plan-B / Unified-Plan entre les deux pairs.
-      'sdpSemantics': 'unified-plan',
-      // Pré-collecte quelques candidats avant l'offre → connexion plus rapide.
-      'iceCandidatePoolSize': 4,
-    };
-  }
-
-  Future<List<Map<String, dynamic>>> _iceServers() async {
-    final cached = _cachedIceServers;
-    final until = _cachedIceServersUntil;
-    if (cached != null && (until == null || DateTime.now().isBefore(until))) {
-      return cached;
-    }
-
-    // 1. Identifiants TURN temporaires (Cloud Function → Cloudflare).
+  /// Jeton d'entrée dans la salle LiveKit de l'appel. Refusé par le serveur
+  /// si l'on n'est ni l'appelant ni l'appelé, si l'appel est déjà terminé,
+  /// ou entre deux comptes dont l'un a bloqué l'autre.
+  Future<CallTicket> joinRoom(String callId) async {
     try {
       final response = await FirebaseFunctions.instance
           .httpsCallable(
-            'getIceServers',
-            options: HttpsCallableOptions(timeout: const Duration(seconds: 8)),
+            'joinCall',
+            options: HttpsCallableOptions(timeout: const Duration(seconds: 15)),
           )
-          .call<Map<String, dynamic>>();
-      final servers = _parseIceServers(response.data['iceServers']);
-      if (servers.isNotEmpty) {
-        final ttl = (response.data['ttlSeconds'] as num?)?.toInt() ?? 3600;
-        _cachedIceServersUntil = DateTime.now().add(
-          Duration(seconds: (ttl - 3600).clamp(60, ttl)),
-        );
-        developer.log(
-          '${servers.length} serveur(s) ICE reçus de getIceServers',
-          name: 'CallService',
-        );
-        return _cachedIceServers = servers;
+          .call<Map<String, dynamic>>({'callId': callId});
+      final data = response.data;
+      final url = data['url'] as String?;
+      final token = data['token'] as String?;
+      if (url == null || url.isEmpty || token == null || token.isEmpty) {
+        throw const CallException('Réponse du serveur d’appel incomplète.');
       }
-    } on Object catch (e) {
-      // TURN pas encore configuré, réseau coupé… : on passe à la suite.
-      developer.log(
-        'getIceServers indisponible',
-        name: 'CallService',
-        error: e,
-      );
+      return CallTicket(url: url, token: token);
+    } on FirebaseFunctionsException catch (e) {
+      developer.log('joinCall: ${e.code}', name: 'CallService', error: e);
+      throw switch (e.code) {
+        'not-found' ||
+        'failed-precondition' => const CallException('Cet appel est terminé.'),
+        'permission-denied' => CallException(
+          e.message ?? 'Cet appel n’est pas possible.',
+        ),
+        'unavailable' || 'deadline-exceeded' || 'internal' =>
+          const CallException(
+            'Serveur d’appel injoignable. Vérifiez votre connexion.',
+            retryable: true,
+          ),
+        _ => CallException(
+          'Impossible de rejoindre l’appel (${e.code}).',
+          retryable: true,
+        ),
+      };
     }
-
-    // 2. Liste posée à la main dans `config/webrtc`, 3. liste compilée —
-    // gardées en cache le temps de la session, sauf si la fonction répond
-    // au prochain essai (on la retente au bout de 10 minutes).
-    _cachedIceServersUntil = DateTime.now().add(const Duration(minutes: 10));
-    try {
-      final doc = await _db.collection('config').doc('webrtc').get();
-      final servers = _parseIceServers(doc.data()?['iceServers']);
-      if (servers.isNotEmpty) {
-        developer.log(
-          '${servers.length} serveur(s) ICE chargé(s) depuis config/webrtc',
-          name: 'CallService',
-        );
-        return _cachedIceServers = servers;
-      }
-    } on Object catch (e) {
-      // Un appel doit pouvoir démarrer même si Firestore est injoignable :
-      // on retombe silencieusement sur la liste compilée.
-      developer.log('config/webrtc illisible', name: 'CallService', error: e);
-    }
-
-    return _cachedIceServers = List<Map<String, dynamic>>.from(
-      fallbackIceServers.map((e) => Map<String, dynamic>.from(e)),
-    );
-  }
-
-  static List<Map<String, dynamic>> _parseIceServers(Object? raw) {
-    if (raw is! List) return const [];
-    return raw
-        .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e))
-        .where((e) => e['urls'] != null)
-        .toList();
   }
 
   @override
   void onClose() {
     _incomingSub?.cancel();
+    _invitesSub?.cancel();
     super.onClose();
   }
+}
+
+/// Accès à la salle LiveKit d'un appel.
+class CallTicket {
+  const CallTicket({required this.url, required this.token});
+  final String url;
+  final String token;
+}
+
+/// Refus ou panne lisible par l'utilisateur.
+class CallException implements Exception {
+  const CallException(this.message, {this.retryable = false});
+  final String message;
+
+  /// Panne passagère (réseau) : réessayer peut suffire. Sinon l'appel est
+  /// terminé ou interdit, inutile d'insister.
+  final bool retryable;
+
+  @override
+  String toString() => message;
 }

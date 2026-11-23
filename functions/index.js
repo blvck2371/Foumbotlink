@@ -1,8 +1,8 @@
 /**
  * Cloud Functions — notifications d'appel Foumbot Link.
  *
- * Le système d'appel est de la signalisation WebRTC via Firestore
- * (`calls/{callId}`). Sans push, l'appelé ne « sonne » que si son app tourne
+ * Le système d'appel repose sur un document Firestore (`calls/{callId}`)
+ * pour la sonnerie et sur LiveKit pour la voix et l'image (calls.js). Sans push, l'appelé ne « sonne » que si son app tourne
  * déjà. Ces fonctions envoient un message FCM data-only haute priorité à la
  * création de l'appel (réveille l'appareil, même app tuée → CallKit natif via
  * `flutter_callkit_incoming`), un message `call_cancelled` quand la phase de
@@ -167,6 +167,16 @@ function preview(text, max = 80) {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+// ---------------------------------------------------------------------
+// Appels : la voix et l'image passent par LiveKit, l'appel de groupe se
+// gère dans calls.js.
+// ---------------------------------------------------------------------
+const {LIVEKIT_SECRETS} = require("./lives");
+const calls = require("./calls")({db, sendToUser});
+exports.joinCall = calls.joinCall;
+exports.inviteToCall = calls.inviteToCall;
+Object.defineProperty(exports, "_calls", {value: calls, enumerable: false});
+
 /**
  * Nouvel appel → notifier l'appelé. Message data-only + priorité haute pour
  * réveiller un appareil endormi / une app tuée (l'isolate de fond Flutter
@@ -204,21 +214,45 @@ exports.onCallCreated = onDocumentCreated("calls/{callId}", async (event) => {
 
 /**
  * Fin d'un appel. On ne réagit qu'au passage d'un état vivant (`ringing` ou
- * `accepted`) vers un état terminal — les écritures d'offer/answer, et les
- * renégociations ICE en cours de communication, laissent le statut inchangé
- * et ne déclenchent donc rien ici.
+ * `accepted`) vers un état terminal : les autres écritures sur le
+ * document laissent le statut inchangé et ne déclenchent donc rien ici.
  *
  * Le passage `ringing` → `accepted` (le décroché) n'envoie volontairement
  * aucun push : voir [ENDED_STATUSES].
  */
-exports.onCallUpdated = onDocumentUpdated("calls/{callId}", async (event) => {
+exports.onCallUpdated = onDocumentUpdated({
+  document: "calls/{callId}",
+  secrets: LIVEKIT_SECRETS,
+}, async (event) => {
   const before = event.data.before.data();
   const after = event.data.after.data();
   const callId = event.params.callId;
 
+  // Appel de groupe : chacun ne fait que quitter l'appel ; c'est ici qu'il
+  // est clos quand il ne reste plus personne à qui parler. Cette clôture
+  // réécrit le document et repasse par ce déclencheur.
+  if (await calls.settleGroupCall(event.data.after.ref, after)) return;
+
   if (before.status === after.status) return;
   if (!LIVE_STATUSES.includes(before.status)) return;
   if (!ENDED_STATUSES.includes(after.status)) return;
+
+  // Ferme la salle LiveKit de l'appel : un téléphone qui n'aurait pas vu
+  // la fin (app figée, réseau revenu trop tard) est coupé lui aussi.
+  await calls.closeCallRoom(callId);
+
+  // Appel de groupe clos alors que des invités sonnaient encore.
+  if (after.group) {
+    await Promise.all(calls.uidsIn(after, ["ringing"]).map((uid) =>
+      sendToUser(uid, {
+        data: {type: "call_cancelled", callId},
+        android: {priority: "high"},
+        apns: {
+          headers: {"apns-push-type": "background", "apns-priority": "5"},
+          payload: {aps: {"content-available": 1}},
+        },
+      })));
+  }
 
   // Retire l'UI d'appel native restée affichée chez l'appelé : l'appelant a
   // raccroché (pendant la sonnerie ou en pleine conversation), ou l'appel a
@@ -1069,6 +1103,15 @@ exports.onPostDeleted = onDocumentDeleted("posts/{postId}", async (event) => {
 // ---------------------------------------------------------------------
 // Lives (voir lives.js).
 // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// Certification de compte (voir certification.js) : conditions lues dans
+// `config/certification`.
+// ---------------------------------------------------------------------
+const certification = require("./certification")({db, notifyUser});
+exports.certificationStatus = certification.certificationStatus;
+exports.requestCertification = certification.requestCertification;
+exports.onCertificationDecided = certification.onCertificationDecided;
+
 const lives = require("./lives")({db, notifyUser});
 exports.startLive = lives.startLive;
 exports.joinLive = lives.joinLive;
@@ -1933,6 +1976,82 @@ exports.getIceServers = onCall(
     },
 );
 
+
+// ---------------------------------------------------------------------
+// Modification du profil
+// ---------------------------------------------------------------------
+
+/**
+ * Recopie le nom et la photo d'un compte sur tout ce qu'il a publié.
+ *
+ * Publications, commentaires, statuts, annonces et code de suivi portent
+ * une copie du nom
+ * (et de la photo) de leur auteur, pour s'afficher sans lire un profil par
+ * ligne. Sans cette recopie, un compte qui change de nom garderait
+ * l'ancien sur tout ce qu'il a écrit avant.
+ *
+ * @param {string} uid Compte.
+ * @param {{name: (string|undefined), photo: (string|null|undefined)}} o
+ *   Nouvelles valeurs ; `undefined` = inchangé, `photo: null` = retirée.
+ * @return {Promise<number>} Documents mis à jour.
+ */
+async function propagateProfile(uid, {name, photo}) {
+  const authorPatch = {};
+  if (name !== undefined) authorPatch.authorName = name;
+  if (photo !== undefined) {
+    authorPatch.authorPhotoUrl = photo === null ? FieldValue.delete() : photo;
+  }
+  const sellerPatch = name !== undefined ? {sellerName: name} : null;
+
+  const targets = [
+    [db.collection("posts").where("authorUid", "==", uid), authorPatch],
+    [db.collectionGroup("comments").where("authorUid", "==", uid), authorPatch],
+    [db.collection("statuses").where("authorUid", "==", uid), authorPatch],
+    [db.collection("market").where("sellerUid", "==", uid), sellerPatch],
+    // Le guichet retrouve un habitant par son code de suivi et affiche ce
+    // nom.
+    [db.collection("trackingCodes").where("uid", "==", uid),
+      name !== undefined ? {displayName: name} : null],
+  ];
+  let count = 0;
+  for (const [query, patch] of targets) {
+    if (!patch || !Object.keys(patch).length) continue;
+    const snap = await query.get();
+    // Paquets de 400 : une écriture groupée en accepte 500 au plus.
+    for (let i = 0; i < snap.docs.length; i += 400) {
+      const batch = db.batch();
+      for (const doc of snap.docs.slice(i, i + 400)) batch.update(doc.ref, patch);
+      await batch.commit();
+    }
+    count += snap.size;
+  }
+  return count;
+}
+
+/**
+ * Appelée par l'app après un changement de nom ou de photo : recopie les
+ * valeurs actuelles du profil sur tout ce que le compte a publié.
+ *
+ * Volontairement pas un déclencheur sur `users/{uid}` : ce document est
+ * réécrit toutes les 25 s par le signal de présence de chaque personne
+ * connectée, et chaque écriture aurait lancé une exécution.
+ */
+exports.syncProfileCopies = onCall({timeoutSeconds: 300}, async (request) => {
+  const uid = request.auth && request.auth.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Connexion requise.");
+  const snap = await db.doc(`users/${uid}`).get();
+  if (!snap.exists) throw new HttpsError("failed-precondition", "Profil absent.");
+  const data = snap.data();
+  const name = typeof data.displayName === "string" ?
+    data.displayName.trim() : "";
+  const photo = typeof data.photoUrl === "string" &&
+    data.photoUrl.startsWith("http") ? data.photoUrl : null;
+  const n = await propagateProfile(uid, {name: name || undefined, photo});
+  logger.info(`Profil ${uid} recopié sur ${n} document(s)`);
+  return {updated: n};
+});
+Object.defineProperty(exports, "_propagateProfile",
+    {value: propagateProfile, enumerable: false});
 
 // ---------------------------------------------------------------------
 // Suppression de compte

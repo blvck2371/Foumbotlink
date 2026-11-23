@@ -1,12 +1,20 @@
+// L'API CallKit de LiveKit (mode audio « système d'appel externe »,
+// disponibilité du moteur audio) est marquée expérimentale : c'est pourtant
+// la voie documentée par LiveKit pour CallKit. À revérifier à chaque montée
+// de version de livekit_client (testé avec 2.14.0).
+// ignore_for_file: experimental_member_use
+
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:io' show Platform;
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:get/get.dart' hide navigator;
+import 'package:get/get.dart';
+import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/call.dart';
 import '../models/user_profile.dart';
@@ -14,6 +22,37 @@ import '../routes/app_routes.dart';
 import '../services/auth_service.dart';
 import '../services/call_service.dart';
 import '../services/callkit_helper.dart';
+import '../services/chat_service.dart';
+
+/// Une vignette d'appel de groupe : quelqu'un dans la salle, ou un invité
+/// dont le téléphone sonne encore.
+class CallTile {
+  const CallTile({
+    required this.uid,
+    required this.name,
+    this.video,
+    this.cameraOff = true,
+    this.speaking = false,
+    this.ringing = false,
+  });
+
+  final String uid;
+  final String name;
+  final VideoTrack? video;
+  final bool cameraOff;
+  final bool speaking;
+
+  /// Invité pas encore là : son téléphone sonne.
+  final bool ringing;
+}
+
+/// Quelqu'un qu'on peut ajouter à l'appel.
+class InviteCandidate {
+  const InviteCandidate({required this.uid, required this.name, this.photoUrl});
+  final String uid;
+  final String name;
+  final String? photoUrl;
+}
 
 enum CallScreenPhase {
   connecting,
@@ -29,17 +68,19 @@ enum CallScreenPhase {
   ended,
 }
 
-/// Pilote un appel WebRTC de bout en bout : création/écoute du document de
-/// signalisation Firestore, échange offer/answer + candidats ICE, gestion
-/// du flux média local/distant, et état d'UI (muet, caméra, haut-parleur,
-/// durée).
+/// Pilote un appel de bout en bout.
 ///
-/// Les serveurs ICE ne sont **pas** codés en dur ici : ils viennent de
-/// [CallService.rtcConfiguration], qui les lit dans `config/webrtc`
-/// (Firestore) avec repli sur une liste compilée. Sans TURN opérationnel,
-/// deux téléphones derrière un NAT symétrique (très courant en 4G/5G
-/// opérateur) échangent bien la signalisation mais n'établissent jamais le
-/// flux audio — voir le commentaire de `CallService.fallbackIceServers`.
+/// Deux canaux, chacun dans son rôle :
+///  - le document Firestore `calls/{callId}` porte la **sonnerie** : qui
+///    appelle, décroché, refusé, raccroché (et déclenche les pushes) ;
+///  - la salle LiveKit `call_{callId}` porte la **voix et l'image**. Chaque
+///    téléphone y envoie son micro (et sa caméra) et reçoit ceux de l'autre.
+///    LiveKit relaie le flux par ses serveurs : plus de connexion directe
+///    entre les deux téléphones à établir, donc plus d'appel muet quand l'un
+///    des deux est derrière le NAT d'un opérateur mobile.
+///
+/// L'appelant entre dans la salle dès la sonnerie, l'appelé en décrochant :
+/// la voix passe dès que le second arrive.
 class CallController extends GetxController {
   static const _ringTimeout = Duration(seconds: 45);
 
@@ -49,9 +90,21 @@ class CallController extends GetxController {
   /// l'utilisateur parler dans le vide.
   static const _reconnectGrace = Duration(seconds: 30);
 
-  /// Au-delà, le réseau est manifestement inutilisable : inutile de
-  /// reconstruire une n-ième fois le chemin ICE.
-  static const _maxIceRestarts = 3;
+  /// Si iOS ne signale pas l'activation de la session audio CallKit dans ce
+  /// délai (évènement perdu), on démarre quand même le son : mieux vaut un
+  /// appel qui marche qu'un appel muet.
+  static const _callkitAudioFallback = Duration(seconds: 3);
+
+  /// Décroché, mais la voix ne passe toujours pas : au-delà, on abandonne
+  /// plutôt que de laisser « Connexion… » à l'écran indéfiniment.
+  static const _connectTimeout = Duration(seconds: 25);
+
+  /// Retours dans la salle tentés après une coupure franche.
+  static const _maxRecoverAttempts = 10;
+
+  /// Appel de groupe : seul dans la salle depuis tout ce temps (les autres
+  /// sont partis, l'invité ne répond pas), on raccroche.
+  static const _aloneTimeout = Duration(seconds: 50);
 
   final call = Rxn<Call>();
   final otherProfile = Rxn<UserProfile>();
@@ -63,8 +116,20 @@ class CallController extends GetxController {
   final elapsedSeconds = 0.obs;
   final errorMessage = RxnString();
 
-  final localRenderer = RTCVideoRenderer();
-  final remoteRenderer = RTCVideoRenderer();
+  /// Caméra de ce téléphone (appel vidéo), pour l'aperçu en vignette.
+  final localVideo = Rxn<LocalVideoTrack>();
+
+  /// Caméra de l'autre, ou `null` tant qu'elle n'est pas reçue.
+  final remoteVideo = Rxn<VideoTrack>();
+
+  /// L'autre a coupé sa caméra.
+  final remoteCameraOff = false.obs;
+
+  /// Appel de groupe : une vignette par personne (présente ou qui sonne).
+  final tiles = <CallTile>[].obs;
+
+  /// Une invitation est en cours d'envoi.
+  final inviting = false.obs;
 
   late final bool _incoming;
   late final CallType _type;
@@ -77,25 +142,25 @@ class CallController extends GetxController {
   /// décrocher une seconde fois une fois l'écran ouvert.
   bool _autoAccept = false;
 
-  RTCPeerConnection? _pc;
-  MediaStream? _localStream;
+  Room? _room;
+  EventsListener<RoomEvent>? _roomEvents;
   StreamSubscription<Call?>? _callSub;
-  StreamSubscription? _remoteCandidatesSub;
   Timer? _ringTimer;
   Timer? _durationTimer;
   Timer? _reconnectTimer;
-  bool _remoteDescriptionSet = false;
-  final _pendingRemoteCandidates = <RTCIceCandidate>[];
+  Timer? _callkitAudioTimer;
+  Timer? _connectTimer;
+  Timer? _aloneTimer;
   bool _closing = false;
   bool _accepting = false;
+  bool _recovering = false;
 
-  /// SDP distant actuellement appliqué. Sert à distinguer une renégociation
-  /// (ICE restart : nouveau SDP) d'une simple re-notification Firestore du
-  /// même document — sans quoi chaque snapshot rejouerait
-  /// `setRemoteDescription` et casserait la session.
-  String? _appliedRemoteSdp;
-  bool _renegotiating = false;
-  int _iceRestarts = 0;
+  /// Côté appelé ou invité : ce téléphone a décroché.
+  bool _answeredByMe = false;
+
+  /// Le son passe par la session audio CallKit (iOS, appel décroché depuis
+  /// l'UI native) : LiveKit ne doit pas l'activer lui-même.
+  bool _callkitAudio = false;
 
   /// Début de la communication, référence du chrono. Volontairement issu de
   /// `Call.answeredAt` (horloge serveur) quand il est disponible, pour que
@@ -115,21 +180,40 @@ class CallController extends GetxController {
   String get myUid => _auth.uid;
   bool get isVideoCall => _type == CallType.video;
 
-  /// Identifiant du document de signalisation piloté par cet écran. Permet
-  /// aux évènements de l'UI d'appel native (relayés par PushService) de
-  /// vérifier qu'ils concernent bien **cet** appel avant d'agir dessus.
+  /// L'appel est passé en groupe (quelqu'un a été ajouté).
+  bool get isGroup => call.value?.isGroup ?? false;
+
+  /// On peut ajouter quelqu'un : communication établie, appel en cours, et
+  /// encore de la place.
+  bool get canInvite {
+    final c = call.value;
+    if (c == null || c.status != CallStatus.accepted) return false;
+    if (phase.value != CallScreenPhase.active) return false;
+    if (!c.isGroup) return true;
+    return c.activeMembers.length < Call.maxMembers;
+  }
+
+  /// Invité dans un appel de groupe (et non appelant ou appelé d'origine).
+  bool get _isInvitee =>
+      _incoming && call.value?.members[myUid]?.invitedBy != null;
+
+  /// Identifiant du document d'appel piloté par cet écran. Permet aux
+  /// évènements de l'UI d'appel native (relayés par PushService) de vérifier
+  /// qu'ils concernent bien **cet** appel avant d'agir dessus.
   String get callId => _callId;
 
   /// Le média a été établi au moins une fois — donc le chrono a du sens.
-  /// Distinct de [_wasAnswered] : on peut avoir décroché sans qu'aucun flux
-  /// audio ne s'établisse jamais (TURN injoignable).
   bool get wasEverConnected => _connectedAt != null;
 
   /// Vrai dès que l'appel a été décroché — y compris pendant une
   /// reconnexion. Détermine si une fin d'appel est un « appel terminé » ou
   /// un « appel manqué/refusé ».
   bool get _wasAnswered =>
-      _connectedAt != null || call.value?.answeredAt != null;
+      _connectedAt != null ||
+      (_incoming ? _answeredByMe : call.value?.answeredAt != null);
+
+  /// Quelqu'un d'autre est dans la salle.
+  bool get _anyonePresent => _room?.remoteParticipants.isNotEmpty ?? false;
 
   @override
   void onInit() {
@@ -144,26 +228,26 @@ class CallController extends GetxController {
 
     _phaseWorker = ever<CallScreenPhase>(phase, _onPhaseChanged);
     _loadOtherProfile();
+    if (isVideoCall) {
+      unawaited(WakelockPlus.enable().catchError((Object _) {}));
+    }
 
-    Future.wait([localRenderer.initialize(), remoteRenderer.initialize()]).then(
-      (_) {
-        if (_incoming) {
-          _calls.markHandled(_callId);
-          _watchCallDoc();
-          if (_autoAccept) {
-            // Décroché depuis CallKit : on enchaîne directement sur la
-            // connexion, sans réafficher « Accepter / Refuser » ni faire
-            // sonner le téléphone une deuxième fois.
-            phase.value = CallScreenPhase.connecting;
-            acceptCall();
-          } else {
-            phase.value = CallScreenPhase.ringingIncoming;
-          }
-        } else {
-          _startOutgoingCall();
-        }
-      },
-    );
+    if (_incoming) {
+      _calls.markHandled(_callId);
+      _watchCallDoc();
+      if (_autoAccept) {
+        // Décroché depuis CallKit : on enchaîne directement sur la
+        // connexion, sans réafficher « Accepter / Refuser » ni faire
+        // sonner le téléphone une deuxième fois.
+        phase.value = CallScreenPhase.connecting;
+        acceptCall();
+      } else {
+        phase.value = CallScreenPhase.ringingIncoming;
+        _startIncomingRingTimeout();
+      }
+    } else {
+      _startOutgoingCall();
+    }
   }
 
   void _onPhaseChanged(CallScreenPhase p) {
@@ -218,14 +302,13 @@ class CallController extends GetxController {
     // cet écran a disparu.
     if (!_closing) {
       _closing = true;
-      if (_callId.isNotEmpty) _calls.updateStatus(_callId, _terminalStatus);
+      if (_callId.isNotEmpty) _calls.leave(_callId, _terminalStatus);
     }
     _teardown();
     _phaseWorker?.dispose();
     _stopRinging();
     _ringPlayer.dispose();
-    localRenderer.dispose();
-    remoteRenderer.dispose();
+    unawaited(WakelockPlus.disable().catchError((Object _) {}));
     super.onClose();
   }
 
@@ -257,6 +340,7 @@ class CallController extends GetxController {
   Future<void> _startOutgoingCall() async {
     phase.value = CallScreenPhase.ringingOutgoing;
     final granted = await _ensurePermissions();
+    if (_closing) return;
     if (!granted) {
       errorMessage.value =
           'Autorisez le micro${isVideoCall ? ' et la caméra' : ''} pour appeler.';
@@ -273,37 +357,39 @@ class CallController extends GetxController {
       );
       _callId = created.id;
       call.value = created;
-
-      await _initLocalStream();
-      await _createPeerConnection();
-
-      _remoteCandidatesSub = _calls.watchCandidates(
-        _callId,
-        CallService.calleeCandidates,
-        _onRemoteCandidate,
-      );
-
-      final offer = await _pc!.createOffer(
-        isVideoCall
-            ? {'offerToReceiveVideo': 1, 'offerToReceiveAudio': 1}
-            : {'offerToReceiveAudio': 1},
-      );
-      await _pc!.setLocalDescription(offer);
-      await _calls.setOffer(_callId, {'sdp': offer.sdp, 'type': offer.type});
-
+      if (_closing) {
+        // Raccroché pendant la création du document.
+        unawaited(_calls.updateStatus(_callId, CallStatus.missed));
+        return;
+      }
       _watchCallDoc();
       _startRingTimeout();
+
+      // L'appelant entre dans la salle pendant que ça sonne : quand l'autre
+      // décroche, il n'y a plus qu'à l'attendre, la voix passe aussitôt.
+      await _joinRoom();
     } on Exception catch (e) {
-      // Message technique affiché tel quel (pas juste loggé) : sur un
-      // téléphone physique de test, personne n'a le câble + la console
-      // ouverts en permanence — sans ça, une erreur Firestore/WebRTC reste
-      // invisible et impossible à diagnostiquer à distance.
-      errorMessage.value = 'Impossible de démarrer l’appel : $e';
-      phase.value = CallScreenPhase.ended;
-      _closing = true;
-      if (_callId.isNotEmpty) _calls.updateStatus(_callId, CallStatus.ended);
-      _teardown();
+      // Message affiché tel quel (pas juste loggé) : sur un téléphone
+      // physique de test, personne n'a le câble + la console ouverts en
+      // permanence — sans ça, une panne reste impossible à diagnostiquer.
+      _failAndEnd('Impossible de démarrer l’appel : ${_describe(e)}');
     }
+  }
+
+  /// Invitation à un appel de groupe qui sonne dans l'app : personne d'autre
+  /// ne la fera expirer (dans un appel à deux, c'est l'appelant qui marque
+  /// l'appel manqué).
+  void _startIncomingRingTimeout() {
+    _ringTimer?.cancel();
+    _ringTimer = Timer(_ringTimeout, () {
+      if (_closing || phase.value != CallScreenPhase.ringingIncoming) return;
+      if (!isGroup) return;
+      _closing = true;
+      unawaited(_calls.leave(_callId, CallStatus.missed));
+      _teardown();
+      phase.value = CallScreenPhase.ended;
+      if (Get.currentRoute == AppRoutes.call) Get.back();
+    });
   }
 
   void _startRingTimeout() {
@@ -321,41 +407,18 @@ class CallController extends GetxController {
   // ---------------------------------------------------------------------
 
   Future<void> acceptCall() async {
-    // Garde-fou anti double-tap : sans lui, un appui rapide et répété sur
-    // "Accepter" lancerait deux fois `getUserMedia`/`createPeerConnection`
-    // en parallèle, la seconde écrasant `_pc`/`_localStream` de la
-    // première sans jamais la libérer.
+    // Garde-fou anti double-tap : un second appui lancerait une seconde
+    // connexion à la salle en parallèle.
     if (_accepting || _closing) return;
     _accepting = true;
-    // Coupe sonnerie et vibreur dès le tap, sans attendre la fin de
-    // `getUserMedia` (qui peut prendre une seconde ou deux, voire afficher
-    // une demande de permission) — sinon le téléphone continue de sonner
-    // dans la main de quelqu'un qui a déjà décroché.
+    // Coupe sonnerie et vibreur dès le tap, sans attendre la connexion (qui
+    // peut prendre une seconde ou deux, voire afficher une demande de
+    // permission) — sinon le téléphone continue de sonner dans la main de
+    // quelqu'un qui a déjà décroché.
     phase.value = CallScreenPhase.connecting;
 
-    var current = call.value;
-    if (current?.offer == null) {
-      // L'offre SDP peut arriver quelques centaines de ms (voire plus, si
-      // l'appelant doit d'abord autoriser micro/caméra) après que cet écran
-      // s'est ouvert sur la notification d'appel entrant — on attend un
-      // peu plutôt que d'ignorer silencieusement le tap sur "Accepter".
-      try {
-        current = await _calls
-            .watchCall(_callId)
-            .firstWhere((c) => c?.offer != null)
-            .timeout(const Duration(seconds: 20));
-      } on TimeoutException {
-        current = null;
-      }
-      if (_closing) return;
-      if (current?.offer == null) {
-        errorMessage.value = 'Cet appel n’est plus disponible.';
-        _accepting = false;
-        return;
-      }
-    }
-
     final granted = await _ensurePermissions();
+    if (_closing) return;
     if (!granted) {
       errorMessage.value =
           'Autorisez le micro${isVideoCall ? ' et la caméra' : ''} pour répondre.';
@@ -364,43 +427,35 @@ class CallController extends GetxController {
     }
 
     try {
-      await _initLocalStream();
-      // Ordre imposé par l'Unified Plan côté répondeur : créer la
-      // PeerConnection SANS nos pistes → appliquer l'offre distante →
-      // ajouter nos pistes → répondre. Ajouter les pistes avant l'offre
-      // peut créer des m-lines en double et casser l'audio bidirectionnel.
-      await _createPeerConnection(withLocalTracks: false);
+      // Décroché depuis l'UI native iOS : CallKit a la main sur la session
+      // audio, LiveKit doit s'y plier.
+      if (_autoAccept && Platform.isIOS) await _useCallkitAudio();
 
-      final offer = current!.offer!;
-      await _applyRemoteDescription(offer);
-      await _addLocalTracks();
-      await _flushPendingCandidates();
-
-      _remoteCandidatesSub = _calls.watchCandidates(
-        _callId,
-        CallService.callerCandidates,
-        _onRemoteCandidate,
-      );
-
-      final answer = await _pc!.createAnswer();
-      await _pc!.setLocalDescription(answer);
-      await _calls.setAnswer(_callId, {'sdp': answer.sdp, 'type': answer.type});
+      await _joinRoom();
+      if (_closing) return;
+      // Invité d'un appel de groupe : on ne touche qu'à sa propre ligne.
+      // Appelé d'un appel à deux : le décroché fait passer l'appel en cours.
+      final current = call.value ?? await _calls.watchCall(_callId).first;
+      if (current != null &&
+          current.isGroup &&
+          current.members.containsKey(myUid)) {
+        await _calls.markJoined(_callId);
+      } else {
+        await _calls.markAccepted(_callId);
+      }
+      _answeredByMe = true;
       // L'UI CallKit entrante passe en état « connecté » (iOS surtout).
       await markCallkitConnected(_callId);
-
-      // Pas encore "active" : le SDP est échangé mais la connexion P2P
-      // (ICE) n'est pas forcément établie. C'est `onConnectionState` (dans
-      // [_createPeerConnection]) qui fera passer à `active` — de manière
-      // symétrique avec le côté appelant — une fois le média réellement
-      // connecté, pas seulement la signalisation terminée.
-      phase.value = CallScreenPhase.connecting;
+      // L'appelant est en général déjà dans la salle : la communication
+      // démarre tout de suite. Sinon, `ParticipantConnectedEvent` s'en
+      // chargera à son arrivée.
+      if (_anyonePresent) _markConnected();
     } on Exception catch (e) {
-      errorMessage.value = 'Impossible de répondre à l’appel : $e';
       _accepting = false;
-      _closing = true;
-      if (_callId.isNotEmpty) _calls.updateStatus(_callId, CallStatus.declined);
-      _teardown();
-      phase.value = CallScreenPhase.ended;
+      _failAndEnd(
+        'Impossible de répondre à l’appel : ${_describe(e)}',
+        status: CallStatus.declined,
+      );
     }
   }
 
@@ -410,14 +465,14 @@ class CallController extends GetxController {
     // garde-fou [_closing] évite un double `_teardown`/`Get.back()`.
     if (_closing) return;
     _closing = true;
-    await _calls.updateStatus(_callId, CallStatus.declined);
+    await _calls.leave(_callId, CallStatus.declined);
     _teardown();
     phase.value = CallScreenPhase.ended;
     Get.back();
   }
 
   // ---------------------------------------------------------------------
-  // Commun
+  // Salle LiveKit
   // ---------------------------------------------------------------------
 
   Future<bool> _ensurePermissions() async {
@@ -428,271 +483,405 @@ class CallController extends GetxController {
     return statuses.values.every((s) => s.isGranted);
   }
 
-  Future<void> _initLocalStream() async {
-    final stream = await navigator.mediaDevices.getUserMedia({
-      'audio': true,
-      'video': isVideoCall
-          ? {'facingMode': 'user', 'width': 640, 'height': 480}
-          : false,
-    });
-    _localStream = stream;
-    localRenderer.srcObject = stream;
-  }
+  /// Entre dans la salle de l'appel et y publie micro (et caméra).
+  Future<void> _joinRoom() async {
+    final ticket = await _calls.joinRoom(_callId);
+    if (_closing) return;
 
-  Future<void> _createPeerConnection({bool withLocalTracks = true}) async {
-    final pc = await createPeerConnection(await _calls.rtcConfiguration());
-    _pc = pc;
-
-    if (withLocalTracks) await _addLocalTracks();
-
-    pc.onTrack = (event) {
-      if (event.streams.isNotEmpty) {
-        remoteRenderer.srcObject = event.streams.first;
-      }
-    };
-
-    pc.onIceCandidate = (candidate) {
-      if (candidate.candidate == null || _closing) return;
-      _calls.addCandidate(
-        _callId,
-        _incoming ? CallService.calleeCandidates : CallService.callerCandidates,
-        candidate.toMap(),
+    if (isVideoCall && localVideo.value == null) {
+      localVideo.value = await LocalVideoTrack.createCameraTrack(
+        CameraCaptureOptions(
+          cameraPosition: isFrontCamera.value
+              ? CameraPosition.front
+              : CameraPosition.back,
+          params: VideoParametersPresets.h540_169,
+        ),
       );
-    };
+    }
 
-    // `onIceConnectionState` est plus fiable que `onConnectionState` sur
-    // certaines builds Android de flutter_webrtc — on écoute les deux.
-    pc.onIceConnectionState = (state) {
-      developer.log('iceConnectionState: $state', name: 'CallController');
-      switch (state) {
-        case RTCIceConnectionState.RTCIceConnectionStateConnected:
-        case RTCIceConnectionState.RTCIceConnectionStateCompleted:
-          _markConnected();
-        case RTCIceConnectionState.RTCIceConnectionStateDisconnected:
-          // État transitoire : très souvent résolu tout seul en quelques
-          // secondes. On bascule l'UI en « Reconnexion… » sans toucher au
-          // média ni tenter quoi que ce soit tout de suite.
-          _onMediaLost(attemptRestart: false);
-        case RTCIceConnectionState.RTCIceConnectionStateFailed:
-          _onMediaLost(attemptRestart: true);
-        default:
-          break;
-      }
-    };
+    final room = Room(
+      roomOptions: const RoomOptions(
+        adaptiveStream: true,
+        dynacast: true,
+        // La caméra est gérée ici (vignette d'aperçu) : elle ne doit pas
+        // s'éteindre si la salle se reconnecte.
+        stopLocalTrackOnUnpublish: false,
+      ),
+    );
+    _room = room;
+    _listenRoom(room);
 
-    pc.onConnectionState = (state) {
-      developer.log('connectionState: $state', name: 'CallController');
-      switch (state) {
-        case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
-          _markConnected();
-        case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
-          _onMediaLost(attemptRestart: false);
-        case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
-          _onMediaLost(attemptRestart: true);
-        default:
-          break;
-      }
-    };
+    await AudioManager.instance.setSpeakerOutputPreferred(isSpeakerOn.value);
+    await room.connect(ticket.url, ticket.token);
+    if (_closing || _room != room) return;
+
+    final local = room.localParticipant;
+    await local?.setMicrophoneEnabled(!isMuted.value);
+    final cam = localVideo.value;
+    if (cam != null) {
+      await local?.publishVideoTrack(cam);
+      if (isCameraOff.value) await cam.mute(stopOnMute: false);
+    }
+    _syncRemoteTracks(room);
   }
 
-  Future<void> _addLocalTracks() async {
-    final pc = _pc;
-    final stream = _localStream;
-    if (pc == null || stream == null) return;
-    for (final track in stream.getTracks()) {
-      await pc.addTrack(track, stream);
+  void _listenRoom(Room room) {
+    _roomEvents = room.createListener()
+      // Vignettes du groupe : recalculées à chaque évènement de la salle
+      // (arrivée, départ, caméra, qui parle…).
+      ..listen((_) => _refreshTiles())
+      ..on<ParticipantConnectedEvent>((e) {
+        developer.log(
+          'participant arrivé: ${e.participant.identity}',
+          name: 'CallController',
+        );
+        _aloneTimer?.cancel();
+        _aloneTimer = null;
+        if (_canBeActive) _markConnected();
+      })
+      ..on<ParticipantDisconnectedEvent>((e) {
+        developer.log(
+          'participant parti: ${e.participant.identity}',
+          name: 'CallController',
+        );
+        if (e.participant.identity == _otherUid) remoteVideo.value = null;
+        if (isGroup) {
+          // Les autres continuent ; seul, on attend un peu qu'un invité
+          // arrive avant de raccrocher.
+          if (!_anyonePresent) _startAloneTimeout();
+          return;
+        }
+        // L'autre a perdu le réseau — ou vient de raccrocher, auquel cas
+        // le statut Firestore « ended » fermera l'écran dans un instant.
+        _onMediaLost();
+      })
+      ..on<TrackSubscribedEvent>((e) {
+        if (_canBeActive) _markConnected();
+        if (e.participant.identity != _otherUid) return;
+        final track = e.track;
+        if (track is VideoTrack) {
+          remoteVideo.value = track;
+          remoteCameraOff.value = e.publication.muted;
+        }
+      })
+      ..on<TrackUnsubscribedEvent>((e) {
+        if (e.participant.identity != _otherUid) return;
+        if (e.track is VideoTrack) remoteVideo.value = null;
+      })
+      ..on<TrackMutedEvent>((e) {
+        if (e.participant.identity == _otherUid &&
+            e.publication.kind == TrackType.VIDEO) {
+          remoteCameraOff.value = true;
+        }
+      })
+      ..on<TrackUnmutedEvent>((e) {
+        if (e.participant.identity == _otherUid &&
+            e.publication.kind == TrackType.VIDEO) {
+          remoteCameraOff.value = false;
+        }
+      })
+      ..on<RoomReconnectingEvent>((_) {
+        developer.log('salle: reconnexion…', name: 'CallController');
+        _onMediaLost();
+      })
+      ..on<RoomReconnectedEvent>((_) {
+        developer.log('salle: reconnectée', name: 'CallController');
+        if (_anyonePresent && _canBeActive) _markConnected();
+      })
+      ..on<RoomDisconnectedEvent>((e) {
+        developer.log('salle: déconnectée (${e.reason})', name: 'CallController');
+        if (_closing || _room != room) return;
+        switch (e.reason) {
+          case DisconnectReason.roomDeleted:
+          case DisconnectReason.participantRemoved:
+          case DisconnectReason.duplicateIdentity:
+            // Le serveur a fermé la salle (appel terminé) ou ce compte a
+            // répondu sur un autre téléphone : cet écran n'a plus d'objet.
+            endCall();
+          default:
+            unawaited(_recover());
+        }
+      });
+  }
+
+  /// Une communication ne devient « active » qu'une fois décrochée : côté
+  /// appelant, l'appelé arrive dans la salle juste avant d'écrire
+  /// `accepted`, mais il est bien là.
+  bool get _canBeActive => _incoming ? _accepting || _wasAnswered : true;
+
+  /// Vignettes de l'appel de groupe : chaque personne dans la salle, puis
+  /// les invités dont le téléphone sonne encore.
+  void _refreshTiles() {
+    final c = call.value;
+    if (c == null || !c.isGroup) {
+      if (tiles.isNotEmpty) tiles.clear();
+      return;
+    }
+    final list = <CallTile>[];
+    final present = <String>{};
+    for (final p in _room?.remoteParticipants.values ?? <RemoteParticipant>[]) {
+      present.add(p.identity);
+      RemoteTrackPublication? cam;
+      for (final pub in p.videoTrackPublications) {
+        if (pub.track != null) cam = pub;
+      }
+      list.add(
+        CallTile(
+          uid: p.identity,
+          name: c.members[p.identity]?.name ??
+              (p.name.isNotEmpty ? p.name : 'Habitant'),
+          video: switch (cam?.track) {
+            final VideoTrack t => t,
+            _ => null,
+          },
+          cameraOff: cam == null || cam.muted,
+          speaking: p.isSpeaking,
+        ),
+      );
+    }
+    for (final m in c.members.values) {
+      if (m.state == CallMemberState.ringing &&
+          m.uid != myUid &&
+          !present.contains(m.uid)) {
+        list.add(CallTile(uid: m.uid, name: m.name, ringing: true));
+      }
+    }
+    tiles.assignAll(list);
+  }
+
+  void _startAloneTimeout() {
+    if (_closing || _aloneTimer != null || !_wasAnswered) return;
+    _aloneTimer = Timer(_aloneTimeout, () {
+      if (_closing || _anyonePresent) return;
+      errorMessage.value = 'Plus personne dans l’appel.';
+      endCall();
+    });
+  }
+
+  /// Reprend la caméra de l'autre s'il était déjà dans la salle.
+  void _syncRemoteTracks(Room room) {
+    final other = room.remoteParticipants[_otherUid];
+    if (other == null) return;
+    for (final pub in other.videoTrackPublications) {
+      final track = pub.track;
+      if (track != null) {
+        remoteVideo.value = track;
+        remoteCameraOff.value = pub.muted;
+      }
     }
   }
 
-  /// Média réellement connecté (ICE établi). On bascule l'UI en « actif » et
-  /// on **force la route audio** : sans ça le son distant sort par défaut
-  /// dans l'écouteur (volume très faible), ce qui donne l'impression que
-  /// « personne ne s'entend ».
+  /// La salle a lâché pour de bon (réseau coupé plus longtemps que ce que
+  /// LiveKit rattrape seul) : on y retourne avec un jeton neuf, tant que
+  /// le délai de grâce n'est pas écoulé.
+  Future<void> _recover() async {
+    if (_closing || _recovering) return;
+    _recovering = true;
+    _onMediaLost();
+    try {
+      await _disposeRoom();
+      // Une tentative toutes les 3 s pendant le délai de grâce.
+      for (var attempt = 0; attempt < _maxRecoverAttempts; attempt++) {
+        if (_closing) return;
+        try {
+          await _joinRoom();
+          if (_anyonePresent && _canBeActive) _markConnected();
+          return;
+        } on CallException catch (e) {
+          if (!e.retryable) {
+            // Appel terminé entre-temps : inutile d'insister.
+            _failAndEnd(e.message);
+            return;
+          }
+        } on Object catch (e) {
+          developer.log('reprise échouée', name: 'CallController', error: e);
+        }
+        await _disposeRoom();
+        await Future<void>.delayed(const Duration(seconds: 3));
+      }
+      _failAndEnd('Connexion perdue.');
+    } finally {
+      _recovering = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // CallKit (iOS)
+  // ---------------------------------------------------------------------
+
+  /// CallKit active lui-même la session audio de l'appel (`didActivate`) :
+  /// si LiveKit l'activait de son côté, iOS pouvait couper le son dès le
+  /// décroché depuis l'écran verrouillé. LiveKit passe donc en mode
+  /// « système d'appel externe » et son moteur audio ne tourne que pendant
+  /// que la session CallKit est active.
+  Future<void> _useCallkitAudio() async {
+    _callkitAudio = true;
+    try {
+      await AudioManager.instance.setAudioSessionManagementMode(
+        AudioSessionManagementMode.externalCallSystem,
+      );
+      callkitAudioActive.addListener(_onCallkitAudioChanged);
+      await _applyCallkitAudio();
+      if (!callkitAudioActive.value) {
+        _callkitAudioTimer = Timer(_callkitAudioFallback, () {
+          if (_closing || callkitAudioActive.value) return;
+          developer.log(
+            'session CallKit non signalée : son démarré quand même',
+            name: 'CallController',
+          );
+          unawaited(
+            AudioManager.instance
+                .setEngineAvailability(
+                  AudioEngineAvailability.defaultAvailability,
+                )
+                .catchError((Object _) {}),
+          );
+        });
+      }
+    } on Object catch (e) {
+      developer.log('mode audio CallKit', name: 'CallController', error: e);
+    }
+  }
+
+  void _onCallkitAudioChanged() {
+    _callkitAudioTimer?.cancel();
+    unawaited(_applyCallkitAudio());
+  }
+
+  Future<void> _applyCallkitAudio() async {
+    try {
+      await AudioManager.instance.setEngineAvailability(
+        callkitAudioActive.value
+            ? AudioEngineAvailability.defaultAvailability
+            : AudioEngineAvailability.none,
+      );
+    } on Object catch (e) {
+      developer.log('moteur audio', name: 'CallController', error: e);
+    }
+  }
+
+  /// Rend la main à LiveKit sur la session audio (les lives en ont besoin).
+  void _releaseCallkitAudio() {
+    if (!_callkitAudio) return;
+    _callkitAudio = false;
+    _callkitAudioTimer?.cancel();
+    callkitAudioActive.removeListener(_onCallkitAudioChanged);
+    unawaited(
+      Future<void>(() async {
+        await AudioManager.instance.setEngineAvailability(
+          AudioEngineAvailability.defaultAvailability,
+        );
+        await AudioManager.instance.setAudioSessionManagementMode(
+          AudioSessionManagementMode.automatic,
+        );
+      }).catchError((Object _) {}),
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // État de la communication
+  // ---------------------------------------------------------------------
+
+  /// L'autre est dans la salle : on bascule l'UI en « actif ».
   void _markConnected() {
     if (_closing) return;
     _ringTimer?.cancel();
+    _connectTimer?.cancel();
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
-    _iceRestarts = 0;
 
     final wasActive = phase.value == CallScreenPhase.active;
     // Référence du chrono figée à la première connexion : une reconnexion
     // ne remet pas la durée à zéro (WhatsApp continue de compter pendant la
     // coupure).
-    _connectedAt ??= call.value?.answeredAt ?? DateTime.now();
+    _connectedAt ??=
+        (_isInvitee ? null : call.value?.answeredAt) ?? DateTime.now();
     phase.value = CallScreenPhase.active;
     errorMessage.value = null;
     if (wasActive) return;
 
     _startDurationTimer();
     if (_incoming) unawaited(markCallkitConnected(_callId));
-    unawaited(Helper.setSpeakerphoneOn(isSpeakerOn.value));
   }
 
-  /// Le flux média s'est interrompu. Tant que le délai de grâce
-  /// [_reconnectGrace] n'est pas écoulé on garde l'appel ouvert — et si le
-  /// chemin ICE a franchement échoué, l'appelant en reconstruit un (ICE
-  /// restart). C'est ce qui évite qu'un simple changement de réseau
-  /// raccroche brutalement.
-  void _onMediaLost({required bool attemptRestart}) {
+  /// Le média s'est interrompu. Tant que le délai de grâce [_reconnectGrace]
+  /// n'est pas écoulé on garde l'appel ouvert : LiveKit se reconnecte seul,
+  /// ou [_recover] repart avec un jeton neuf. C'est ce qui évite qu'un
+  /// simple changement de réseau raccroche brutalement.
+  void _onMediaLost() {
     if (_closing) return;
     // Rien à sauver tant que la communication n'a jamais été établie : la
     // sonnerie a son propre délai d'expiration ([_startRingTimeout]).
-    if (!_wasAnswered) {
-      if (attemptRestart) {
-        errorMessage.value =
-            'Connexion audio impossible entre les deux appareils — réseau '
-            'trop restrictif, un serveur TURN opérationnel est nécessaire.';
-        endCall();
-      }
-      return;
-    }
+    if (!_wasAnswered) return;
 
     if (phase.value != CallScreenPhase.reconnecting) {
       phase.value = CallScreenPhase.reconnecting;
     }
-
     _reconnectTimer ??= Timer(_reconnectGrace, () {
       if (_closing || phase.value == CallScreenPhase.active) return;
-      // Un appel décroché dont le média ne s'est jamais établi n'est pas une
-      // « connexion perdue » : c'est un TURN manquant ou injoignable, et le
-      // diagnostic n'est pas le même.
-      errorMessage.value = wasEverConnected
-          ? 'Connexion perdue.'
-          : 'Connexion audio impossible entre les deux appareils — réseau '
-                'trop restrictif, un serveur TURN opérationnel est nécessaire.';
+      errorMessage.value = 'Connexion perdue.';
       endCall();
     });
-
-    if (attemptRestart) unawaited(_restartIce());
-  }
-
-  /// Reconstruit le chemin ICE sans interrompre la session : l'appelant
-  /// réémet une offre marquée `iceRestart`, l'appelé y répond
-  /// (voir [_watchCallDoc]). Le statut Firestore reste `accepted`.
-  Future<void> _restartIce() async {
-    // Seul l'appelant réémet une offre : si les deux côtés renégociaient en
-    // même temps, on tomberait en « glare » (collision d'offres) et la
-    // session serait à refaire entièrement.
-    if (_incoming || _closing || _renegotiating) return;
-    if (_iceRestarts >= _maxIceRestarts) return;
-    final pc = _pc;
-    if (pc == null) return;
-
-    _renegotiating = true;
-    _iceRestarts++;
-    try {
-      developer.log('ICE restart #$_iceRestarts', name: 'CallController');
-      final offer = await pc.createOffer({'iceRestart': true});
-      await pc.setLocalDescription(offer);
-      await _calls.setRenegotiationOffer(_callId, {
-        'sdp': offer.sdp,
-        'type': offer.type,
-      });
-    } on Object catch (e) {
-      developer.log('ICE restart échoué', name: 'CallController', error: e);
-    } finally {
-      _renegotiating = false;
-    }
-  }
-
-  /// Côté appelé : l'appelant a réémis une offre (ICE restart). On y répond
-  /// sur la PeerConnection existante — les pistes locales restent en place.
-  Future<void> _answerRenegotiation(Map<String, dynamic> offer) async {
-    if (_closing || _renegotiating) return;
-    final pc = _pc;
-    if (pc == null) return;
-
-    _renegotiating = true;
-    try {
-      developer.log('réponse à un ICE restart', name: 'CallController');
-      await _applyRemoteDescription(offer);
-      final answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      await _calls.setRenegotiationAnswer(_callId, {
-        'sdp': answer.sdp,
-        'type': answer.type,
-      });
-    } on Object catch (e) {
-      developer.log('renégociation échouée', name: 'CallController', error: e);
-    } finally {
-      _renegotiating = false;
-    }
-  }
-
-  Future<void> _applyRemoteDescription(Map<String, dynamic> description) async {
-    final sdp = description['sdp'] as String?;
-    if (sdp == null) return;
-    await _pc!.setRemoteDescription(
-      RTCSessionDescription(sdp, description['type'] as String),
-    );
-    _appliedRemoteSdp = sdp;
-    _remoteDescriptionSet = true;
-  }
-
-  Future<void> _flushPendingCandidates() async {
-    if (_pendingRemoteCandidates.isEmpty) return;
-    final pending = List<RTCIceCandidate>.from(_pendingRemoteCandidates);
-    _pendingRemoteCandidates.clear();
-    for (final candidate in pending) {
-      await _pc?.addCandidate(candidate);
-    }
-  }
-
-  void _onRemoteCandidate(Map<String, dynamic> data) {
-    final candidate = RTCIceCandidate(
-      data['candidate'] as String,
-      data['sdpMid'] as String?,
-      data['sdpMLineIndex'] as int?,
-    );
-    if (_remoteDescriptionSet) {
-      _pc?.addCandidate(candidate);
-    } else {
-      _pendingRemoteCandidates.add(candidate);
-    }
   }
 
   void _watchCallDoc() {
     _callSub?.cancel();
-    _callSub = _calls.watchCall(_callId).listen((c) async {
+    _callSub = _calls.watchCall(_callId).listen((c) {
       if (c == null || _closing) return;
       call.value = c;
 
       // La sonnerie a été décrochée : le délai d'expiration « appel manqué »
-      // n'a plus lieu d'être, même si ICE met du temps à s'établir.
+      // n'a plus lieu d'être.
       if (c.status != CallStatus.ringing) _ringTimer?.cancel();
 
-      if (_pc != null && !_closing) {
-        if (_incoming) {
-          // Appelé : une offre dont le SDP a changé après le décrochage est
-          // une renégociation (ICE restart) initiée par l'appelant.
-          final offer = c.offer;
-          if (c.answeredAt != null &&
-              offer != null &&
-              offer['sdp'] != _appliedRemoteSdp) {
-            await _answerRenegotiation(offer);
-          }
+      // Côté appelant : le décroché arrive parfois après l'entrée de
+      // l'appelé dans la salle.
+      _refreshTiles();
+
+      if (c.status == CallStatus.accepted && (!_incoming || _answeredByMe)) {
+        if (_anyonePresent) {
+          _markConnected();
+        } else if (c.isGroup) {
+          _startAloneTimeout();
         } else {
-          // Appelant : applique l'answer, initiale comme renégociée.
-          final answer = c.answer;
-          if (answer != null && answer['sdp'] != _appliedRemoteSdp) {
-            await _applyRemoteDescription(answer);
-            await _flushPendingCandidates();
-          }
+          _startConnectTimeout();
         }
+      }
+
+      // Invitation refusée ou expirée depuis un autre appareil (ou l'UI
+      // native) : cet écran qui sonne n'a plus lieu d'être.
+      final me = c.members[myUid];
+      if (c.isGroup &&
+          me != null &&
+          !me.isActive &&
+          phase.value == CallScreenPhase.ringingIncoming) {
+        _closing = true;
+        _teardown();
+        phase.value = CallScreenPhase.ended;
+        if (Get.currentRoute == AppRoutes.call) Get.back();
+        return;
       }
 
       if (c.status == CallStatus.declined ||
           c.status == CallStatus.ended ||
           c.status == CallStatus.missed ||
           c.status == CallStatus.busy) {
-        if (!_closing) {
-          _closing = true;
-          _teardown();
-          phase.value = CallScreenPhase.ended;
-          if (Get.currentRoute == AppRoutes.call) Get.back();
-        }
+        _closing = true;
+        _teardown();
+        phase.value = CallScreenPhase.ended;
+        if (Get.currentRoute == AppRoutes.call) Get.back();
       }
+    });
+  }
+
+  void _startConnectTimeout() {
+    if (_connectedAt != null || _connectTimer != null) return;
+    _connectTimer = Timer(_connectTimeout, () {
+      if (_closing || _connectedAt != null) return;
+      _failAndEnd(
+        'La communication n’a pas pu s’établir. Vérifiez votre connexion '
+        'et rappelez.',
+      );
     });
   }
 
@@ -716,30 +905,120 @@ class CallController extends GetxController {
     elapsedSeconds.value = seconds < 0 ? 0 : seconds;
   }
 
-  void toggleMute() {
-    isMuted.value = !isMuted.value;
-    for (final t in _localStream?.getAudioTracks() ?? const []) {
-      t.enabled = !isMuted.value;
+  // ---------------------------------------------------------------------
+  // Commandes
+  // ---------------------------------------------------------------------
+
+  Future<void> toggleMute() async {
+    final muted = !isMuted.value;
+    isMuted.value = muted;
+    try {
+      await _room?.localParticipant?.setMicrophoneEnabled(!muted);
+    } on Object catch (_) {
+      isMuted.value = !muted;
     }
   }
 
-  void toggleCamera() {
-    isCameraOff.value = !isCameraOff.value;
-    for (final t in _localStream?.getVideoTracks() ?? const []) {
-      t.enabled = !isCameraOff.value;
+  Future<void> toggleCamera() async {
+    final off = !isCameraOff.value;
+    isCameraOff.value = off;
+    final cam = localVideo.value;
+    if (cam == null) return;
+    try {
+      if (off) {
+        await cam.mute(stopOnMute: false);
+      } else {
+        await cam.unmute(stopOnMute: false);
+      }
+    } on Object catch (_) {
+      isCameraOff.value = !off;
     }
   }
 
   Future<void> toggleSpeaker() async {
-    isSpeakerOn.value = !isSpeakerOn.value;
-    await Helper.setSpeakerphoneOn(isSpeakerOn.value);
+    final on = !isSpeakerOn.value;
+    isSpeakerOn.value = on;
+    try {
+      await AudioManager.instance.setSpeakerOutputPreferred(on);
+    } on Object catch (_) {
+      isSpeakerOn.value = !on;
+    }
   }
 
   Future<void> switchCamera() async {
-    final track = _localStream?.getVideoTracks().firstOrNull;
-    if (track == null) return;
-    await Helper.switchCamera(track);
-    isFrontCamera.value = !isFrontCamera.value;
+    final cam = localVideo.value;
+    if (cam == null) return;
+    final toFront = !isFrontCamera.value;
+    try {
+      await cam.setCameraPosition(
+        toFront ? CameraPosition.front : CameraPosition.back,
+      );
+      isFrontCamera.value = toFront;
+    } on Object catch (_) {}
+  }
+
+  // ---------------------------------------------------------------------
+  // Appel de groupe
+  // ---------------------------------------------------------------------
+
+  /// Personnes qu'on peut ajouter : celles de nos conversations récentes,
+  /// hors membres déjà présents ou qui sonnent.
+  Future<List<InviteCandidate>> inviteCandidates() async {
+    final c = call.value;
+    // Appel à deux : l'appelant et l'appelé sont là par définition. En
+    // groupe, ceux qui sont partis peuvent être rappelés.
+    final taken = <String>{
+      myUid,
+      if (c != null && c.isGroup)
+        ...c.activeMembers.map((m) => m.uid)
+      else if (c != null) ...[c.callerUid, c.calleeUid],
+    };
+    final conversations = await Get.find<ChatService>().recentConversations(
+      myUid,
+      limit: 40,
+    );
+    final uids = <String>[];
+    for (final conv in conversations) {
+      final other = conv.otherUid(myUid);
+      if (other.isNotEmpty && !taken.contains(other) && !uids.contains(other)) {
+        uids.add(other);
+      }
+    }
+    final users = FirebaseFirestore.instance.collection('users');
+    final profiles = await Future.wait(
+      uids.map((uid) async {
+        try {
+          final doc = await users.doc(uid).get();
+          final data = doc.data();
+          if (data == null) return null;
+          final name = (data['displayName'] as String?)?.trim();
+          final photo = data['photoUrl'] as String?;
+          return InviteCandidate(
+            uid: uid,
+            name: name == null || name.isEmpty ? 'Habitant' : name,
+            photoUrl: photo != null && photo.startsWith('http') ? photo : null,
+          );
+        } on FirebaseException catch (_) {
+          return null;
+        }
+      }),
+    );
+    return profiles.whereType<InviteCandidate>().toList();
+  }
+
+  /// Fait sonner le téléphone de [candidate] ; s'il décroche, il rejoint
+  /// l'appel.
+  Future<void> invite(InviteCandidate candidate) async {
+    if (inviting.value || !canInvite) return;
+    inviting.value = true;
+    try {
+      final name = await _calls.invite(_callId, candidate.uid);
+      Get.snackbar('Appel de groupe', 'On appelle $name…');
+    } on CallException catch (e) {
+      Get.snackbar('Impossible d’ajouter ${candidate.name}', e.message);
+    } finally {
+      inviting.value = false;
+    }
   }
 
   Future<void> endCall() async {
@@ -748,30 +1027,67 @@ class CallController extends GetxController {
     // `_callId` peut encore être vide si l'utilisateur raccroche pendant
     // la fenêtre d'attente de permission micro/caméra, avant même que
     // `createCall` ait eu le temps de créer le document Firestore.
-    if (_callId.isNotEmpty) await _calls.updateStatus(_callId, _terminalStatus);
+    if (_callId.isNotEmpty) await _calls.leave(_callId, _terminalStatus);
     _teardown();
     phase.value = CallScreenPhase.ended;
-    Get.back();
+    if (Get.currentRoute == AppRoutes.call) Get.back();
   }
 
+  /// Panne pendant la mise en relation : message affiché, appel clos.
+  void _failAndEnd(String message, {CallStatus? status}) {
+    if (_closing) return;
+    errorMessage.value = message;
+    phase.value = CallScreenPhase.ended;
+    _closing = true;
+    if (_callId.isNotEmpty) {
+      _calls.leave(_callId, status ?? _terminalStatus);
+    }
+    _teardown();
+  }
+
+  static String _describe(Object e) =>
+      e is CallException ? e.message : e.toString();
+
   void _teardown() {
+    _aloneTimer?.cancel();
     _ringTimer?.cancel();
+    _connectTimer?.cancel();
+    _callkitAudioTimer?.cancel();
     _durationTimer?.cancel();
     _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     _callSub?.cancel();
-    _remoteCandidatesSub?.cancel();
-    for (final t in _localStream?.getTracks() ?? const []) {
-      t.stop();
-    }
-    _localStream?.dispose();
-    _pc?.close();
-    _pc = null;
+    unawaited(_disposeRoom());
+    final cam = localVideo.value;
+    localVideo.value = null;
+    remoteVideo.value = null;
+    unawaited(
+      Future<void>(() async {
+        await cam?.stop();
+        await cam?.dispose();
+      }).catchError((Object _) {}),
+    );
+    _releaseCallkitAudio();
     if (_callId.isNotEmpty) {
       _calls.clearActiveCall(_callId);
       // Point de passage unique de toutes les fins d'appel (raccroché,
       // refusé, distant terminé, erreur, fermeture d'écran) : on retire
       // aussi l'UI d'appel native si elle traîne encore.
       dismissCallkit(_callId);
+    }
+  }
+
+  Future<void> _disposeRoom() async {
+    final room = _room;
+    _room = null;
+    final events = _roomEvents;
+    _roomEvents = null;
+    await events?.dispose();
+    if (room != null) {
+      try {
+        await room.disconnect();
+        await room.dispose();
+      } on Object catch (_) {}
     }
   }
 
@@ -786,8 +1102,4 @@ class CallController extends GetxController {
     if (h == 0) return '$m:$ss';
     return '$h:${m.toString().padLeft(2, '0')}:$ss';
   }
-}
-
-extension<T> on List<T> {
-  T? get firstOrNull => isEmpty ? null : first;
 }

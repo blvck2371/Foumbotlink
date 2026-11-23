@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:get/get.dart';
 
@@ -19,6 +20,18 @@ class UserProfileService extends GetxService {
   final _storage = FirebaseStorage.instance;
 
   final profile = Rxn<UserProfile>();
+
+  /// Coordonnées de connexion, gardées le temps que le profil soit créé :
+  /// une inscription ne crée plus le profil tout de suite (ProfileGate).
+  String? signInEmail;
+  String? signInPhone;
+
+  void rememberSignInContact({String? email, String? phoneNumber}) {
+    if (email != null && email.isNotEmpty) signInEmail = email;
+    if (phoneNumber != null && phoneNumber.isNotEmpty) {
+      signInPhone = phoneNumber;
+    }
+  }
 
   /// `true` tant que l'état du profil de l'utilisateur courant n'est pas
   /// encore connu (juste après une connexion, ou au démarrage pour une
@@ -394,6 +407,7 @@ class UserProfileService extends GetxService {
     );
     final url = await ref.getDownloadURL();
     await _usersRef.doc(uid).set({'photoUrl': url}, SetOptions(merge: true));
+    _syncCopies();
     return url;
   }
 
@@ -406,5 +420,43 @@ class UserProfileService extends GetxService {
       // Déjà absente ou accès refusé : on efface quand même l'URL côté profil.
     }
     await _usersRef.doc(uid).update({'photoUrl': FieldValue.delete()});
+    _syncCopies();
+  }
+
+  /// Change le nom affiché. Rend un message d'erreur lisible, ou `null`.
+  Future<String?> updateDisplayName(String raw) async {
+    final name = raw.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (name.length < 2) return 'Ce nom est trop court.';
+    if (name.length > 60) return 'Ce nom est trop long (60 caractères au plus).';
+    if (name == profile.value?.displayName) return null;
+    try {
+      await _usersRef.doc(_auth.uid).update({'displayName': name});
+    } on FirebaseException catch (e) {
+      return e.message ?? 'Enregistrement impossible.';
+    }
+    _syncCopies();
+    return null;
+  }
+
+  /// Recopie nom et photo sur les publications, commentaires, statuts,
+  /// annonces et le code de suivi des démarches du compte (Cloud Function `syncProfileCopies`). En arrière-
+  /// plan : un échec n'annule pas la modification, les anciennes copies
+  /// gardent juste l'ancien nom.
+  void _syncCopies() {
+    unawaited(
+      FirebaseFunctions.instance
+          .httpsCallable(
+            'syncProfileCopies',
+            options: HttpsCallableOptions(timeout: const Duration(minutes: 5)),
+          )
+          .call<Object?>()
+          .then<void>((_) {}, onError: (Object e) {
+            developer.log(
+              'Recopie du profil',
+              name: 'UserProfileService',
+              error: e,
+            );
+          }),
+    );
   }
 }

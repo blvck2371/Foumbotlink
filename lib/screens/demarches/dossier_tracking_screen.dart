@@ -529,7 +529,7 @@ class _SignedOutNotice extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             ElevatedButton(
-              onPressed: () => Get.toNamed(AppRoutes.auth),
+              onPressed: Get.find<DossierController>().signInAndLoad,
               child: const Text('Se connecter'),
             ),
           ],

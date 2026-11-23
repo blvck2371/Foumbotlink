@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:livekit_client/livekit_client.dart' hide ConnectionState;
 
 import '../../controllers/call_controller.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/user_avatar.dart';
 
-/// Écran plein cadre pour un appel WebRTC — sonnerie entrante/sortante et
+/// Écran plein cadre pour un appel — sonnerie entrante/sortante et
 /// appel en cours, audio ou vidéo. Volontairement toujours en thème sombre
 /// (comme la quasi-totalité des UI d'appel) quel que soit le thème choisi
 /// dans l'app, pour un rendu immersif et lisible en plein soleil comme en
@@ -33,6 +34,9 @@ class CallScreen extends GetView<CallController> {
         final inCall =
             phase == CallScreenPhase.active ||
             phase == CallScreenPhase.reconnecting;
+        if (inCall && controller.isGroup) {
+          return _GroupCallBody(controller: controller);
+        }
         if (inCall && controller.isVideoCall) {
           return _VideoCallBody(controller: controller);
         }
@@ -153,11 +157,26 @@ class _VideoCallBody extends StatelessWidget {
     return Stack(
       children: [
         Positioned.fill(
-          child: RTCVideoView(
-            controller.remoteRenderer,
-            objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-            mirror: false,
-          ),
+          child: Obx(() {
+            final track = controller.remoteVideo.value;
+            // Pas encore d'image, ou caméra coupée en face : fond d'appel
+            // et initiale plutôt qu'un écran noir figé.
+            if (track == null || controller.remoteCameraOff.value) {
+              final name = controller.otherProfile.value?.displayName ?? '';
+              return Stack(
+                children: [
+                  Positioned.fill(child: _CallBackground()),
+                  Center(child: _Avatar(name: name)),
+                ],
+              );
+            }
+            return VideoTrackRenderer(
+              track,
+              key: ValueKey(track.sid),
+              fit: VideoViewFit.cover,
+              mirrorMode: VideoViewMirrorMode.off,
+            );
+          }),
         ),
         Positioned(
           top: MediaQuery.of(context).padding.top + 16,
@@ -176,11 +195,16 @@ class _VideoCallBody extends StatelessWidget {
                     color: AppColors.white.withValues(alpha: 0.2),
                   ),
                 ),
-                child: RTCVideoView(
-                  controller.localRenderer,
-                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                  mirror: controller.isFrontCamera.value,
-                ),
+                child: switch (controller.localVideo.value) {
+                  final track? => VideoTrackRenderer(
+                    track,
+                    fit: VideoViewFit.cover,
+                    mirrorMode: controller.isFrontCamera.value
+                        ? VideoViewMirrorMode.mirror
+                        : VideoViewMirrorMode.off,
+                  ),
+                  null => const ColoredBox(color: AppColors.black),
+                },
               ),
             ),
           ),
@@ -305,6 +329,10 @@ class _ControlPanel extends StatelessWidget {
         );
       }
 
+      final canInvite = controller.canInvite;
+      // Cinq boutons en vidéo avec « Ajouter » : on resserre pour tenir sur
+      // les petits écrans.
+      final gap = canInvite && controller.isVideoCall ? 12.0 : 20.0;
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -318,7 +346,7 @@ class _ControlPanel extends StatelessWidget {
                 active: controller.isMuted.value,
                 onTap: controller.toggleMute,
               ),
-              const SizedBox(width: 20),
+              SizedBox(width: gap),
               if (controller.isVideoCall) ...[
                 _CallButton(
                   icon: controller.isCameraOff.value
@@ -327,7 +355,7 @@ class _ControlPanel extends StatelessWidget {
                   active: controller.isCameraOff.value,
                   onTap: controller.toggleCamera,
                 ),
-                const SizedBox(width: 20),
+                SizedBox(width: gap),
                 _CallButton(
                   icon: Icons.cameraswitch_rounded,
                   active: false,
@@ -341,6 +369,14 @@ class _ControlPanel extends StatelessWidget {
                   active: controller.isSpeakerOn.value,
                   onTap: controller.toggleSpeaker,
                 ),
+              if (canInvite) ...[
+                SizedBox(width: gap),
+                _CallButton(
+                  icon: Icons.person_add_alt_1_rounded,
+                  active: false,
+                  onTap: () => _showInviteSheet(controller),
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 28),
@@ -481,4 +517,340 @@ class _HangUpButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Appel de groupe : une vignette par personne, la nôtre en premier.
+class _GroupCallBody extends StatelessWidget {
+  const _GroupCallBody({required this.controller});
+  final CallController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned.fill(child: _CallBackground()),
+        SafeArea(
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+              Obx(() {
+                final present =
+                    controller.tiles.where((t) => !t.ringing).length + 1;
+                final reconnecting =
+                    controller.phase.value == CallScreenPhase.reconnecting;
+                return Text(
+                  reconnecting
+                      ? 'Reconnexion…'
+                      : 'Appel de groupe · $present participant'
+                            '${present > 1 ? 's' : ''} · '
+                            '${controller.formattedDuration}',
+                  style: GoogleFonts.manrope(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.whiteMuted,
+                  ),
+                );
+              }),
+              const SizedBox(height: 12),
+              Expanded(
+                child: Obx(() {
+                  final others = controller.tiles.toList();
+                  final count = others.length + 1;
+                  return LayoutBuilder(
+                    builder: (context, box) {
+                      final columns = count <= 2 ? 1 : 2;
+                      final rows = (count / columns).ceil();
+                      const spacing = 8.0;
+                      final width =
+                          (box.maxWidth - 16 - spacing * (columns - 1)) /
+                          columns;
+                      final height =
+                          (box.maxHeight - spacing * (rows - 1)) / rows;
+                      return GridView.count(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        crossAxisCount: columns,
+                        mainAxisSpacing: spacing,
+                        crossAxisSpacing: spacing,
+                        // Tout tient à l'écran jusqu'à 8 vignettes ; au-delà
+                        // de la hauteur minimale, la grille défile.
+                        childAspectRatio: width / height.clamp(120, 2000),
+                        children: [
+                          _SelfTile(controller: controller),
+                          for (final t in others) _RemoteTile(tile: t),
+                        ],
+                      );
+                    },
+                  );
+                }),
+              ),
+              Obx(() {
+                final error = controller.errorMessage.value;
+                if (error == null) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(32, 12, 32, 0),
+                  child: Text(
+                    error,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.manrope(
+                      fontSize: 13,
+                      color: AppColors.orangeSoft,
+                    ),
+                  ),
+                );
+              }),
+              const SizedBox(height: 20),
+              _ControlPanel(controller: controller),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SelfTile extends StatelessWidget {
+  const _SelfTile({required this.controller});
+  final CallController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      final cam = controller.localVideo.value;
+      final showVideo = cam != null && !controller.isCameraOff.value;
+      return _TileFrame(
+        name: 'Vous',
+        muted: controller.isMuted.value,
+        child: showVideo
+            ? VideoTrackRenderer(
+                cam,
+                fit: VideoViewFit.cover,
+                mirrorMode: controller.isFrontCamera.value
+                    ? VideoViewMirrorMode.mirror
+                    : VideoViewMirrorMode.off,
+              )
+            : const _TileAvatar(name: 'Vous'),
+      );
+    });
+  }
+}
+
+class _RemoteTile extends StatelessWidget {
+  const _RemoteTile({required this.tile});
+  final CallTile tile;
+
+  @override
+  Widget build(BuildContext context) {
+    final video = tile.video;
+    return Opacity(
+      opacity: tile.ringing ? 0.6 : 1,
+      child: _TileFrame(
+        name: tile.ringing ? '${tile.name} · appel…' : tile.name,
+        speaking: tile.speaking,
+        child: video != null && !tile.cameraOff
+            ? VideoTrackRenderer(
+                video,
+                key: ValueKey(video.sid),
+                fit: VideoViewFit.cover,
+                mirrorMode: VideoViewMirrorMode.off,
+              )
+            : _TileAvatar(name: tile.name),
+      ),
+    );
+  }
+}
+
+class _TileFrame extends StatelessWidget {
+  const _TileFrame({
+    required this.name,
+    required this.child,
+    this.speaking = false,
+    this.muted = false,
+  });
+
+  final String name;
+  final Widget child;
+  final bool speaking;
+  final bool muted;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: AppColors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(18),
+        // Qui parle : liseré orange, comme le reste de l'app.
+        border: Border.all(
+          color: speaking
+              ? AppColors.orange
+              : AppColors.white.withValues(alpha: 0.08),
+          width: speaking ? 3 : 1,
+        ),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          child,
+          Positioned(
+            left: 10,
+            right: 10,
+            bottom: 8,
+            child: Row(
+              children: [
+                if (muted) ...[
+                  const Icon(
+                    Icons.mic_off_rounded,
+                    size: 14,
+                    color: AppColors.white,
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                Expanded(
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.manrope(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.white,
+                      shadows: const [
+                        Shadow(color: Colors.black87, blurRadius: 8),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TileAvatar extends StatelessWidget {
+  const _TileAvatar({required this.name});
+  final String name;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: UserAvatar(
+        name: name,
+        radius: 32,
+        backgroundColor: AppColors.orange.withValues(alpha: 0.85),
+        foregroundColor: AppColors.white,
+      ),
+    );
+  }
+}
+
+/// Choix de la personne à ajouter, parmi les conversations récentes.
+void _showInviteSheet(CallController controller) {
+  Get.bottomSheet(
+    Container(
+      constraints: BoxConstraints(maxHeight: Get.height * 0.7),
+      decoration: const BoxDecoration(
+        color: AppColors.blackElevated,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.whiteMuted.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Ajouter à l’appel',
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: AppColors.white,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Son téléphone va sonner.',
+              style: GoogleFonts.manrope(
+                fontSize: 13,
+                color: AppColors.whiteMuted,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Flexible(
+              child: FutureBuilder<List<InviteCandidate>>(
+                future: controller.inviteCandidates(),
+                builder: (context, snap) {
+                  if (snap.connectionState != ConnectionState.done) {
+                    return const Padding(
+                      padding: EdgeInsets.all(32),
+                      child: CircularProgressIndicator(
+                        color: AppColors.orange,
+                      ),
+                    );
+                  }
+                  final people = snap.data ?? const <InviteCandidate>[];
+                  if (snap.hasError || people.isEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Text(
+                        snap.hasError
+                            ? 'Impossible de charger vos contacts.'
+                            : 'Aucune autre conversation à ajouter.',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.manrope(
+                          color: AppColors.whiteMuted,
+                        ),
+                      ),
+                    );
+                  }
+                  return ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: people.length,
+                    itemBuilder: (context, i) {
+                      final p = people[i];
+                      return ListTile(
+                        leading: UserAvatar(
+                          name: p.name,
+                          photoUrl: p.photoUrl,
+                          radius: 22,
+                        ),
+                        title: Text(
+                          p.name,
+                          style: GoogleFonts.manrope(
+                            color: AppColors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        trailing: const Icon(
+                          Icons.add_call,
+                          color: AppColors.orange,
+                        ),
+                        onTap: () {
+                          Get.back();
+                          controller.invite(p);
+                        },
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+    isScrollControlled: true,
+  );
 }

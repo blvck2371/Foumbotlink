@@ -23,6 +23,13 @@ enum AppNotificationType {
   /// Un dossier de modération est devenu prioritaire. Réservée aux
   /// administrateurs, émise par `onReportCreated`.
   moderation,
+
+  /// Un compte suivi passe en live. Émise par `onLiveSessionCreated`.
+  live,
+
+  /// Décision sur une demande de certification (functions/
+  /// certification.js).
+  certification,
 }
 
 /// Document `users/{uid}/notifications/{id}` — flux personnel, jamais

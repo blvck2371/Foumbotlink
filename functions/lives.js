@@ -499,3 +499,6 @@ module.exports.setLiveKitFactory = (factory) => {
   liveKitFactory = factory;
 };
 module.exports.RTDB_URL = RTDB_URL;
+// Partagés avec les appels (calls.js), qui passent aussi par LiveKit.
+module.exports.LIVEKIT_SECRETS = LIVEKIT_SECRETS;
+module.exports.liveKit = () => liveKitFactory();

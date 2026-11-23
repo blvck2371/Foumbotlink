@@ -81,8 +81,23 @@ Future<void> _writeCallStatusFromBackground(
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-    if (FirebaseAuth.instance.currentUser == null) return;
-    await FirebaseFirestore.instance.collection('calls').doc(callId).update({
+    final me = FirebaseAuth.instance.currentUser?.uid;
+    if (me == null) return;
+    final ref = FirebaseFirestore.instance.collection('calls').doc(callId);
+    final data = (await ref.get()).data();
+    if (data == null) return;
+    final members = data['members'];
+    if (data['group'] == true && members is Map && members.containsKey(me)) {
+      // Invitation à un appel de groupe : on ne refuse que pour soi, les
+      // autres continuent (même logique que CallService.leave).
+      await ref.update({
+        'members.$me.state': status,
+        'members.$me.at': FieldValue.serverTimestamp(),
+        'ringingUids': FieldValue.arrayRemove([me]),
+      });
+      return;
+    }
+    await ref.update({
       'status': status,
       'endedAt': FieldValue.serverTimestamp(),
     });

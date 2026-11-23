@@ -26,6 +26,7 @@ import '../services/user_profile_service.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/report_sheet.dart';
+import '../services/profile_gate.dart';
 
 class HomeController extends GetxController {
   final unreadNotifications = 0.obs;
@@ -114,7 +115,8 @@ class HomeController extends GetxController {
   Future<bool> _ensureAuthenticated() async {
     if (_auth.isSignedIn) await _profiles.waitUntilLoaded();
     if (isAuthenticated) return true;
-    await Get.toNamed(AppRoutes.auth);
+    // Connexion si besoin, puis profil si le compte n'en a pas encore.
+    await ProfileGate.ensure(reason: 'Pour participer');
     // `onInit` ne branche notifications et liste de blocage que si la
     // session existait déjà au lancement : après une connexion depuis le
     // fil, il faut les brancher ici, sans quoi un blocage resterait sans
@@ -1159,19 +1161,15 @@ class HomeController extends GetxController {
       return;
     }
     if (feature.id == AppFeatureId.communaute) {
-      if (!_auth.isSignedIn) {
-        Get.toNamed(AppRoutes.auth);
-        return;
-      }
-      Get.toNamed(AppRoutes.community);
+      ProfileGate.ensure(reason: 'Pour rejoindre la communauté').then((ok) {
+        if (ok) Get.toNamed(AppRoutes.community);
+      });
       return;
     }
     if (feature.id == AppFeatureId.messages) {
-      if (!_auth.isSignedIn) {
-        Get.toNamed(AppRoutes.auth);
-        return;
-      }
-      Get.toNamed(AppRoutes.conversations);
+      ProfileGate.ensure(reason: 'Pour écrire ou appeler').then((ok) {
+        if (ok) Get.toNamed(AppRoutes.conversations);
+      });
       return;
     }
     if (feature.id == AppFeatureId.lives) {
@@ -1201,11 +1199,10 @@ class HomeController extends GetxController {
       return;
     }
     if (feature.id == AppFeatureId.profil) {
-      if (_auth.isSignedIn) {
-        Get.toNamed(AppRoutes.userProfile, arguments: _auth.uid);
-      } else {
-        Get.toNamed(AppRoutes.auth);
-      }
+      // Un compte sans profil n'a rien à afficher : on le complète d'abord.
+      ProfileGate.ensure(reason: 'Pour afficher votre profil').then((ok) {
+        if (ok) Get.toNamed(AppRoutes.userProfile, arguments: _auth.uid);
+      });
       return;
     }
     Get.toNamed(AppRoutes.feature, arguments: feature);
@@ -1214,9 +1211,9 @@ class HomeController extends GetxController {
   /// Menu Lives — depuis l'icône de la barre du haut ou le tiroir. Les
   /// lives demandent un compte : chaque spectateur est identifié (blocages,
   /// exclusions, signalements).
-  void openLives() {
-    if (!_auth.isSignedIn) {
-      Get.toNamed(AppRoutes.auth);
+  Future<void> openLives() async {
+    // Le serveur refuse l'entrée d'un live sans profil : on le demande ici.
+    if (!await ProfileGate.ensure(reason: 'Pour regarder ou lancer un live')) {
       return;
     }
     Get.toNamed(AppRoutes.lives);

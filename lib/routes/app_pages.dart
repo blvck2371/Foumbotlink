@@ -16,8 +16,10 @@ import '../bindings/notifications_binding.dart';
 import '../bindings/saved_posts_binding.dart';
 import '../bindings/onboarding_binding.dart';
 import '../bindings/profile_binding.dart';
+import '../bindings/edit_profile_binding.dart';
 import '../bindings/splash_binding.dart';
 import '../screens/auth/auth_screen.dart';
+import '../screens/profile/edit_profile_screen.dart';
 import '../screens/call/call_screen.dart';
 import '../screens/chat/chat_screen.dart';
 import '../screens/chat/conversations_screen.dart';
@@ -159,6 +161,13 @@ class AppPages {
       name: AppRoutes.community,
       page: () => const CommunityScreen(),
       binding: CommunityBinding(),
+      transition: Transition.cupertino,
+      transitionDuration: const Duration(milliseconds: 320),
+    ),
+    GetPage(
+      name: AppRoutes.editProfile,
+      page: () => const EditProfileScreen(),
+      binding: EditProfileBinding(),
       transition: Transition.cupertino,
       transitionDuration: const Duration(milliseconds: 320),
     ),

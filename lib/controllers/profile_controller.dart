@@ -19,6 +19,7 @@ import '../services/user_profile_service.dart';
 import '../screens/status/status_composer_screen.dart';
 import '../widgets/confirm_dialog.dart';
 import '../widgets/report_sheet.dart';
+import '../services/profile_gate.dart';
 
 class ProfileController extends GetxController {
   final targetUid = ''.obs;
@@ -483,10 +484,10 @@ class ProfileController extends GetxController {
 
   Future<void> toggleFollow() async {
     if (isOwnProfile || isToggling.value) return;
-    if (!_auth.isSignedIn) {
-      await Get.toNamed(AppRoutes.auth);
-      if (!_auth.isSignedIn) return;
-      _watchFollowStatus(targetUid.value);
+    if (!_profiles.hasProfile) {
+      final wasSignedIn = _auth.isSignedIn;
+      if (!await ProfileGate.ensure(reason: 'Pour vous abonner')) return;
+      if (!wasSignedIn) _watchFollowStatus(targetUid.value);
     }
     // Pas d'abonnement entre deux comptes dont l'un a bloqué l'autre
     // (refusé par les règles) ; se désabonner reste toujours possible.

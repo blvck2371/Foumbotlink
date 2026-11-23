@@ -17,6 +17,7 @@ import '../services/moderation_service.dart';
 import '../services/saved_search_service.dart';
 import '../services/user_profile_service.dart';
 import '../widgets/report_sheet.dart';
+import '../services/profile_gate.dart';
 
 /// Ce que la grille montre. Trois listes bien distinctes plutôt qu'un
 /// empilement de booléens : la grille publique, ce que j'ai publié, ce
@@ -78,7 +79,7 @@ class MarketController extends GetxController {
   Future<bool> _ensureAuthenticated() async {
     if (_auth.isSignedIn) await _profiles.waitUntilLoaded();
     if (isAuthenticated) return true;
-    await Get.toNamed(AppRoutes.auth);
+    await ProfileGate.ensure(reason: 'Pour vendre ou contacter un vendeur');
     return isAuthenticated;
   }
 

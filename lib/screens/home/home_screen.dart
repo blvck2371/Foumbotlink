@@ -1160,11 +1160,11 @@ class _SignOutButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auth = Get.find<AuthService>();
-    final profiles = Get.find<UserProfileService>();
     final home = Get.find<HomeController>();
 
     return Obx(() {
-      if (!auth.isSignedIn || profiles.profile.value == null) {
+      // Un compte sans profil complété doit aussi pouvoir se déconnecter.
+      if (!auth.isSignedIn) {
         return const SizedBox.shrink();
       }
 
@@ -1407,6 +1407,7 @@ class _AccountSection extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
                 onTap: () {
                   Get.back();
+                  // Connecté sans profil : l'écran s'ouvre sur le profil.
                   Get.toNamed(AppRoutes.auth);
                 },
                 child: Row(
@@ -1415,7 +1416,9 @@ class _AccountSection extends StatelessWidget {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'Se connecter',
+                        auth.isSignedIn
+                            ? 'Compléter mon profil'
+                            : 'Se connecter',
                         style: GoogleFonts.manrope(
                           fontWeight: FontWeight.w700,
                           color: ink,

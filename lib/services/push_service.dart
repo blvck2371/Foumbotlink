@@ -28,8 +28,8 @@ import 'notification_router.dart';
 /// - à la réception d'un message `incoming_call` (premier plan ou
 ///   arrière-plan — l'app tuée passe par le handler de `main.dart`), lève
 ///   l'écran d'appel entrant CallKit ;
-/// - écoute les évènements CallKit : « Répondre » ouvre l'écran d'appel
-///   WebRTC existant, « Refuser » / expiration écrit le statut dans Firestore ;
+/// - écoute les évènements CallKit : « Répondre » ouvre l'écran d'appel,
+///   « Refuser » / expiration écrit le statut dans Firestore ;
 /// - `call_cancelled` (l'appelant a raccroché, réponse ailleurs) coupe la
 ///   sonnerie.
 ///
@@ -286,12 +286,14 @@ class PushService extends GetxService {
         case CallEventActionCallAccept(:final callKitParams):
           _onAccept(callKitParams);
         case CallEventActionCallDecline(:final callKitParams):
-          _calls.updateStatus(callKitParams.id, CallStatus.declined);
+          _calls.leave(callKitParams.id, CallStatus.declined);
           dismissCallkit(callKitParams.id);
         case CallEventActionCallEnded(:final callKitParams):
           _onCallkitEnded(callKitParams.id);
         case CallEventActionCallTimeout(:final id):
-          _calls.updateStatus(id, CallStatus.missed);
+          _calls.leave(id, CallStatus.missed);
+        case CallEventActionCallToggleAudioSession(:final isActive):
+          callkitAudioActive.value = isActive;
         case CallEventActionCallToggleMute(:final id, :final isMuted):
           // Micro coupé depuis l'UI système (écran verrouillé, CarPlay…) :
           // sans ce relais, l'icône de l'app et l'état réel de la piste
@@ -340,7 +342,7 @@ class PushService extends GetxService {
 
   /// « Raccrocher » depuis l'UI d'appel native (écran verrouillé, bandeau
   /// système, bouton du casque). Sans ce relais, le bouton coupait l'UI
-  /// CallKit mais laissait la session WebRTC — et le document Firestore —
+  /// CallKit mais laissait la salle LiveKit — et le document Firestore —
   /// bien vivants côté correspondant.
   void _onCallkitEnded(String callId) {
     if (callId.isEmpty) return;
@@ -355,7 +357,7 @@ class PushService extends GetxService {
     // Aucun écran d'appel ouvert (raccroché depuis l'écran verrouillé avant
     // que l'app ne soit revenue au premier plan) : on ferme quand même
     // l'appel côté signalisation.
-    _calls.updateStatus(callId, CallStatus.ended);
+    _calls.leave(callId, CallStatus.ended);
   }
 
   void _syncMute(String callId, bool muted) {

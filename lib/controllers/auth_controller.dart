@@ -62,6 +62,16 @@ class AuthController extends GetxController {
 
   final accountType = AccountType.personal.obs;
 
+  /// Écran ouvert par une action qui a besoin d'un profil (publier, lancer
+  /// un live, écrire…) — voir ProfileGate. Une inscription y enchaîne alors
+  /// sur le profil ; ouverte depuis « Se connecter », elle s'arrête au
+  /// compte créé : la personne est connectée, son profil lui sera demandé
+  /// à sa première publication.
+  bool requireProfile = false;
+
+  /// Motif affiché à l'étape du profil quand une action l'a demandé.
+  String? reason;
+
   String? _verificationId;
   String? _pendingEmail;
   String? _pendingPhone;
@@ -72,6 +82,11 @@ class AuthController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    final args = Get.arguments;
+    if (args is Map) {
+      requireProfile = args['requireProfile'] == true;
+      reason = args['reason'] as String?;
+    }
     _resumeExistingSessionIfNeeded();
   }
 
@@ -296,12 +311,27 @@ class AuthController extends GetxController {
     // Lecture directe (pas le listener réactif, plus lent à démarrer) :
     // on vient de se connecter, la réponse doit être immédiate et sûre.
     final hasProfile = await _profiles.ensureLoaded();
+    _pendingEmail = email;
+    _pendingPhone = phoneNumber;
+    // Coordonnées gardées pour la création du profil, même plus tard.
+    _profiles.rememberSignInContact(email: email, phoneNumber: phoneNumber);
     if (hasProfile) {
       Get.back();
       return;
     }
-    _pendingEmail = email;
-    _pendingPhone = phoneNumber;
+    if (!requireProfile) {
+      // Compte créé : la personne est connectée et peut parcourir l'app.
+      // Son nom lui sera demandé au moment de publier, d'écrire ou de
+      // lancer un live (ProfileGate).
+      Get.back();
+      Get.snackbar(
+        'Vous êtes connecté·e',
+        'Complétez votre profil quand vous voudrez publier, écrire ou '
+            'lancer un live.',
+        duration: const Duration(seconds: 4),
+      );
+      return;
+    }
     goTo(AuthStep.accountSetup);
   }
 
@@ -315,8 +345,8 @@ class AuthController extends GetxController {
     await _profiles.createProfile(
       accountType: accountType.value,
       displayName: name,
-      email: _pendingEmail,
-      phoneNumber: _pendingPhone,
+      email: _pendingEmail ?? _profiles.signInEmail,
+      phoneNumber: _pendingPhone ?? _profiles.signInPhone,
     );
     isLoading.value = false;
     Get.back();
