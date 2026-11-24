@@ -1211,39 +1211,19 @@ class _SignOutButton extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  TextButton(
-                    onPressed: home.openPrivacyPolicy,
-                    child: Text(
-                      'Confidentialité',
-                      style: GoogleFonts.manrope(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                        color: muted,
-                      ),
-                    ),
+              // « Supprimer mon compte » vit dans « Modifier mon profil » :
+              // à côté de « Confidentialité », il débordait du tiroir sur
+              // les écrans Android étroits.
+              TextButton(
+                onPressed: home.openPrivacyPolicy,
+                child: Text(
+                  'Confidentialité',
+                  style: GoogleFonts.manrope(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: muted,
                   ),
-                  TextButton(
-                    onPressed: home.isDeletingAccount.value
-                        ? null
-                        : () {
-                            Get.back();
-                            home.deleteAccount();
-                          },
-                    child: Text(
-                      home.isDeletingAccount.value
-                          ? 'Suppression…'
-                          : 'Supprimer mon compte',
-                      style: GoogleFonts.manrope(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.danger,
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ],
           ),

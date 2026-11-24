@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../controllers/edit_profile_controller.dart';
+import '../../controllers/home_controller.dart';
 import '../../models/account_type.dart';
 import '../../routes/app_routes.dart';
 import '../../theme/app_colors.dart';
@@ -50,8 +51,7 @@ class EditProfileScreen extends GetView<EditProfileController> {
                         fillColor: card,
                         counterText: '',
                         errorText: controller.nameError.value,
-                        hintText:
-                            profile.accountType == AccountType.structure
+                        hintText: profile.accountType == AccountType.structure
                             ? 'Nom de la structure'
                             : 'Votre nom',
                         border: OutlineInputBorder(
@@ -145,8 +145,60 @@ class EditProfileScreen extends GetView<EditProfileController> {
                   ),
                   const SizedBox(height: 32),
                   _CertificationCard(card: card, ink: ink, muted: muted),
+                  const SizedBox(height: 32),
+                  const _DeleteAccountButton(),
                 ],
               ),
+      );
+    });
+  }
+}
+
+/// Suppression définitive du compte (exigence du Play Store). Elle était
+/// dans le tiroir, où elle débordait sur Android ; ici, elle se trouve à
+/// côté de tout ce qui concerne le compte. La confirmation et le travail
+/// serveur restent dans [HomeController.deleteAccount].
+class _DeleteAccountButton extends StatelessWidget {
+  const _DeleteAccountButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final home = Get.find<HomeController>();
+    return Obx(() {
+      final deleting = home.isDeletingAccount.value;
+      return SizedBox(
+        height: 48,
+        child: OutlinedButton.icon(
+          onPressed: deleting ? null : home.deleteAccount,
+          icon: deleting
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.danger,
+                  ),
+                )
+              : const Icon(
+                  Icons.delete_forever_outlined,
+                  size: 20,
+                  color: AppColors.danger,
+                ),
+          label: Text(
+            deleting ? 'Suppression…' : 'Supprimer mon compte',
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: AppColors.danger,
+            ),
+          ),
+          style: OutlinedButton.styleFrom(
+            side: BorderSide(color: AppColors.danger.withValues(alpha: 0.4)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+        ),
       );
     });
   }
@@ -221,7 +273,8 @@ class _InfoTile extends StatelessWidget {
                   ],
                 ),
               ),
-              if (onTap != null) Icon(Icons.chevron_right_rounded, color: muted),
+              if (onTap != null)
+                Icon(Icons.chevron_right_rounded, color: muted),
             ],
           ),
         ),
@@ -389,8 +442,10 @@ class _CertificationCard extends GetView<EditProfileController> {
           ]);
         } else if (s.verified) {
           children.add(
-            _text('Votre compte est certifié : le badge apparaît à côté de '
-                'votre nom.'),
+            _text(
+              'Votre compte est certifié : le badge apparaît à côté de '
+              'votre nom.',
+            ),
           );
         } else if (!s.enabled) {
           children.addAll([

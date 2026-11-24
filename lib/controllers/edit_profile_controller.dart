@@ -173,8 +173,10 @@ class EditProfileController extends GetxController {
         Map<String, dynamic>.from(res.data),
       );
     } on FirebaseFunctionsException catch (e) {
-      certificationError.value =
-          e.message ?? 'Impossible de charger la certification.';
+      certificationError.value = _readable(
+        e,
+        'Impossible de charger la certification. Réessayez plus tard.',
+      );
     } on Object catch (_) {
       certificationError.value = 'Impossible de charger la certification.';
     } finally {
@@ -199,11 +201,31 @@ class EditProfileController extends GetxController {
         duration: const Duration(seconds: 4),
       );
     } on FirebaseFunctionsException catch (e) {
-      Get.snackbar('Demande impossible', e.message ?? e.code);
+      Get.snackbar(
+        'Demande impossible',
+        _readable(e, 'Une erreur est survenue. Réessayez plus tard.'),
+      );
     } finally {
       requesting.value = false;
       await loadCertification();
     }
+  }
+
+  /// Les messages des `HttpsError` du serveur (seuils non atteints,
+  /// demande déjà en cours…) sont écrits pour l'utilisateur ; les autres
+  /// codes ne portent que le nom technique (« INTERNAL ») : on les remplace.
+  static String _readable(FirebaseFunctionsException e, String fallback) {
+    const userFacing = {
+      'failed-precondition',
+      'already-exists',
+      'unauthenticated',
+      'permission-denied',
+    };
+    final message = e.message;
+    if (userFacing.contains(e.code) && message != null && message.isNotEmpty) {
+      return message;
+    }
+    return fallback;
   }
 
   @override
