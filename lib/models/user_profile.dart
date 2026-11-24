@@ -104,18 +104,17 @@ class UserProfile {
     String? displayName,
     String? photoUrl,
     bool clearPhotoUrl = false,
-  }) =>
-      UserProfile(
-        uid: uid,
-        accountType: accountType,
-        displayName: displayName ?? this.displayName,
-        email: email,
-        phoneNumber: phoneNumber,
-        createdAt: createdAt,
-        verified: verified,
-        followersCount: followersCount,
-        followingCount: followingCount,
-        lastSeenAt: lastSeenAt,
-        photoUrl: clearPhotoUrl ? null : (photoUrl ?? this.photoUrl),
-      );
+  }) => UserProfile(
+    uid: uid,
+    accountType: accountType,
+    displayName: displayName ?? this.displayName,
+    email: email,
+    phoneNumber: phoneNumber,
+    createdAt: createdAt,
+    verified: verified,
+    followersCount: followersCount,
+    followingCount: followingCount,
+    lastSeenAt: lastSeenAt,
+    photoUrl: clearPhotoUrl ? null : (photoUrl ?? this.photoUrl),
+  );
 }

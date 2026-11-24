@@ -26,26 +26,26 @@ enum WeatherCondition {
 
   /// Nom en langage courant — pas de jargon météo.
   String get label => switch (this) {
-        WeatherCondition.sunny => 'Ensoleillé',
-        WeatherCondition.cloudy => 'Nuageux',
-        WeatherCondition.rain => 'Pluvieux',
-        WeatherCondition.storm => 'Orageux',
-        WeatherCondition.fog => 'Brumeux',
-        WeatherCondition.snow => 'Neigeux',
-        WeatherCondition.unknown => 'Variable',
-      };
+    WeatherCondition.sunny => 'Ensoleillé',
+    WeatherCondition.cloudy => 'Nuageux',
+    WeatherCondition.rain => 'Pluvieux',
+    WeatherCondition.storm => 'Orageux',
+    WeatherCondition.fog => 'Brumeux',
+    WeatherCondition.snow => 'Neigeux',
+    WeatherCondition.unknown => 'Variable',
+  };
 
   /// Conseil pratique en une phrase simple, pensé pour quelqu'un qui ne
   /// sait pas interpréter une météo classique.
   String get advice => switch (this) {
-        WeatherCondition.sunny => 'Beau temps toute la journée, profitez-en',
-        WeatherCondition.cloudy => 'Ciel couvert mais temps sec',
-        WeatherCondition.rain => 'Pensez à prendre un parapluie',
-        WeatherCondition.storm => 'Orages possibles, restez à l’abri',
-        WeatherCondition.fog => 'Visibilité réduite, soyez prudent·e',
-        WeatherCondition.snow => 'Températures froides, couvrez-vous bien',
-        WeatherCondition.unknown => 'Temps changeant, vérifiez avant de sortir',
-      };
+    WeatherCondition.sunny => 'Beau temps toute la journée, profitez-en',
+    WeatherCondition.cloudy => 'Ciel couvert mais temps sec',
+    WeatherCondition.rain => 'Pensez à prendre un parapluie',
+    WeatherCondition.storm => 'Orages possibles, restez à l’abri',
+    WeatherCondition.fog => 'Visibilité réduite, soyez prudent·e',
+    WeatherCondition.snow => 'Températures froides, couvrez-vous bien',
+    WeatherCondition.unknown => 'Temps changeant, vérifiez avant de sortir',
+  };
 }
 
 class WeatherSnapshot {
@@ -76,6 +76,7 @@ class WeatherDay {
   final WeatherCondition condition;
   final double maxTempC;
   final double minTempC;
+
   /// Probabilité de pluie ce jour-là, en pourcentage (0-100).
   final int rainChance;
 

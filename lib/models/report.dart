@@ -20,30 +20,28 @@ enum ReportReason {
 
 extension ReportReasonLabel on ReportReason {
   String get label => switch (this) {
-        ReportReason.spam => 'Spam ou publicité',
-        ReportReason.harcelement => 'Harcèlement ou intimidation',
-        ReportReason.haine => 'Discours haineux',
-        ReportReason.violence => 'Violence ou menaces',
-        ReportReason.nuditeSexuel => 'Nudité ou contenu sexuel',
-        ReportReason.fausseInformation => 'Fausse information',
-        ReportReason.arnaque => 'Arnaque ou fraude',
-        ReportReason.autre => 'Autre',
-      };
+    ReportReason.spam => 'Spam ou publicité',
+    ReportReason.harcelement => 'Harcèlement ou intimidation',
+    ReportReason.haine => 'Discours haineux',
+    ReportReason.violence => 'Violence ou menaces',
+    ReportReason.nuditeSexuel => 'Nudité ou contenu sexuel',
+    ReportReason.fausseInformation => 'Fausse information',
+    ReportReason.arnaque => 'Arnaque ou fraude',
+    ReportReason.autre => 'Autre',
+  };
 
   String get description => switch (this) {
-        ReportReason.spam =>
-          'Publications répétitives, publicité non sollicitée',
-        ReportReason.harcelement =>
-          'S’en prend à une personne de façon répétée',
-        ReportReason.haine =>
-          'Attaque une personne ou un groupe (origine, religion, genre…)',
-        ReportReason.violence => 'Menace ou incite à faire du mal',
-        ReportReason.nuditeSexuel => 'Images ou propos à caractère sexuel',
-        ReportReason.fausseInformation =>
-          'Information trompeuse présentée comme vraie',
-        ReportReason.arnaque => 'Tentative de soutirer de l’argent ou des données',
-        ReportReason.autre => 'Précisez ce qui pose problème',
-      };
+    ReportReason.spam => 'Publications répétitives, publicité non sollicitée',
+    ReportReason.harcelement => 'S’en prend à une personne de façon répétée',
+    ReportReason.haine =>
+      'Attaque une personne ou un groupe (origine, religion, genre…)',
+    ReportReason.violence => 'Menace ou incite à faire du mal',
+    ReportReason.nuditeSexuel => 'Images ou propos à caractère sexuel',
+    ReportReason.fausseInformation =>
+      'Information trompeuse présentée comme vraie',
+    ReportReason.arnaque => 'Tentative de soutirer de l’argent ou des données',
+    ReportReason.autre => 'Précisez ce qui pose problème',
+  };
 }
 
 /// Document `reports/{reportId}` — écrit par le client, jamais relu ni
@@ -82,15 +80,15 @@ class ContentReport {
   final String excerpt;
 
   Map<String, dynamic> toMap() => {
-        'targetType': targetType.name,
-        'targetId': targetId,
-        'targetPath': targetPath,
-        'targetOwnerUid': targetOwnerUid,
-        'reporterUid': reporterUid,
-        'reason': reason.name,
-        'details': details.trim(),
-        'excerpt': excerpt,
-        'status': 'pending',
-        'createdAt': FieldValue.serverTimestamp(),
-      };
+    'targetType': targetType.name,
+    'targetId': targetId,
+    'targetPath': targetPath,
+    'targetOwnerUid': targetOwnerUid,
+    'reporterUid': reporterUid,
+    'reason': reason.name,
+    'details': details.trim(),
+    'excerpt': excerpt,
+    'status': 'pending',
+    'createdAt': FieldValue.serverTimestamp(),
+  };
 }

@@ -8,14 +8,33 @@
 library;
 
 const _accents = {
-  'à': 'a', 'á': 'a', 'â': 'a', 'ä': 'a', 'ã': 'a', 'å': 'a',
+  'à': 'a',
+  'á': 'a',
+  'â': 'a',
+  'ä': 'a',
+  'ã': 'a',
+  'å': 'a',
   'ç': 'c',
-  'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e',
-  'ì': 'i', 'í': 'i', 'î': 'i', 'ï': 'i',
+  'è': 'e',
+  'é': 'e',
+  'ê': 'e',
+  'ë': 'e',
+  'ì': 'i',
+  'í': 'i',
+  'î': 'i',
+  'ï': 'i',
   'ñ': 'n',
-  'ò': 'o', 'ó': 'o', 'ô': 'o', 'ö': 'o', 'õ': 'o',
-  'ù': 'u', 'ú': 'u', 'û': 'u', 'ü': 'u',
-  'ý': 'y', 'ÿ': 'y',
+  'ò': 'o',
+  'ó': 'o',
+  'ô': 'o',
+  'ö': 'o',
+  'õ': 'o',
+  'ù': 'u',
+  'ú': 'u',
+  'û': 'u',
+  'ü': 'u',
+  'ý': 'y',
+  'ÿ': 'y',
 };
 
 /// Minuscules sans accents — « Véhicule » et « vehicule » doivent tomber
@@ -47,14 +66,13 @@ List<String> marketKeywords(String title, String description) {
 
 /// Jetons d'une requête de recherche. Le premier sert au filtre serveur
 /// (`array-contains`), les suivants affinent côté client.
-List<String> searchTokens(String query) => normalizeSearch(query)
-    .split(RegExp(r'[^a-z0-9]+'))
-    .where((w) => w.length >= 3)
-    .toList();
+List<String> searchTokens(String query) => normalizeSearch(
+  query,
+).split(RegExp(r'[^a-z0-9]+')).where((w) => w.length >= 3).toList();
 
 /// « 1 250 000 » — séparateur de milliers par espace insécable fine, la
 /// convention francophone.
 String formatAmount(int amount) => amount.toString().replaceAllMapped(
-      RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
-      (m) => '${m[1]} ',
-    );
+  RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
+  (m) => '${m[1]} ',
+);

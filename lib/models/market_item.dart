@@ -11,42 +11,39 @@ enum MarketCategory {
   divers;
 
   String get label => switch (this) {
-        MarketCategory.immobilier => 'Immobilier',
-        MarketCategory.vehicules => 'Véhicules',
-        MarketCategory.electronique => 'Électronique',
-        MarketCategory.agriculture => 'Agriculture',
-        MarketCategory.alimentation => 'Alimentation',
-        MarketCategory.vetements => 'Vêtements',
-        MarketCategory.services => 'Services',
-        MarketCategory.divers => 'Divers',
-      };
+    MarketCategory.immobilier => 'Immobilier',
+    MarketCategory.vehicules => 'Véhicules',
+    MarketCategory.electronique => 'Électronique',
+    MarketCategory.agriculture => 'Agriculture',
+    MarketCategory.alimentation => 'Alimentation',
+    MarketCategory.vetements => 'Vêtements',
+    MarketCategory.services => 'Services',
+    MarketCategory.divers => 'Divers',
+  };
 
   String get icon => switch (this) {
-        MarketCategory.immobilier => '\u{1f3e0}',
-        MarketCategory.vehicules => '\u{1f3cd}',
-        MarketCategory.electronique => '\u{1f4f1}',
-        MarketCategory.agriculture => '\u{1f33e}',
-        MarketCategory.alimentation => '\u{1f34e}',
-        MarketCategory.vetements => '\u{1f455}',
-        MarketCategory.services => '\u{1f527}',
-        MarketCategory.divers => '\u{1f4e6}',
-      };
+    MarketCategory.immobilier => '\u{1f3e0}',
+    MarketCategory.vehicules => '\u{1f3cd}',
+    MarketCategory.electronique => '\u{1f4f1}',
+    MarketCategory.agriculture => '\u{1f33e}',
+    MarketCategory.alimentation => '\u{1f34e}',
+    MarketCategory.vetements => '\u{1f455}',
+    MarketCategory.services => '\u{1f527}',
+    MarketCategory.divers => '\u{1f4e6}',
+  };
 
   static MarketCategory parse(String? name) => MarketCategory.values.firstWhere(
-        (c) => c.name == name,
-        orElse: () => MarketCategory.divers,
-      );
+    (c) => c.name == name,
+    orElse: () => MarketCategory.divers,
+  );
 }
 
 enum MarketListingType {
   vente,
   achat;
 
-  static MarketListingType parse(String? name) =>
-      MarketListingType.values.firstWhere(
-        (t) => t.name == name,
-        orElse: () => MarketListingType.vente,
-      );
+  static MarketListingType parse(String? name) => MarketListingType.values
+      .firstWhere((t) => t.name == name, orElse: () => MarketListingType.vente);
 }
 
 enum ItemCondition {
@@ -55,10 +52,10 @@ enum ItemCondition {
   occasion;
 
   String get label => switch (this) {
-        ItemCondition.neuf => 'Neuf',
-        ItemCondition.bonEtat => 'Bon état',
-        ItemCondition.occasion => 'Occasion',
-      };
+    ItemCondition.neuf => 'Neuf',
+    ItemCondition.bonEtat => 'Bon état',
+    ItemCondition.occasion => 'Occasion',
+  };
 
   static ItemCondition? parse(String? name) {
     if (name == null) return null;
@@ -82,11 +79,11 @@ enum MarketSort {
   prixDecroissant;
 
   String get label => switch (this) {
-        MarketSort.aleatoire => 'Au hasard',
-        MarketSort.recent => 'Plus récentes',
-        MarketSort.prixCroissant => 'Prix croissant',
-        MarketSort.prixDecroissant => 'Prix décroissant',
-      };
+    MarketSort.aleatoire => 'Au hasard',
+    MarketSort.recent => 'Plus récentes',
+    MarketSort.prixCroissant => 'Prix croissant',
+    MarketSort.prixDecroissant => 'Prix décroissant',
+  };
 }
 
 /// Localités proposées à la publication.
@@ -179,10 +176,10 @@ class MarketItem {
     this.contactsCount = 0,
     List<String>? imageUrls,
     List<String>? keywords,
-  })  : bumpedAt = bumpedAt ?? createdAt,
-        expiresAt = expiresAt ?? createdAt.add(kListingLifetime),
-        imageUrls = imageUrls ?? [],
-        keywords = keywords ?? [];
+  }) : bumpedAt = bumpedAt ?? createdAt,
+       expiresAt = expiresAt ?? createdAt.add(kListingLifetime),
+       imageUrls = imageUrls ?? [],
+       keywords = keywords ?? [];
 
   final String id;
   final MarketListingType listingType;
@@ -309,34 +306,33 @@ class MarketItem {
     int? contactsCount,
     List<String>? imageUrls,
     List<String>? keywords,
-  }) =>
-      MarketItem(
-        id: id,
-        listingType: listingType ?? this.listingType,
-        category: category ?? this.category,
-        title: title ?? this.title,
-        description: description ?? this.description,
-        price: price ?? this.price,
-        negotiable: negotiable ?? this.negotiable,
-        priceOnRequest: priceOnRequest ?? this.priceOnRequest,
-        condition: clearCondition ? null : (condition ?? this.condition),
-        sellerUid: sellerUid,
-        sellerName: sellerName,
-        location: location ?? this.location,
-        createdAt: createdAt,
-        bumpedAt: bumpedAt ?? this.bumpedAt,
-        expiresAt: expiresAt ?? this.expiresAt,
-        sold: sold ?? this.sold,
-        soldAt: sold == false ? null : (soldAt ?? this.soldAt),
-        hasPhone: hasPhone ?? this.hasPhone,
-        legacyPhone: legacyPhone,
-        hidden: hidden ?? this.hidden,
-        viewsCount: viewsCount ?? this.viewsCount,
-        favoritesCount: favoritesCount ?? this.favoritesCount,
-        contactsCount: contactsCount ?? this.contactsCount,
-        imageUrls: imageUrls ?? this.imageUrls,
-        keywords: keywords ?? this.keywords,
-      );
+  }) => MarketItem(
+    id: id,
+    listingType: listingType ?? this.listingType,
+    category: category ?? this.category,
+    title: title ?? this.title,
+    description: description ?? this.description,
+    price: price ?? this.price,
+    negotiable: negotiable ?? this.negotiable,
+    priceOnRequest: priceOnRequest ?? this.priceOnRequest,
+    condition: clearCondition ? null : (condition ?? this.condition),
+    sellerUid: sellerUid,
+    sellerName: sellerName,
+    location: location ?? this.location,
+    createdAt: createdAt,
+    bumpedAt: bumpedAt ?? this.bumpedAt,
+    expiresAt: expiresAt ?? this.expiresAt,
+    sold: sold ?? this.sold,
+    soldAt: sold == false ? null : (soldAt ?? this.soldAt),
+    hasPhone: hasPhone ?? this.hasPhone,
+    legacyPhone: legacyPhone,
+    hidden: hidden ?? this.hidden,
+    viewsCount: viewsCount ?? this.viewsCount,
+    favoritesCount: favoritesCount ?? this.favoritesCount,
+    contactsCount: contactsCount ?? this.contactsCount,
+    imageUrls: imageUrls ?? this.imageUrls,
+    keywords: keywords ?? this.keywords,
+  );
 }
 
 /// À quel point [candidate] ressemble à [reference], du point de vue de
@@ -399,8 +395,7 @@ int marketSimilarityScore(MarketItem reference, MarketItem candidate) {
 
   // Dans une commune, le quartier décide souvent de la rencontre.
   final place = reference.location.trim().toLowerCase();
-  if (place.isNotEmpty &&
-      candidate.location.trim().toLowerCase() == place) {
+  if (place.isNotEmpty && candidate.location.trim().toLowerCase() == place) {
     score += 2;
   }
 

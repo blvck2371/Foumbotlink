@@ -38,7 +38,10 @@ class VideoCompressionPolicy {
   /// place de l'original. Une compression ratée (`null`, fichier vide) ou
   /// qui grossit le fichier — ça arrive sur une vidéo déjà très
   /// compressée — retombe sur l'original.
-  static bool keepCompressed({required int originalBytes, int? compressedBytes}) {
+  static bool keepCompressed({
+    required int originalBytes,
+    int? compressedBytes,
+  }) {
     if (compressedBytes == null || compressedBytes <= 0) return false;
     return compressedBytes <= originalBytes * (1 - minSavingRatio);
   }

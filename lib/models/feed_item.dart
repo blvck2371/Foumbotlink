@@ -109,8 +109,8 @@ class FeedItem {
     this.hidden = false,
     List<String>? imageUrls,
     List<FeedComment>? comments,
-  })  : imageUrls = imageUrls ?? [],
-        comments = comments ?? [];
+  }) : imageUrls = imageUrls ?? [],
+       comments = comments ?? [];
 
   final String id;
   final FeedType type;
@@ -160,10 +160,10 @@ class FeedItem {
   bool get isEdited => editedAt != null;
 
   String get typeLabel => switch (type) {
-        FeedType.annonce => 'Annonce',
-        FeedType.info => 'Info',
-        FeedType.post => 'Publication',
-      };
+    FeedType.annonce => 'Annonce',
+    FeedType.info => 'Info',
+    FeedType.post => 'Publication',
+  };
 
   /// Texte partagé via la feuille de partage native. Titre et message
   /// peuvent être vides l'un ou l'autre — on ne partage que ce qui existe,
@@ -183,9 +183,7 @@ class FeedItem {
   String get summaryLine {
     if (hasTitle) return title.trim();
     if (hasBody) return body.trim();
-    return imageUrls.length > 1
-        ? '${imageUrls.length} photos'
-        : 'Photo';
+    return imageUrls.length > 1 ? '${imageUrls.length} photos' : 'Photo';
   }
 
   FeedItem copyWith({

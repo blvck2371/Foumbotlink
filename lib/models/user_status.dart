@@ -111,8 +111,8 @@ class UserStatus {
   StatusKind get kind => hasVideo
       ? StatusKind.video
       : hasImage
-          ? StatusKind.image
-          : StatusKind.text;
+      ? StatusKind.image
+      : StatusKind.text;
 
   bool get isExpired => !DateTime.now().isBefore(expiresAt);
 
@@ -141,7 +141,8 @@ class UserStatus {
   }
 
   /// « 12 vues » — au singulier près.
-  String get viewsLabel => viewsCount <= 1 ? '$viewsCount vue' : '$viewsCount vues';
+  String get viewsLabel =>
+      viewsCount <= 1 ? '$viewsCount vue' : '$viewsCount vues';
 
   /// « 3 j'aime » — au singulier près.
   String get likesLabel =>

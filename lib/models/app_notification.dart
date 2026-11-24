@@ -57,9 +57,7 @@ class AppNotification {
   final DateTime createdAt;
   final bool read;
 
-  factory AppNotification.fromDoc(
-    DocumentSnapshot<Map<String, dynamic>> doc,
-  ) {
+  factory AppNotification.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final d = doc.data()!;
     return AppNotification(
       id: doc.id,

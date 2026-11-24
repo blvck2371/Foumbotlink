@@ -50,13 +50,13 @@ class SellerReview {
   }
 
   Map<String, dynamic> toMap() => {
-        'reviewerName': reviewerName,
-        'rating': rating,
-        'comment': comment.trim(),
-        'itemId': itemId,
-        'itemTitle': itemTitle,
-        'createdAt': FieldValue.serverTimestamp(),
-      };
+    'reviewerName': reviewerName,
+    'rating': rating,
+    'comment': comment.trim(),
+    'itemId': itemId,
+    'itemTitle': itemTitle,
+    'createdAt': FieldValue.serverTimestamp(),
+  };
 }
 
 /// Résumé de réputation affiché sur une fiche vendeur. Les compteurs sont

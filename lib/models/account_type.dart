@@ -11,15 +11,16 @@ enum AccountType {
   structure;
 
   String get label => switch (this) {
-        AccountType.personal => 'Compte personnel',
-        AccountType.structure => 'Compte structure',
-      };
+    AccountType.personal => 'Compte personnel',
+    AccountType.structure => 'Compte structure',
+  };
 
   String get description => switch (this) {
-        AccountType.personal => 'Vous publiez en votre nom, comme n’importe quel habitant.',
-        AccountType.structure =>
-          'Mairie, préfecture, association, ONG… vous pourrez publier des informations et des annonces officielles.',
-      };
+    AccountType.personal =>
+      'Vous publiez en votre nom, comme n’importe quel habitant.',
+    AccountType.structure =>
+      'Mairie, préfecture, association, ONG… vous pourrez publier des informations et des annonces officielles.',
+  };
 
   /// Seuls les comptes structure peuvent choisir entre "Information" et
   /// "Annonce officielle" au moment de publier ; un compte personnel

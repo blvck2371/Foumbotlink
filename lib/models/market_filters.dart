@@ -45,13 +45,13 @@ class MarketFilters {
   /// Nombre de filtres actifs, affiché en pastille sur le bouton
   /// « Filtrer ».
   int get activeCount => [
-        category != null,
-        listingType != null,
-        place != null,
-        condition != null,
-        minPrice != null,
-        maxPrice != null,
-      ].where((e) => e).length;
+    category != null,
+    listingType != null,
+    place != null,
+    condition != null,
+    minPrice != null,
+    maxPrice != null,
+  ].where((e) => e).length;
 
   /// Vrai si [item] satisfait les critères appliqués côté client.
   bool matches(MarketItem item) {
@@ -83,18 +83,16 @@ class MarketFilters {
     int? maxPrice,
     bool clearMaxPrice = false,
     MarketSort? sort,
-  }) =>
-      MarketFilters(
-        category: clearCategory ? null : (category ?? this.category),
-        listingType:
-            clearListingType ? null : (listingType ?? this.listingType),
-        query: query ?? this.query,
-        place: clearPlace ? null : (place ?? this.place),
-        condition: clearCondition ? null : (condition ?? this.condition),
-        minPrice: clearMinPrice ? null : (minPrice ?? this.minPrice),
-        maxPrice: clearMaxPrice ? null : (maxPrice ?? this.maxPrice),
-        sort: sort ?? this.sort,
-      );
+  }) => MarketFilters(
+    category: clearCategory ? null : (category ?? this.category),
+    listingType: clearListingType ? null : (listingType ?? this.listingType),
+    query: query ?? this.query,
+    place: clearPlace ? null : (place ?? this.place),
+    condition: clearCondition ? null : (condition ?? this.condition),
+    minPrice: clearMinPrice ? null : (minPrice ?? this.minPrice),
+    maxPrice: clearMaxPrice ? null : (maxPrice ?? this.maxPrice),
+    sort: sort ?? this.sort,
+  );
 
   /// Remet à zéro tout sauf le tri, que l'utilisateur a choisi à part.
   MarketFilters cleared() => MarketFilters(sort: sort);
@@ -113,13 +111,13 @@ class MarketFilters {
 
   @override
   int get hashCode => Object.hash(
-        category,
-        listingType,
-        query.trim(),
-        place,
-        condition,
-        minPrice,
-        maxPrice,
-        sort,
-      );
+    category,
+    listingType,
+    query.trim(),
+    place,
+    condition,
+    minPrice,
+    maxPrice,
+    sort,
+  );
 }

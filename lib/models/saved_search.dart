@@ -55,15 +55,15 @@ class SavedSearch {
   }
 
   Map<String, dynamic> toMap() => {
-        'label': label,
-        'query': query.trim(),
-        'category': category?.name,
-        'listingType': listingType?.name,
-        'place': place,
-        'maxPrice': maxPrice,
-        'active': active,
-        'createdAt': FieldValue.serverTimestamp(),
-      };
+    'label': label,
+    'query': query.trim(),
+    'category': category?.name,
+    'listingType': listingType?.name,
+    'place': place,
+    'maxPrice': maxPrice,
+    'active': active,
+    'createdAt': FieldValue.serverTimestamp(),
+  };
 
   /// Résumé lisible des critères, pour la liste des alertes.
   String get criteriaLabel {

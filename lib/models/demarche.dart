@@ -8,20 +8,20 @@ enum DemarcheCategory {
   education;
 
   String get label => switch (this) {
-        DemarcheCategory.etatCivil => 'État civil',
-        DemarcheCategory.identite => 'Identité & voyages',
-        DemarcheCategory.justice => 'Justice & légalisation',
-        DemarcheCategory.urbanisme => 'Urbanisme & foncier',
-        DemarcheCategory.education => 'Éducation & social',
-      };
+    DemarcheCategory.etatCivil => 'État civil',
+    DemarcheCategory.identite => 'Identité & voyages',
+    DemarcheCategory.justice => 'Justice & légalisation',
+    DemarcheCategory.urbanisme => 'Urbanisme & foncier',
+    DemarcheCategory.education => 'Éducation & social',
+  };
 
   String get icon => switch (this) {
-        DemarcheCategory.etatCivil => '\u{1F4DC}',
-        DemarcheCategory.identite => '\u{1FAAA}',
-        DemarcheCategory.justice => '\u{2696}',
-        DemarcheCategory.urbanisme => '\u{1F3D7}',
-        DemarcheCategory.education => '\u{1F393}',
-      };
+    DemarcheCategory.etatCivil => '\u{1F4DC}',
+    DemarcheCategory.identite => '\u{1FAAA}',
+    DemarcheCategory.justice => '\u{2696}',
+    DemarcheCategory.urbanisme => '\u{1F3D7}',
+    DemarcheCategory.education => '\u{1F393}',
+  };
 }
 
 /// Une démarche telle qu'une structure la publie.
@@ -175,7 +175,6 @@ class DemarcheModele {
   final List<String> etapes;
 
   static const catalogue = <DemarcheModele>[
-
     DemarcheModele(
       category: DemarcheCategory.etatCivil,
       title: 'Acte de naissance',
@@ -225,8 +224,7 @@ class DemarcheModele {
     DemarcheModele(
       category: DemarcheCategory.etatCivil,
       title: 'Acte de décès',
-      description:
-          'Document officiel attestant le décès d’une personne.',
+      description: 'Document officiel attestant le décès d’une personne.',
       documents: [
         'Certificat médical de décès',
         'Acte de naissance du défunt',
@@ -405,8 +403,7 @@ class DemarcheModele {
     DemarcheModele(
       category: DemarcheCategory.urbanisme,
       title: 'Titre foncier',
-      description:
-          'Document officiel prouvant la propriété d’un terrain.',
+      description: 'Document officiel prouvant la propriété d’un terrain.',
       documents: [
         'Demande adressée au sous-préfet',
         'Carte nationale d’identité',
