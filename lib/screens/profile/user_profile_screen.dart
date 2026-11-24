@@ -20,6 +20,7 @@ import '../../widgets/verified_badge.dart';
 import '../status/status_composer_screen.dart';
 import '../status/status_viewer_screen.dart';
 import '../../services/profile_gate.dart';
+import '../../widgets/live_ring.dart';
 
 class UserProfileScreen extends GetView<ProfileController> {
   const UserProfileScreen({super.key});
@@ -180,19 +181,25 @@ class _ProfileHeader extends GetView<ProfileController> {
             // profil, sans quoi les deux gestes se marcheraient dessus.
             Hero(
               tag: 'avatar_${profile.uid}',
-              child: StatusRing(
+              child: LiveRing(
+                uid: profile.uid,
                 radius: 46,
-                hasStatuses: controller.hasStatuses,
-                hasUnseen: controller.hasUnseenStatuses,
-                backgroundColor: isDark ? AppColors.black : AppColors.white,
-                onTap: controller.hasStatuses
-                    ? () => _openStatuses(context, controller)
-                    : (isOwn
-                          ? () => _showPhotoOptions(
-                              context,
-                              profile.photoUrl != null,
-                            )
-                          : null),
+                thickness: 3,
+                orElse: (avatar) => StatusRing(
+                  radius: 46,
+                  hasStatuses: controller.hasStatuses,
+                  hasUnseen: controller.hasUnseenStatuses,
+                  backgroundColor: isDark ? AppColors.black : AppColors.white,
+                  onTap: controller.hasStatuses
+                      ? () => _openStatuses(context, controller)
+                      : (isOwn
+                            ? () => _showPhotoOptions(
+                                context,
+                                profile.photoUrl != null,
+                              )
+                            : null),
+                  child: avatar,
+                ),
                 child: Stack(
                   alignment: Alignment.center,
                   children: [

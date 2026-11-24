@@ -19,6 +19,7 @@ import '../../widgets/post_media.dart';
 import '../../widgets/repost_banner.dart';
 import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
+import '../../widgets/live_ring.dart';
 
 class FeedPostScreen extends StatefulWidget {
   const FeedPostScreen({super.key});
@@ -317,12 +318,17 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                                     preventDuplicates: false,
                                   ),
                           behavior: HitTestBehavior.opaque,
-                          child: UserAvatar(
-                            name: post.authorName,
-                            photoUrl: post.authorPhotoUrl,
+                          child: LiveRing(
+                            uid: post.authorUid,
                             radius: 20,
-                            backgroundColor: badgeColor.withValues(alpha: 0.15),
-                            foregroundColor: badgeColor,
+                            child: UserAvatar(
+                              name: post.authorName,
+                              photoUrl: post.authorPhotoUrl,
+                              radius: 20,
+                              backgroundColor:
+                                  badgeColor.withValues(alpha: 0.15),
+                              foregroundColor: badgeColor,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 12),

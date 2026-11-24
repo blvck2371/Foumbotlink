@@ -13,6 +13,7 @@ import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
 import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
+import '../../widgets/live_ring.dart';
 
 class CommunityScreen extends GetView<CommunityController> {
   const CommunityScreen({super.key});
@@ -245,12 +246,16 @@ class _MemberCard extends GetView<CommunityController> {
                 // Photo de profil du membre, initiales en secours — la
                 // liste n'affichait que la première lettre du nom et ne
                 // lisait jamais `profile.photoUrl`.
-                UserAvatar(
-                  name: profile.displayName,
-                  photoUrl: profile.photoUrl,
+                LiveRing(
+                  uid: profile.uid,
                   radius: 24,
-                  backgroundColor: AppColors.orange.withValues(alpha: 0.15),
-                  fontSize: 20,
+                  child: UserAvatar(
+                    name: profile.displayName,
+                    photoUrl: profile.photoUrl,
+                    radius: 24,
+                    backgroundColor: AppColors.orange.withValues(alpha: 0.15),
+                    fontSize: 20,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(

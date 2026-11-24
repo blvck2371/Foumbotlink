@@ -389,6 +389,10 @@ class _TopBar extends StatelessWidget {
           const SizedBox(width: 8),
           ViewersPill(count: live.viewers),
           const SizedBox(width: 8),
+          // On entre dans les lives sans passer par le menu : passer soi-même
+          // à l'antenne doit rester à portée de main.
+          const _GoLiveButton(size: 34),
+          const SizedBox(width: 8),
           LiveRoundButton(
             icon: Icons.close_rounded,
             tooltip: 'Quitter le live',
@@ -479,6 +483,7 @@ class _EndedPage extends StatelessWidget {
       body: live == null
           ? 'Il n’y a pas de live en cours pour le moment.'
           : 'Glissez vers le haut pour découvrir un autre live.',
+      action: live == null ? const _GoLiveButton(label: true) : null,
     );
   }
 }
@@ -505,12 +510,14 @@ class _MessagePage extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.body,
+    this.action,
   });
 
   final LiveSession? live;
   final IconData icon;
   final String title;
   final String body;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -561,11 +568,56 @@ class _MessagePage extends StatelessWidget {
                     color: AppColors.white.withValues(alpha: 0.8),
                   ),
                 ),
+                if (action != null) ...[
+                  const SizedBox(height: 22),
+                  action!,
+                ],
               ],
             ),
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Passer à l'antenne depuis le lecteur. Remplace le lecteur plutôt que de
+/// s'empiler dessus : on quitte le live regardé (salle LiveKit fermée)
+/// avant d'ouvrir sa caméra.
+class _GoLiveButton extends StatelessWidget {
+  const _GoLiveButton({this.size = 34, this.label = false});
+
+  final double size;
+
+  /// Bouton avec libellé (page vide) plutôt qu'icône ronde.
+  final bool label;
+
+  void _go() => Get.offNamed(AppRoutes.liveHost);
+
+  @override
+  Widget build(BuildContext context) {
+    if (!label) {
+      return LiveRoundButton(
+        icon: Icons.videocam_rounded,
+        tooltip: 'Lancer mon live',
+        size: size,
+        onTap: _go,
+      );
+    }
+    return FilledButton.icon(
+      onPressed: _go,
+      icon: const Icon(Icons.videocam_rounded, size: 20),
+      label: const Text('Lancer un live'),
+      style: FilledButton.styleFrom(
+        backgroundColor: liveRed,
+        foregroundColor: AppColors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        textStyle: GoogleFonts.manrope(
+          fontSize: 14.5,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
     );
   }
 }

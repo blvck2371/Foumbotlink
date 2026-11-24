@@ -12,6 +12,8 @@ import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
 import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
+import '../../widgets/live_ring.dart';
+import '../../services/auth_service.dart';
 
 class ConversationsScreen extends GetView<ConversationsController> {
   const ConversationsScreen({super.key});
@@ -337,12 +339,16 @@ class _ConversationTile extends GetView<ConversationsController> {
                 // profil si elle existe, initiales sinon. La liste ne
                 // montrait que la première lettre du nom, sans jamais lire
                 // `photoUrl`.
-                child: UserAvatar(
-                  name: name,
-                  photoUrl: conv.otherUserPhotoUrl,
+                child: LiveRing(
+                  uid: conv.otherUid(Get.find<AuthService>().uid),
                   radius: 26,
-                  backgroundColor: AppColors.orange.withValues(alpha: 0.12),
-                  fontSize: 20,
+                  child: UserAvatar(
+                    name: name,
+                    photoUrl: conv.otherUserPhotoUrl,
+                    radius: 26,
+                    backgroundColor: AppColors.orange.withValues(alpha: 0.12),
+                    fontSize: 20,
+                  ),
                 ),
               ),
               const SizedBox(width: 14),

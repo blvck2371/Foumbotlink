@@ -17,6 +17,7 @@ import '../routes/app_routes.dart';
 import '../services/auth_service.dart';
 import '../services/feed_service.dart';
 import '../services/follow_service.dart';
+import '../services/live_service.dart';
 import '../services/market_service.dart';
 import '../services/moderation_service.dart';
 import '../services/notification_service.dart';
@@ -1208,15 +1209,25 @@ class HomeController extends GetxController {
     Get.toNamed(AppRoutes.feature, arguments: feature);
   }
 
-  /// Menu Lives — depuis l'icône de la barre du haut ou le tiroir. Les
-  /// lives demandent un compte : chaque spectateur est identifié (blocages,
+  /// Lives — depuis l'icône de la barre du haut ou le tiroir. Les lives
+  /// demandent un compte : chaque spectateur est identifié (blocages,
   /// exclusions, signalements).
+  ///
+  /// Comme sur TikTok, on entre directement dans un live s'il y en a un en
+  /// cours (le plus regardé d'abord, les autres en glissant) ; le menu
+  /// pour lancer le sien n'apparaît que lorsqu'il n'y a rien à regarder —
+  /// le lecteur garde un bouton pour passer à l'antenne.
   Future<void> openLives() async {
     // Le serveur refuse l'entrée d'un live sans profil : on le demande ici.
     if (!await ProfileGate.ensure(reason: 'Pour regarder ou lancer un live')) {
       return;
     }
-    Get.toNamed(AppRoutes.lives);
+    final moderation = Get.find<ModerationService>();
+    final myUid = _auth.isSignedIn ? _auth.uid : '';
+    final hasLive = Get.find<LiveService>().lives.any(
+      (l) => l.hostUid != myUid && !moderation.hides(l.hostUid),
+    );
+    Get.toNamed(hasLive ? AppRoutes.liveViewer : AppRoutes.lives);
   }
 
   void openNotifications() {

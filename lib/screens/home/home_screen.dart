@@ -24,6 +24,7 @@ import '../../widgets/repost_banner.dart';
 import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
 import '../../widgets/weather_badge.dart';
+import '../../widgets/live_ring.dart';
 
 class HomeScreen extends GetView<HomeController> {
   const HomeScreen({super.key});
@@ -622,12 +623,16 @@ class _FeedCard extends StatelessWidget {
                             preventDuplicates: false,
                           ),
                     behavior: HitTestBehavior.opaque,
-                    child: UserAvatar(
-                      name: item.authorName,
-                      photoUrl: item.authorPhotoUrl,
+                    child: LiveRing(
+                      uid: item.authorUid,
                       radius: 20,
-                      backgroundColor: badgeColor.withValues(alpha: 0.15),
-                      foregroundColor: badgeColor,
+                      child: UserAvatar(
+                        name: item.authorName,
+                        photoUrl: item.authorPhotoUrl,
+                        radius: 20,
+                        backgroundColor: badgeColor.withValues(alpha: 0.15),
+                        foregroundColor: badgeColor,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 10),
