@@ -1,7 +1,9 @@
-Nouveau : les Lives !
-• Lancez un direct depuis l'icône Lives en haut de l'écran ou depuis le menu.
-• Regardez les lives en cours et passez de l'un à l'autre en glissant vers le haut.
-• Commentez, envoyez des cœurs et suivez l'hôte en temps réel.
-• Vos abonnés sont prévenus quand vous passez en direct.
-• Signalement et exclusion des perturbateurs pour des lives sereins.
+Nouveau : les appels !
+• Appels vocaux et vidéo, en tête-à-tête ou en groupe.
+• Les appels manqués et leur durée s'affichent dans la discussion.
+Lives :
+• Touchez « Lives » et vous entrez directement dans un direct.
+• Un anneau orange « LIVE » apparaît sur la photo de qui est en direct : touchez-la pour le rejoindre.
+Profil :
+• Modifiez votre nom et votre photo, et demandez la certification de votre compte.
 Corrections et améliorations diverses.
