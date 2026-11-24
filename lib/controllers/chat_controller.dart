@@ -759,6 +759,9 @@ class ChatController extends GetxController {
     if (message.expiresAt != null) return false;
     // Un média encore en cours d'envoi n'a qu'un chemin local, illisible
     // depuis le téléphone d'en face.
+    // Une trace d'appel ne se transfère pas : elle raconte un appel entre
+    // ces deux personnes, pas un contenu.
+    if (message.isCallLog) return false;
     final isFile =
         message.type != MessageType.text && message.type != MessageType.sticker;
     if (isFile && !message.content.startsWith('http')) return false;
@@ -1120,7 +1123,8 @@ class ChatController extends GetxController {
           fileName!,
         ),
         MessageType.text ||
-        MessageType.sticker => throw StateError('unsupported upload type'),
+        MessageType.sticker ||
+        MessageType.call => throw StateError('unsupported upload type'),
       };
       // La vignette part après la vidéo : si l'envoi du gros fichier
       // échoue, on n'a pas laissé une image orpheline dans Storage.

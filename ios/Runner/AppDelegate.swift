@@ -20,6 +20,23 @@ import UserNotifications
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
+  /// App au premier plan : l'alerte « Appel entrant » est masquée, l'écran
+  /// d'appel (CallKit) s'affiche déjà. Le reste suit le comportement
+  /// normal de firebase_messaging.
+  override func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler:
+      @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    if notification.request.content.userInfo["type"] as? String == "incoming_call" {
+      completionHandler([])
+      return
+    }
+    super.userNotificationCenter(
+      center, willPresent: notification, withCompletionHandler: completionHandler)
+  }
+
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     screenGuard = ScreenGuard(

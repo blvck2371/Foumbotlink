@@ -32,6 +32,7 @@ import '../../widgets/post_image_viewer.dart';
 import '../../widgets/sealed_image_viewer.dart';
 import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
+import '../../widgets/live_ring.dart';
 
 class ChatScreen extends GetView<ChatController> {
   const ChatScreen({super.key});
@@ -317,14 +318,18 @@ class _ChatAppBar extends GetView<ChatController> {
                         // photo de profil ne s'affichait jamais dans une
                         // discussion. Le repli sur les initiales est géré
                         // par le widget (pas de photo, chargement, erreur).
-                        child: UserAvatar(
-                          name: name,
-                          photoUrl: photoUrl,
+                        child: LiveRing(
+                          uid: profileUid ?? '',
                           radius: 19,
-                          backgroundColor: AppColors.orange.withValues(
-                            alpha: 0.15,
+                          child: UserAvatar(
+                            name: name,
+                            photoUrl: photoUrl,
+                            radius: 19,
+                            backgroundColor: AppColors.orange.withValues(
+                              alpha: 0.15,
+                            ),
+                            fontSize: 15,
                           ),
-                          fontSize: 15,
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -1729,7 +1734,84 @@ class _MessageBubbleState extends State<_MessageBubble> {
         widget.album.length > 1 ? _buildAlbum(widget.album) : _buildImage(msg),
       MessageType.video => _buildVideo(msg),
       MessageType.document => _buildDocument(msg, textColor),
+      MessageType.call => _buildCallLog(msg, textColor),
     };
+  }
+
+  /// Trace d'un appel (« Appel vocal manqué », « Appel vidéo · 3:12 ») ;
+  /// un appui rappelle, comme sur WhatsApp.
+  Widget _buildCallLog(ChatMessage msg, Color textColor) {
+    final chat = Get.find<ChatController>();
+    final l = msg.callLabel(chat.myUid);
+    final mine = msg.senderUid == chat.myUid;
+    final arrow = l.missed
+        ? Icons.call_missed_rounded
+        : mine
+        ? Icons.call_made_rounded
+        : Icons.call_received_rounded;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: msg.callVideo ? chat.startVideoCall : chat.startAudioCall,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: textColor.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                msg.callVideo ? Icons.videocam_rounded : Icons.call_rounded,
+                size: 19,
+                color: l.missed ? AppColors.danger : textColor,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    l.label,
+                    style: GoogleFonts.manrope(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w700,
+                      color: l.missed ? AppColors.danger : textColor,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        arrow,
+                        size: 14,
+                        color: l.missed
+                            ? AppColors.danger
+                            : textColor.withValues(alpha: 0.6),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Appuyer pour rappeler',
+                        style: GoogleFonts.manrope(
+                          fontSize: 12,
+                          color: textColor.withValues(alpha: 0.6),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// Bulle d'un message à vue unique : un cachet, pas un contenu.
@@ -1945,6 +2027,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
         case MessageType.text:
         case MessageType.document:
         case MessageType.sticker:
+        case MessageType.call:
         case MessageType.voice:
           break;
       }

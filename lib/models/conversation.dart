@@ -16,7 +16,12 @@ class Conversation {
     this.otherUserPhotoUrl,
     this.otherUserVerified = false,
     this.unreadCount = 0,
+    this.lastCallLabel,
   });
+
+  /// Aperçu d'une trace d'appel en dernier message (« 📞 Appel vocal
+  /// manqué »), calculé à la lecture : il dépend de qui regarde.
+  final String? lastCallLabel;
 
   final String id;
   final List<String> participants;
@@ -41,6 +46,9 @@ class Conversation {
 
   String get lastMessagePreview {
     if (lastMessage == null) return '';
+    if (lastMessageType == MessageType.call && lastCallLabel != null) {
+      return lastCallLabel!;
+    }
     return switch (lastMessageType) {
       MessageType.voice => '🎤 Message vocal',
       MessageType.image => '📷 Photo',
@@ -61,21 +69,21 @@ class Conversation {
     String? otherUserPhotoUrl,
     bool? otherUserVerified,
     int? unreadCount,
-  }) =>
-      Conversation(
-        id: id,
-        participants: participants,
-        lastMessage: lastMessage,
-        lastMessageType: lastMessageType,
-        lastMessageAt: lastMessageAt,
-        lastMessageSenderUid: lastMessageSenderUid,
-        ephemeralSeconds: ephemeralSeconds,
-        createdAt: createdAt,
-        otherUserName: otherUserName ?? this.otherUserName,
-        otherUserPhotoUrl: otherUserPhotoUrl ?? this.otherUserPhotoUrl,
-        otherUserVerified: otherUserVerified ?? this.otherUserVerified,
-        unreadCount: unreadCount ?? this.unreadCount,
-      );
+  }) => Conversation(
+    id: id,
+    participants: participants,
+    lastMessage: lastMessage,
+    lastMessageType: lastMessageType,
+    lastMessageAt: lastMessageAt,
+    lastMessageSenderUid: lastMessageSenderUid,
+    ephemeralSeconds: ephemeralSeconds,
+    createdAt: createdAt,
+    otherUserName: otherUserName ?? this.otherUserName,
+    otherUserPhotoUrl: otherUserPhotoUrl ?? this.otherUserPhotoUrl,
+    otherUserVerified: otherUserVerified ?? this.otherUserVerified,
+    unreadCount: unreadCount ?? this.unreadCount,
+    lastCallLabel: lastCallLabel,
+  );
 
   factory Conversation.fromDoc(
     DocumentSnapshot<Map<String, dynamic>> doc, {
@@ -97,9 +105,29 @@ class Conversation {
       lastMessageAt: (d['lastMessageAt'] as Timestamp?)?.toDate(),
       lastMessageSenderUid: d['lastMessageSenderUid'] as String?,
       ephemeralSeconds: d['ephemeralSeconds'] as int?,
-      createdAt:
-          (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      createdAt: (d['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       unreadCount: unread is int ? unread : (unread as num?)?.toInt() ?? 0,
+      lastCallLabel: _callLabel(
+        d['lastCall'],
+        d['lastMessageSenderUid'],
+        myUid,
+      ),
     );
+  }
+
+  static String? _callLabel(Object? raw, Object? senderUid, String myUid) {
+    if (raw is! Map) return null;
+    final outcome = CallOutcome.values
+        .where((o) => o.name == raw['outcome'])
+        .firstOrNull;
+    if (outcome == null) return null;
+    final video = raw['type'] == 'video';
+    final l = callLogLabel(
+      video: video,
+      outcome: outcome,
+      mine: senderUid == myUid,
+      durationMs: (raw['durationMs'] as num?)?.toInt(),
+    );
+    return '${video ? '📹' : '📞'} ${l.label}';
   }
 }

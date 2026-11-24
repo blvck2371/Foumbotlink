@@ -354,6 +354,47 @@ async function main() {
 
   await env.cleanup();
 
+  console.log("Trace d'appel dans la discussion");
+  {
+    const {Timestamp} = require("firebase-admin/firestore");
+    const db = getFirestore();
+    const conv = ["ana", "ben"].sort().join("_");
+    const msgs = db.collection(`conversations/${conv}/messages`);
+    const base = {callerUid: "ana", calleeUid: "ben", type: "audio"};
+    const cases = [
+      ["log_ok", {status: "accepted"}, {status: "ended",
+        answeredAt: Timestamp.fromMillis(1000000),
+        endedAt: Timestamp.fromMillis(1192000)}, "ended", 192000],
+      ["log_missed", {status: "ringing"}, {status: "missed"}, "missed", 0],
+      ["log_cancel", {status: "ringing"}, {status: "ended"}, "cancelled", 0],
+      ["log_decl", {status: "ringing"}, {status: "declined"}, "declined", 0],
+    ];
+    for (const [id, b, a, outcome, duration] of cases) {
+      await check(`${outcome} : trace écrite une seule fois`, async () => {
+        await db.doc(`calls/${id}`).set({...base, ...a});
+        await fireUpdated(id, {...base, ...b}, {...base, ...a});
+        await fireUpdated(id, {...base, ...b}, {...base, ...a});
+        const m = (await msgs.doc(`calls_${id}`).get()).data();
+        expect(m && m.type === "call" && m.senderUid === "ana",
+            JSON.stringify(m));
+        expect(m.callOutcome === outcome, `issue ${m.callOutcome}`);
+        expect(m.durationMs === duration, `durée ${m.durationMs}`);
+        const c = (await db.doc(`conversations/${conv}`).get()).data();
+        expect(c.lastMessageType === "call" &&
+          c.lastCall.outcome === outcome, JSON.stringify(c.lastCall));
+      });
+    }
+    await check("appelant qui raccroche : « Appel manqué » à l'appelé",
+        async () => {
+          const n = await db.collection("users/ben/notifications")
+              .where("type", "==", "missedCall").get();
+          const ids = n.docs.map((d) => d.get("data.callId")).sort();
+          expect(ids.includes("log_cancel") && ids.includes("log_missed") &&
+            !ids.includes("log_decl") && !ids.includes("log_ok"),
+          ids.join(","));
+        });
+  }
+
   if (failures) {
     console.error(`\n${failures} échec(s)`);
     process.exit(1);

@@ -88,7 +88,9 @@ class ChatAttachment {
   static String safeStorageName(String name) {
     final ext = extensionOf(name);
     final base = name.split(RegExp(r'[/\\]')).last;
-    var stem = ext.isEmpty ? base : base.substring(0, base.length - ext.length - 1);
+    var stem = ext.isEmpty
+        ? base
+        : base.substring(0, base.length - ext.length - 1);
     stem = _stripAccents(stem)
         .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')
         .replaceAll(RegExp(r'_+'), '_')
@@ -100,10 +102,29 @@ class ChatAttachment {
   }
 
   static const _accents = {
-    'à': 'a', 'â': 'a', 'ä': 'a', 'á': 'a', 'ç': 'c', 'é': 'e', 'è': 'e',
-    'ê': 'e', 'ë': 'e', 'î': 'i', 'ï': 'i', 'í': 'i', 'ô': 'o', 'ö': 'o',
-    'ó': 'o', 'ù': 'u', 'û': 'u', 'ü': 'u', 'ú': 'u', 'ÿ': 'y', 'ñ': 'n',
-    'œ': 'oe', 'æ': 'ae',
+    'à': 'a',
+    'â': 'a',
+    'ä': 'a',
+    'á': 'a',
+    'ç': 'c',
+    'é': 'e',
+    'è': 'e',
+    'ê': 'e',
+    'ë': 'e',
+    'î': 'i',
+    'ï': 'i',
+    'í': 'i',
+    'ô': 'o',
+    'ö': 'o',
+    'ó': 'o',
+    'ù': 'u',
+    'û': 'u',
+    'ü': 'u',
+    'ú': 'u',
+    'ÿ': 'y',
+    'ñ': 'n',
+    'œ': 'oe',
+    'æ': 'ae',
   };
 
   static String _stripAccents(String input) {

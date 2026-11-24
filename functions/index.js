@@ -191,6 +191,7 @@ exports.onCallCreated = onDocumentCreated("calls/{callId}", async (event) => {
   if (call.status !== RINGING) return;
 
   const callerName = await displayName(call.callerUid, "Appel entrant");
+  const kind = call.type === "video" ? "Appel vidéo" : "Appel vocal";
 
   await sendToUser(call.calleeUid, {
     data: {
@@ -206,8 +207,25 @@ exports.onCallCreated = onDocumentCreated("calls/{callId}", async (event) => {
       // Phase B iOS : passer à 'voip' + topic `<bundleId>.voip` une fois le
       // certificat PushKit disponible. En 'alert', iOS ne peut pas lancer une
       // app tuée ni sonner comme un appel — seulement afficher une bannière.
-      headers: {"apns-push-type": "alert", "apns-priority": "10"},
-      payload: {aps: {"content-available": 1, "mutable-content": 1}},
+      // En attendant PushKit, une vraie alerte avec son : sans elle, un
+      // iPhone dont l'app est en arrière-plan ou fermée n'affichait rien.
+      // App ouverte, AppDelegate la masque — l'écran d'appel prend le
+      // relais. Elle expire avec la sonnerie (45 s).
+      headers: {
+        "apns-push-type": "alert",
+        "apns-priority": "10",
+        "apns-expiration": String(Math.floor(Date.now() / 1000) + 45),
+        "apns-collapse-id": `call_${callId}`.slice(0, 64),
+      },
+      payload: {
+        aps: {
+          "alert": {title: callerName, body: `${kind} entrant…`},
+          "sound": "default",
+          "interruption-level": "time-sensitive",
+          "content-available": 1,
+          "mutable-content": 1,
+        },
+      },
     },
   });
 });
@@ -241,6 +259,9 @@ exports.onCallUpdated = onDocumentUpdated({
   // la fin (app figée, réseau revenu trop tard) est coupé lui aussi.
   await calls.closeCallRoom(callId);
 
+  // Trace de l'appel dans la discussion, comme WhatsApp.
+  if (!after.group) await logCallInConversation(callId, before, after);
+
   // Appel de groupe clos alors que des invités sonnaient encore.
   if (after.group) {
     await Promise.all(calls.uidsIn(after, ["ringing"]).map((uid) =>
@@ -270,7 +291,11 @@ exports.onCallUpdated = onDocumentUpdated({
   // Un appel décroché puis terminé n'est pas un appel manqué — la condition
   // sur `before.status` évite une notification « Appel manqué » à la fin
   // d'une vraie conversation.
-  if (after.status === "missed" && before.status === RINGING) {
+  // L'appelant qui raccroche pendant la sonnerie, ou un appelé déjà en
+  // ligne, laisse aussi un appel manqué — comme WhatsApp. Un refus, non :
+  // c'est l'appelé lui-même qui l'a choisi.
+  if (!after.group && before.status === RINGING &&
+      ["missed", "ended", "busy"].includes(after.status)) {
     const callerName = await displayName(after.callerUid, "Quelqu'un");
 
     // Historisé dans le flux de notifications (écran dédié) séparément du
@@ -308,6 +333,79 @@ exports.onCallUpdated = onDocumentUpdated({
     });
   }
 });
+
+/**
+ * Issue d'un appel 1:1 terminé, vue du serveur : voir `CallOutcome` côté
+ * app.
+ *
+ * @param {object} before État précédent.
+ * @param {object} after État final.
+ * @return {string}
+ */
+function callOutcome(before, after) {
+  if (before.status === ACCEPTED) return "ended";
+  switch (after.status) {
+    case "declined": return "declined";
+    case "busy": return "busy";
+    case "missed": return "missed";
+    default: return "cancelled"; // l'appelant a raccroché en sonnerie
+  }
+}
+
+/**
+ * Écrit la trace d'un appel 1:1 dans la conversation des deux
+ * personnes (« Appel vocal manqué », « Appel vidéo · 3:12 »).
+ *
+ * Message `calls_{callId}`, créé une seule fois : un déclencheur rejoué
+ * ne le double pas. Son arrivée passe par `onMessageCreated`, qui compte
+ * le non-lu d'un appel manqué sans renvoyer de notification (celle de
+ * l'appel manqué part déjà ci-dessus).
+ *
+ * @param {string} callId Appel.
+ * @param {object} before État précédent.
+ * @param {object} after État final.
+ * @return {Promise<void>}
+ */
+async function logCallInConversation(callId, before, after) {
+  const caller = after.callerUid;
+  const callee = after.calleeUid;
+  if (!caller || !callee || caller === callee) return;
+  const conversationId = [caller, callee].sort().join("_");
+  const outcome = callOutcome(before, after);
+  const toMillis = (t) => t && typeof t.toMillis === "function" ?
+    t.toMillis() : null;
+  const answered = toMillis(after.answeredAt);
+  const ended = toMillis(after.endedAt) || Date.now();
+  const durationMs = outcome === "ended" && answered ?
+    Math.max(0, ended - answered) : 0;
+  const callType = after.type === "video" ? "video" : "audio";
+
+  const convRef = db.doc(`conversations/${conversationId}`);
+  try {
+    await convRef.collection("messages").doc(`calls_${callId}`).create({
+      senderUid: caller,
+      type: "call",
+      content: "",
+      callType,
+      callOutcome: outcome,
+      callId,
+      durationMs,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    if (err.code === 6) return; // déjà écrit (ALREADY_EXISTS)
+    logger.error(`trace d'appel ${callId}`, err);
+    return;
+  }
+  await convRef.set({
+    participants: [caller, callee].sort(),
+    lastMessage: callType === "video" ? "📹 Appel vidéo" : "📞 Appel vocal",
+    lastMessageType: "call",
+    lastMessageAt: FieldValue.serverTimestamp(),
+    lastMessageSenderUid: caller,
+    lastCall: {type: callType, outcome, durationMs},
+  }, {merge: true});
+}
 
 // ---------------------------------------------------------------------
 // Messagerie — notifie le destinataire à chaque nouveau message.
@@ -483,6 +581,17 @@ exports.onMessageCreated = onDocumentCreated(
       }
       const recipient = participants.find((p) => p !== msg.senderUid);
       if (!recipient) return;
+
+      // Trace d'appel (écrite par le serveur) : un appel manqué compte
+      // comme non lu, mais sa notification est déjà partie avec
+      // l'« Appel manqué » — on n'en envoie pas une seconde.
+      if (msg.type === "call") {
+        if (["missed", "cancelled", "busy"].includes(msg.callOutcome)) {
+          await countUnread(conversationId, event.params.messageId,
+              msg.senderUid, recipient);
+        }
+        return;
+      }
 
       await countUnread(conversationId, event.params.messageId,
           msg.senderUid, recipient);

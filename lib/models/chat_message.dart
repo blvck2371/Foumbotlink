@@ -1,6 +1,72 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum MessageType { text, voice, image, video, document, sticker }
+enum MessageType {
+  text,
+  voice,
+  image,
+  video,
+  document,
+  sticker,
+
+  /// Trace d'un appel dans la discussion (« Appel vocal manqué »,
+  /// « Appel vidéo · 3:12 »), écrite par le serveur seul à la fin de
+  /// l'appel (`onCallUpdated`) — comme WhatsApp. L'expéditeur est
+  /// l'appelant.
+  call,
+}
+
+/// Issue d'un appel, telle qu'écrite par le serveur dans un message
+/// [MessageType.call].
+enum CallOutcome {
+  /// Décroché puis terminé — [ChatMessage.durationMs] porte sa durée.
+  ended,
+
+  /// Personne n'a répondu.
+  missed,
+
+  /// L'appelé a refusé.
+  declined,
+
+  /// L'appelé était déjà en ligne.
+  busy,
+
+  /// L'appelant a raccroché avant qu'on décroche.
+  cancelled,
+}
+
+/// Libellé d'une trace d'appel, vue par [mine] (l'appelant) ou par
+/// l'appelé. Partagé par la bulle et la liste des conversations.
+({String label, bool missed}) callLogLabel({
+  required bool video,
+  required CallOutcome outcome,
+  required bool mine,
+  int? durationMs,
+}) {
+  final kind = video ? 'Appel vidéo' : 'Appel vocal';
+  switch (outcome) {
+    case CallOutcome.ended:
+      final d = Duration(milliseconds: durationMs ?? 0);
+      if (d.inSeconds <= 0) return (label: kind, missed: false);
+      final h = d.inHours;
+      final m = d.inMinutes
+          .remainder(60)
+          .toString()
+          .padLeft(h > 0 ? 2 : 1, '0');
+      final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+      return (label: '$kind · ${h > 0 ? '$h:' : ''}$m:$s', missed: false);
+    case CallOutcome.missed || CallOutcome.cancelled || CallOutcome.busy
+        when !mine:
+      return (label: '$kind manqué', missed: true);
+    case CallOutcome.declined when !mine:
+      return (label: '$kind refusé', missed: false);
+    case CallOutcome.busy:
+      return (label: '$kind · Occupé', missed: false);
+    case CallOutcome.cancelled:
+      return (label: '$kind · Annulé', missed: false);
+    case CallOutcome.missed || CallOutcome.declined:
+      return (label: '$kind · Sans réponse', missed: false);
+  }
+}
 
 /// Le statut auquel un message se rapporte.
 ///
@@ -102,7 +168,25 @@ class ChatMessage {
     this.deleted = false,
     this.reactions = const {},
     this.hiddenFor = const [],
+    this.callVideo = false,
+    this.callOutcome,
   });
+
+  /// Trace d'appel ([MessageType.call]) : appel vidéo plutôt que vocal.
+  final bool callVideo;
+
+  /// Trace d'appel ([MessageType.call]) : comment il s'est terminé.
+  final CallOutcome? callOutcome;
+
+  bool get isCallLog => type == MessageType.call;
+
+  /// Libellé de la trace d'appel vue par [myUid].
+  ({String label, bool missed}) callLabel(String myUid) => callLogLabel(
+    video: callVideo,
+    outcome: callOutcome ?? CallOutcome.ended,
+    mine: senderUid == myUid,
+    durationMs: durationMs,
+  );
 
   /// Délai pendant lequel un message peut encore être retiré **à tout le
   /// monde**, à compter de son envoi.
@@ -328,6 +412,7 @@ class ChatMessage {
       MessageType.video => '🎥 Vidéo',
       MessageType.document => '📎 ${fileName ?? 'Document'}',
       MessageType.sticker => content,
+      MessageType.call => callVideo ? '📹 Appel vidéo' : '📞 Appel vocal',
       MessageType.text => _textPreview,
     };
   }
@@ -352,6 +437,7 @@ class ChatMessage {
       MessageType.video => '🎥 Vidéo',
       MessageType.document => '📎 ${fileName ?? 'Document'}',
       MessageType.sticker => content,
+      MessageType.call => callVideo ? '📹 Appel vidéo' : '📞 Appel vocal',
       MessageType.text =>
         content.length > 80 ? '${content.substring(0, 80)}…' : content,
     };
@@ -425,6 +511,10 @@ class ChatMessage {
         (d['reactions'] as Map<String, dynamic>?) ?? const {},
       ),
       hiddenFor: List<String>.from(d['hiddenFor'] ?? const []),
+      callVideo: d['callType'] == 'video',
+      callOutcome: CallOutcome.values
+          .where((o) => o.name == d['callOutcome'])
+          .firstOrNull,
     );
   }
 }

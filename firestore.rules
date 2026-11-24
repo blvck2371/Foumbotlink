@@ -662,6 +662,8 @@ service cloud.firestore {
         // bloqué l'autre.
         allow create: if request.auth != null
           && request.resource.data.senderUid == request.auth.uid
+          // Les traces d'appel sont écrites par le serveur seul.
+          && request.resource.data.get('type', 'text') != 'call'
           && canWriteConversation(conversationId);
 
         // Après l'envoi, trois modifications seulement, et chacune est
