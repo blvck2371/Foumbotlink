@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/widgets.dart';
 import 'package:get/get.dart';
+import 'package:http/http.dart' as http;
 
 /// Sait si l'appareil atteint réellement Internet.
 ///
@@ -58,6 +60,10 @@ class ConnectivityService extends GetxService {
     if (isChecking.value) return online.value;
     isChecking.value = true;
     try {
+      if (kIsWeb) {
+        await _probeWeb();
+        return online.value;
+      }
       final socket = await Socket.connect(
         _probeHost,
         _probePort,
@@ -75,6 +81,22 @@ class ConnectivityService extends GetxService {
       _scheduleNext();
     }
     return online.value;
+  }
+
+  /// Web : pas de socket dans un navigateur. On demande au serveur qui
+  /// héberge l'app un petit fichier, sans cache : s'il répond, le réseau
+  /// passe vraiment (même logique que la socket mobile).
+  Future<void> _probeWeb() async {
+    try {
+      final uri = Uri.base.resolve(
+        'favicon.png?sonde=${DateTime.now().millisecondsSinceEpoch}',
+      );
+      await http.head(uri).timeout(_probeTimeout);
+      _setOnline(true);
+    } on Object catch (e) {
+      developer.log('Sonde réseau (web)', name: 'ConnectivityService', error: e);
+      _setOnline(false);
+    }
   }
 
   void _setOnline(bool value) {

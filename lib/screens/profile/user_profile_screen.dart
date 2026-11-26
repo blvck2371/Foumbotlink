@@ -21,6 +21,7 @@ import '../status/status_composer_screen.dart';
 import '../status/status_viewer_screen.dart';
 import '../../services/profile_gate.dart';
 import '../../widgets/live_ring.dart';
+import '../../utils/image_url.dart';
 
 class UserProfileScreen extends GetView<ProfileController> {
   const UserProfileScreen({super.key});
@@ -884,7 +885,7 @@ class _PostThumbnail extends StatelessWidget {
             // Background — image or colored card
             if (item.hasImages)
               CachedNetworkImage(
-                imageUrl: item.imageUrls.first,
+                imageUrl: displayImageUrl(item.imageUrls.first),
                 fit: BoxFit.cover,
                 placeholder: (_, _) => Container(
                   color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,

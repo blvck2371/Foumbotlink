@@ -154,27 +154,33 @@ class StructureDeskController extends GetxController {
     }
 
     isLooking.value = true;
-    _codeSub = _dossiers.watchCode(raw).listen(
-      (result) {
-        isLooking.value = false;
-        switch (result) {
-          case CodeFound(:final uid, :final displayName):
-            matchedUid.value = uid;
-            matchedName.value = displayName;
-            lookupError.value = null;
-          case CodeUnknown(:final message):
-            matchedUid.value = null;
-            matchedName.value = null;
-            lookupError.value = message;
-        }
-      },
-      onError: (Object e) {
-        developer.log('watchCode', name: 'StructureDeskController', error: e);
-        isLooking.value = false;
-        lookupError.value =
-            'Recherche impossible pour le moment. Vérifiez la connexion.';
-      },
-    );
+    _codeSub = _dossiers
+        .watchCode(raw)
+        .listen(
+          (result) {
+            isLooking.value = false;
+            switch (result) {
+              case CodeFound(:final uid, :final displayName):
+                matchedUid.value = uid;
+                matchedName.value = displayName;
+                lookupError.value = null;
+              case CodeUnknown(:final message):
+                matchedUid.value = null;
+                matchedName.value = null;
+                lookupError.value = message;
+            }
+          },
+          onError: (Object e) {
+            developer.log(
+              'watchCode',
+              name: 'StructureDeskController',
+              error: e,
+            );
+            isLooking.value = false;
+            lookupError.value =
+                'Recherche impossible pour le moment. Vérifiez la connexion.';
+          },
+        );
   }
 
   /// Force une nouvelle recherche sur la saisie courante — le bouton reste
@@ -207,6 +213,9 @@ class StructureDeskController extends GetxController {
         title: title,
         demarcheId: selectedDemarche.value?.id,
         reference: referenceCtrl.text,
+        // Les étapes de suivi que la structure a définies sur sa
+        // démarche : le dossier les parcourra une à une.
+        steps: selectedDemarche.value?.etapes ?? const [],
       );
       _resetForm();
       return true;
@@ -244,19 +253,28 @@ class StructureDeskController extends GetxController {
   /// absence laisserait quelqu'un sans réponse.
   Future<String?> advance(
     Dossier dossier,
-    DossierStatus status, {
+    DossierAction action, {
     String? note,
   }) async {
-    if (status.requiresNote && (note == null || note.trim().isEmpty)) {
+    if (action.requiresNote && (note == null || note.trim().isEmpty)) {
       return 'Indiquez ce qu’il manque, ou pourquoi le dossier est '
           'refusé : c’est ce que la personne lira.';
     }
     try {
-      await _dossiers.advance(dossier: dossier, status: status, note: note);
+      await _dossiers.advance(dossier: dossier, action: action, note: note);
       return null;
     } catch (e) {
       developer.log('advance', name: 'StructureDeskController', error: e);
       return 'Enregistrement impossible. Vérifiez la connexion.';
     }
+  }
+
+  /// Code lu par la caméra : il remplit le champ, et la recherche de
+  /// l'habitant suit d'elle-même.
+  bool useScanned(String raw) {
+    final code = TrackingCode.fromScan(raw);
+    if (code == null) return false;
+    codeCtrl.text = code;
+    return true;
   }
 }

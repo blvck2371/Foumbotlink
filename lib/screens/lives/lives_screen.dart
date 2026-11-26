@@ -14,6 +14,7 @@ import '../../widgets/confirm_dialog.dart';
 import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/user_avatar.dart';
 import 'live_widgets.dart';
+import '../../utils/image_url.dart';
 
 /// Le menu Lives : lancer le sien, ou entrer dans un live en cours. La
 /// grille se met à jour toute seule (Realtime Database) : un live qui
@@ -229,7 +230,7 @@ class _LiveCard extends StatelessWidget {
             children: [
               if (photo != null)
                 CachedNetworkImage(
-                  imageUrl: photo,
+                  imageUrl: displayImageUrl(photo),
                   fit: BoxFit.cover,
                   errorWidget: (_, _, _) => const _CardFallback(),
                 )

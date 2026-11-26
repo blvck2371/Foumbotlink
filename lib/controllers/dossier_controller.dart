@@ -77,23 +77,28 @@ class DossierController extends GetxController {
   /// part que si l'écoute confirme qu'il n'y a pas encore de code.
   void _watchCode() {
     _codeSub?.cancel();
-    _codeSub = _dossiers.watchTrackingCode(_auth.uid).listen(
-      (code) {
-        if (code != null && code.isNotEmpty) {
-          trackingCode.value = code;
-          codeError.value = null;
-          return;
-        }
-        _allocateCode();
-      },
-      onError: (Object e) {
-        developer.log('watchTrackingCode',
-            name: 'DossierController', error: e);
-        // Pas de message d'erreur ici : hors ligne, l'écoute échoue mais
-        // un code déjà connu reste parfaitement valable à recopier.
-        if (trackingCode.value.isEmpty) _allocateCode();
-      },
-    );
+    _codeSub = _dossiers
+        .watchTrackingCode(_auth.uid)
+        .listen(
+          (code) {
+            if (code != null && code.isNotEmpty) {
+              trackingCode.value = code;
+              codeError.value = null;
+              return;
+            }
+            _allocateCode();
+          },
+          onError: (Object e) {
+            developer.log(
+              'watchTrackingCode',
+              name: 'DossierController',
+              error: e,
+            );
+            // Pas de message d'erreur ici : hors ligne, l'écoute échoue mais
+            // un code déjà connu reste parfaitement valable à recopier.
+            if (trackingCode.value.isEmpty) _allocateCode();
+          },
+        );
   }
 
   /// Attribue un code à la première ouverture de l'écran, pas à

@@ -5,6 +5,7 @@ abstract class AppRoutes {
   static const feature = '/feature';
   static const feedPost = '/feed-post';
   static const savedPosts = '/saved-posts';
+  static const search = '/search';
   static const compose = '/compose';
   static const auth = '/auth';
   static const market = '/market';

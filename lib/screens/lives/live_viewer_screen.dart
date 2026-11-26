@@ -20,6 +20,7 @@ import '../../widgets/confirm_dialog.dart';
 import '../../widgets/foumbot_loader.dart';
 import '../../widgets/report_sheet.dart';
 import 'live_widgets.dart';
+import '../../utils/image_url.dart';
 
 /// Regarder les lives en plein écran, en glissant de l'un à l'autre.
 class LiveViewerScreen extends GetView<LiveViewerController> {
@@ -76,7 +77,7 @@ class _Backdrop extends StatelessWidget {
       children: [
         if (photo != null)
           CachedNetworkImage(
-            imageUrl: photo,
+            imageUrl: displayImageUrl(photo),
             fit: BoxFit.cover,
             color: Colors.black.withValues(alpha: 0.6),
             colorBlendMode: BlendMode.darken,

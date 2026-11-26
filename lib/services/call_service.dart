@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:get/get.dart';
 
 import '../models/call.dart';
@@ -87,6 +88,25 @@ class CallService extends GetxService {
       if (name != null && name.isNotEmpty) callerName = name;
     } on FirebaseException catch (_) {}
     if (me != null) callerName = '$callerName · appel de groupe';
+    // Web : pas de CallKit. L'écran d'appel de l'app sait présenter un
+    // appel entrant (« Accepter / Refuser ») : on l'ouvre directement,
+    // tant que l'onglet est ouvert.
+    if (kIsWeb) {
+      markHandled(call.id);
+      unawaited(
+        Get.toNamed(
+          AppRoutes.call,
+          arguments: {
+            'callId': call.id,
+            'incoming': true,
+            'otherUid': fromUid,
+            'type': call.type,
+            'conversationId': call.conversationId,
+          },
+        ),
+      );
+      return;
+    }
     await showCallkitIncomingFromData({
       'callId': call.id,
       'callerUid': fromUid,

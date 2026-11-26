@@ -98,10 +98,18 @@ class DossierEvent {
     required this.at,
     this.note,
     this.byName,
+    this.step,
   });
 
   final DossierStatus status;
   final DateTime at;
+
+  /// Étape atteinte, telle que la structure l'a nommée (« Phase de
+  /// signature »). `null` pour un embranchement ou un ancien dossier.
+  final String? step;
+
+  /// Ce qu'affiche l'historique.
+  String get label => step ?? status.label;
 
   /// Précision saisie par l'agent — obligatoire sur les embranchements.
   final String? note;
@@ -115,6 +123,7 @@ class DossierEvent {
     'at': Timestamp.fromDate(at),
     if (note != null && note!.isNotEmpty) 'note': note,
     if (byName != null) 'byName': byName,
+    if (step != null) 'step': step,
   };
 
   factory DossierEvent.fromMap(Map<String, dynamic> d) => DossierEvent(
@@ -125,6 +134,7 @@ class DossierEvent {
     at: (d['at'] as Timestamp?)?.toDate() ?? DateTime.now(),
     note: d['note'] as String?,
     byName: d['byName'] as String?,
+    step: d['step'] as String?,
   );
 }
 
@@ -150,7 +160,9 @@ class Dossier {
     this.demarcheId,
     this.reference,
     this.events = const [],
-  });
+    List<String> steps = const [],
+    this.stepIndex = 0,
+  }) : _steps = steps;
 
   final String id;
   final String ownerUid;
@@ -179,6 +191,100 @@ class Dossier {
   final DateTime createdAt;
   final DateTime updatedAt;
   final List<DossierEvent> events;
+
+  /// Étapes de suivi définies par la structure sur sa démarche, copiées
+  /// à la réception : si la structure modifie sa démarche ensuite, un
+  /// dossier déjà en cours garde le parcours annoncé à la personne.
+  final List<String> _steps;
+
+  /// Étape atteinte dans [steps] (voir [currentStep]).
+  final int stepIndex;
+
+  /// Les étapes du dossier : celles de la structure, ou à défaut des
+  /// étapes génériques (dossier sans démarche, ou ancien dossier).
+  List<String> get steps => _steps.isNotEmpty ? _steps : defaultSteps;
+
+  /// Les étapes de la structure telles qu'enregistrées (vide si aucune).
+  List<String> get definedSteps => _steps;
+
+  static const defaultSteps = [
+    'Dossier réceptionné',
+    'En cours de traitement',
+    'Prêt — à retirer',
+  ];
+
+  /// Étape courante, bornée : un document mal formé ne doit pas planter.
+  int get currentStep {
+    if (_steps.isEmpty) {
+      // Anciens dossiers, sans étapes : l'étape se déduit de l'état.
+      return switch (status) {
+        DossierStatus.receptionne => 0,
+        DossierStatus.enCours ||
+        DossierStatus.complementRequis ||
+        DossierStatus.rejete => 1,
+        DossierStatus.termine || DossierStatus.retire => 2,
+      };
+    }
+    return stepIndex.clamp(0, _steps.length - 1);
+  }
+
+  bool get atLastStep => currentStep == steps.length - 1;
+
+  /// Ce que la personne lit en premier : l'étape nommée par la structure,
+  /// ou l'embranchement / la clôture.
+  String get currentLabel => status.isBranch || status == DossierStatus.retire
+      ? status.label
+      : steps[currentStep];
+
+  /// Ce que le guichet peut faire maintenant.
+  List<DossierAction> get nextActions {
+    if (status.isClosed) return const [];
+    final i = currentStep;
+    final missing = status == DossierStatus.complementRequis;
+    return [
+      if (missing)
+        DossierAction(
+          label: 'Pièce reçue : reprendre',
+          status: statusForStep(i, steps.length),
+          stepIndex: i,
+          step: steps[i],
+        ),
+      if (!atLastStep)
+        DossierAction(
+          label: steps[i + 1],
+          status: statusForStep(i + 1, steps.length),
+          stepIndex: i + 1,
+          step: steps[i + 1],
+          isStep: true,
+        ),
+      if (atLastStep && !missing)
+        DossierAction(
+          label: DossierStatus.retire.label,
+          status: DossierStatus.retire,
+          stepIndex: i,
+        ),
+      if (!missing)
+        DossierAction(
+          label: DossierStatus.complementRequis.label,
+          status: DossierStatus.complementRequis,
+          stepIndex: i,
+        ),
+      DossierAction(
+        label: 'Rejeter le dossier',
+        status: DossierStatus.rejete,
+        stepIndex: i,
+      ),
+    ];
+  }
+
+  /// L'état « technique » d'une étape, qui sert aux couleurs et aux
+  /// règles : la première est la réception, la dernière l'aboutissement,
+  /// les autres du traitement.
+  static DossierStatus statusForStep(int index, int count) => index <= 0
+      ? DossierStatus.receptionne
+      : index >= count - 1
+      ? DossierStatus.termine
+      : DossierStatus.enCours;
 
   /// La dernière note saisie, si l'état courant en portait une.
   String? get currentNote {
@@ -210,6 +316,8 @@ class Dossier {
         createdAt: createdAt,
         updatedAt: updatedAt,
         events: events ?? this.events,
+        steps: _steps,
+        stepIndex: stepIndex,
       );
 
   factory Dossier.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
@@ -234,8 +342,36 @@ class Dossier {
         for (final e in (d['events'] as List<dynamic>? ?? const []))
           DossierEvent.fromMap(Map<String, dynamic>.from(e as Map)),
       ],
+      steps: [
+        for (final e in (d['steps'] as List<dynamic>? ?? const []))
+          if (e.toString().trim().isNotEmpty) e.toString().trim(),
+      ],
+      stepIndex: (d['stepIndex'] as num?)?.toInt() ?? 0,
     );
   }
+}
+
+/// Un geste possible au guichet sur un dossier.
+class DossierAction {
+  const DossierAction({
+    required this.label,
+    required this.status,
+    required this.stepIndex,
+    this.step,
+    this.isStep = false,
+  });
+
+  final String label;
+  final DossierStatus status;
+  final int stepIndex;
+
+  /// Nom de l'étape atteinte, inscrit dans l'historique.
+  final String? step;
+
+  /// Passage à l'étape suivante définie par la structure.
+  final bool isStep;
+
+  bool get requiresNote => status.requiresNote;
 }
 
 /// Fabrique et vérifie les codes de suivi.
@@ -277,6 +413,23 @@ abstract final class TrackingCode {
         .split('')
         .where((c) => !separators.contains(c))
         .join();
+  }
+
+  /// Préfixe du QR code affiché par l'habitant : le guichet le scanne au
+  /// lieu de recopier le code.
+  static const qrPrefix = 'FOUMBOT-SUIVI:';
+
+  static String qrPayload(String code) => '$qrPrefix$code';
+
+  /// Le code lu dans un QR code (le nôtre, ou un QR qui ne contient que
+  /// le code). `null` si ce n'est pas un code de suivi.
+  static String? fromScan(String raw) {
+    var text = raw.trim();
+    if (text.toUpperCase().startsWith(qrPrefix)) {
+      text = text.substring(qrPrefix.length);
+    }
+    final code = normalize(text);
+    return isValid(code) ? code : null;
   }
 
   /// Vrai si [code] normalisé peut être un code émis par l'app.

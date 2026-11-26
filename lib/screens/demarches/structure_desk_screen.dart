@@ -12,6 +12,7 @@ import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
 import '../../widgets/form_field_box.dart';
 import 'dossier_tracking_screen.dart';
+import 'tracking_code_scanner.dart';
 
 /// Le guichet d'une structure : réceptionner un dossier, puis le faire
 /// avancer.
@@ -158,10 +159,30 @@ class _ReceptionCard extends GetView<StructureDeskController> {
           ),
           const SizedBox(height: 6),
           Text(
-            'Saisissez le code de ${TrackingCode.length} caractères inscrit '
-            'sur la chemise.',
+            'Scannez le QR code de la personne, ou saisissez le code de '
+            '${TrackingCode.length} caractères inscrit sur la chemise.',
             style: GoogleFonts.manrope(fontSize: 12.5, color: muted),
           ),
+          if (matched == null) ...[
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: () async {
+                final code = await TrackingCodeScanner.open();
+                if (code != null) controller.useScanned(code);
+              },
+              icon: const Icon(Icons.qr_code_scanner_rounded),
+              label: const Text('Scanner le QR code'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.orange,
+                foregroundColor: AppColors.white,
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                textStyle: GoogleFonts.manrope(fontWeight: FontWeight.w700),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           FormFieldBox(
             isDark: isDark,
@@ -464,6 +485,22 @@ class _DemarchePicker extends GetView<StructureDeskController> {
               ),
             ),
           ],
+          if (selected != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              selected.etapes.isEmpty
+                  ? 'Aucune étape de suivi définie sur cette démarche : le '
+                        'dossier suivra les étapes génériques (réceptionné, '
+                        'en cours, prêt). Définissez les vôtres dans « Mes '
+                        'démarches ».'
+                  : 'Étapes de suivi : ${selected.etapes.join(' → ')}',
+              style: GoogleFonts.manrope(
+                fontSize: 12,
+                height: 1.4,
+                color: muted,
+              ),
+            ),
+          ],
           if (selected == null) ...[
             const SizedBox(height: 10),
             FormFieldBox(
@@ -534,7 +571,7 @@ class _DeskDossierCard extends GetView<StructureDeskController> {
                 ),
               ),
               const SizedBox(width: 10),
-              DossierStatusChip(status: dossier.status),
+              DossierStatusChip(dossier: dossier),
             ],
           ),
           const SizedBox(height: 10),
@@ -560,13 +597,15 @@ class _DeskDossierCard extends GetView<StructureDeskController> {
               ),
             ],
           ),
-          if (dossier.status.nextChoices.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          DossierTimeline(dossier: dossier, muted: muted),
+          if (dossier.nextActions.isNotEmpty) ...[
             const SizedBox(height: 14),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                for (final next in dossier.status.nextChoices)
+                for (final next in dossier.nextActions)
                   _AdvanceButton(dossier: dossier, next: next, isDark: isDark),
               ],
             ),
@@ -585,18 +624,24 @@ class _AdvanceButton extends GetView<StructureDeskController> {
   });
 
   final Dossier dossier;
-  final DossierStatus next;
+  final DossierAction next;
   final bool isDark;
 
   @override
   Widget build(BuildContext context) {
-    final color = dossierStatusColor(next);
+    final color = dossierStatusColor(next.status);
 
     return OutlinedButton.icon(
       onPressed: () => _confirm(context),
-      icon: Icon(dossierStatusIcon(next), size: 15, color: color),
+      icon: Icon(
+        next.isStep
+            ? Icons.arrow_forward_rounded
+            : dossierStatusIcon(next.status),
+        size: 15,
+        color: color,
+      ),
       label: Text(
-        next.label,
+        next.isStep ? 'Étape suivante : ${next.label}' : next.label,
         style: GoogleFonts.manrope(
           fontSize: 12.5,
           fontWeight: FontWeight.w700,
@@ -627,7 +672,7 @@ class _AdvanceButton extends GetView<StructureDeskController> {
             borderRadius: BorderRadius.circular(18),
           ),
           title: Text(
-            next.label,
+            next.isStep ? 'Passer à « ${next.label} »' : next.label,
             style: GoogleFonts.spaceGrotesk(
               fontWeight: FontWeight.w700,
               color: ink,
@@ -694,7 +739,7 @@ class _AdvanceButton extends GetView<StructureDeskController> {
                 Get.back(result: true);
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: dossierStatusColor(next),
+                backgroundColor: dossierStatusColor(next.status),
                 foregroundColor: AppColors.white,
               ),
               child: const Text('Confirmer'),

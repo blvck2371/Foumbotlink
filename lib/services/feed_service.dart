@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import '../models/feed_item.dart';
+import '../utils/local_media.dart';
 
 class FeedService {
   static const pageSize = 8;
@@ -272,6 +272,13 @@ class FeedService {
     ).orderBy('likedAt', descending: true).limit(limit).get();
     return snap.docs.map((d) => d.id).toSet();
   }
+
+  /// Décode un document de publication avec les mêmes règles que le fil
+  /// — public pour la recherche globale.
+  FeedItem parseDoc(
+    DocumentSnapshot<Map<String, dynamic>> doc, {
+    bool likedByMe = false,
+  }) => _itemFromDoc(doc, likedByMe);
 
   FeedItem _itemFromDoc(
     DocumentSnapshot<Map<String, dynamic>> doc,
@@ -943,15 +950,15 @@ class FeedService {
     final urls = <String>[];
     for (var i = 0; i < localPaths.length; i++) {
       urls.add(
-        await _uploadImage(File(localPaths[i]), '$storagePath/${stamp}_$i.jpg'),
+        await _uploadImage(localPaths[i], '$storagePath/${stamp}_$i.jpg'),
       );
     }
     return urls;
   }
 
-  Future<String> _uploadImage(File file, String fullPath) async {
+  Future<String> _uploadImage(String localPath, String fullPath) async {
     final ref = _storage.ref(fullPath);
-    await ref.putFile(file, _imageMetadata);
+    await (await LocalMedia.upload(ref, localPath, _imageMetadata));
     return ref.getDownloadURL();
   }
 

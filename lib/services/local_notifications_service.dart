@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:get/get.dart';
+import 'package:timezone/data/latest.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz;
 
 import 'notification_launch_guard.dart';
 import 'notification_router.dart';
@@ -66,6 +69,11 @@ class LocalNotificationsService extends GetxService {
   );
 
   Future<LocalNotificationsService> init() async {
+    // Web : pas de notifications locales (le plugin n'a pas
+    // d'implémentation navigateur). Les notifications arrivent par le
+    // service worker FCM quand l'onglet est en arrière-plan, et l'écran
+    // Notifications reste à jour en direct.
+    if (kIsWeb) return this;
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     // Les permissions sont déjà demandées par PushService via FCM — on ne
     // redemande pas ici pour ne pas afficher deux invites.
@@ -117,6 +125,55 @@ class LocalNotificationsService extends GetxService {
     return this;
   }
 
+  bool _tzReady = false;
+
+  /// Programme une notification locale à [at] (heure de l'appareil) —
+  /// rappels d'échéance des démarches. Mode « inexact » : Android la
+  /// délivre à quelques minutes près, sans permission d'alarme exacte.
+  /// Sans effet sur le web.
+  Future<void> scheduleAt({
+    required int id,
+    required DateTime at,
+    required String title,
+    required String body,
+    Map<String, dynamic>? payload,
+  }) async {
+    if (kIsWeb || at.isBefore(DateTime.now())) return;
+    if (!_tzReady) {
+      tz_data.initializeTimeZones();
+      _tzReady = true;
+    }
+    try {
+      await _plugin.zonedSchedule(
+        id,
+        title,
+        body,
+        tz.TZDateTime.from(at, tz.UTC),
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            _demarches.id,
+            _demarches.name,
+            channelDescription: _demarches.description,
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+          iOS: const DarwinNotificationDetails(),
+        ),
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        payload: payload == null ? null : jsonEncode(payload),
+      );
+    } on Object catch (e) {
+      developer.log('programmation', name: 'LocalNotifications', error: e);
+    }
+  }
+
+  Future<void> cancel(int id) async {
+    if (kIsWeb) return;
+    await _plugin.cancel(id);
+  }
+
   void _onTap(NotificationResponse response) {
     final payload = response.payload;
     if (payload != null && payload.isNotEmpty) {
@@ -143,6 +200,7 @@ class LocalNotificationsService extends GetxService {
   /// plan. L'`id` est stable par fil / publication : une conversation active
   /// remplace sa notification précédente plutôt que d'en empiler.
   Future<void> showFromFcm(RemoteMessage message) async {
+    if (kIsWeb) return;
     final n = message.notification;
     final data = message.data;
     final type = (data['type'] as String?) ?? '';

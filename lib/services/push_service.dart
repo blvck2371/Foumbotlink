@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -75,8 +76,12 @@ class PushService extends GetxService {
 
     _preferenceLoaded = _restorePreference();
 
-    _listenCallkitEvents();
-    _handleColdStartAcceptedCall();
+    // CallKit n'existe que sur mobile ; sur le web, l'appel entrant est
+    // présenté par CallService (écran d'appel de l'app).
+    if (!kIsWeb) {
+      _listenCallkitEvents();
+      _handleColdStartAcceptedCall();
+    }
 
     _onMessageSub = FirebaseMessaging.onMessage.listen(_onMessage);
     _onOpenedSub = FirebaseMessaging.onMessageOpenedApp.listen((message) {
@@ -163,7 +168,11 @@ class PushService extends GetxService {
     try {
       await _pushDoc(_auth.uid).set({
         'tokens': FieldValue.arrayUnion([token]),
-        'platform': GetPlatform.isIOS ? 'ios' : 'android',
+        'platform': kIsWeb
+            ? 'web'
+            : GetPlatform.isIOS
+            ? 'ios'
+            : 'android',
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } on FirebaseException catch (e) {
@@ -230,6 +239,9 @@ class PushService extends GetxService {
     final data = message.data;
     switch (data['type']) {
       case 'incoming_call':
+        // Web : CallService voit déjà l'appel par Firestore et ouvre
+        // l'écran d'appel ; pas de CallKit à lever.
+        if (kIsWeb) return;
         await showCallkitIncomingFromData(data);
       case 'call_cancelled':
         final callId = data['callId'] as String?;

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -12,6 +13,7 @@ import '../models/chat_attachment.dart';
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
 import '../models/outbox_entry.dart';
+import '../utils/local_media.dart';
 
 /// Vidéo refusée avant même de partir, parce qu'elle dépasse le plafond
 /// de [ChatService.maxVideoBytes].
@@ -597,6 +599,9 @@ class ChatService {
   final _foreignOutbox = <OutboxEntry>[];
 
   void _saveOutbox() {
+    // Web : un média choisi est un `blob:` qui ne survit pas au
+    // rechargement de la page — rien à reprendre, rien à sauvegarder.
+    if (kIsWeb) return;
     final entries = [
       for (final e in _inFlight.entries)
         for (final m in e.value.values)
@@ -628,6 +633,7 @@ class ChatService {
       _outboxRestore ??= _restoreOutbox(myUid);
 
   Future<void> _restoreOutbox(String myUid) async {
+    if (kIsWeb) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       final entries = OutboxEntry.decodeAll(prefs.getString(_outboxKey));
@@ -673,6 +679,7 @@ class ChatService {
     String messageId, {
     String suffix = '',
   }) async {
+    if (kIsWeb) return path;
     try {
       final dir = await _outboxDir();
       if (path.startsWith(dir.path)) return path;
@@ -690,7 +697,7 @@ class ChatService {
   /// Supprime une copie de la file. Ne touche jamais un fichier situé
   /// ailleurs : l'original appartient à la galerie de la personne.
   Future<void> releaseOutboxFile(String? path) async {
-    if (path == null || path.isEmpty) return;
+    if (path == null || path.isEmpty || kIsWeb) return;
     try {
       final dir = await _outboxDir();
       if (!path.startsWith(dir.path)) return;
@@ -714,36 +721,55 @@ class ChatService {
 
   /// Refuse avant l'envoi un fichier que la règle Storage refuserait
   /// après l'avoir laissé monter en entier.
-  static Future<File> _checkedFile(
+  static Future<String> _checkedFile(
     String filePath, {
     required String what,
     int maxBytes = ChatAttachment.maxFileBytes,
   }) async {
-    final file = File(filePath);
-    final bytes = await file.length();
+    final bytes = await LocalMedia.length(filePath);
     if (bytes >= maxBytes) {
       throw ChatFileTooLarge(bytes: bytes, maxBytes: maxBytes, what: what);
     }
-    return file;
+    return filePath;
   }
 
   Future<String> uploadVoice(String filePath, String conversationId) async {
-    final file = await _checkedFile(filePath, what: 'Message vocal');
-    final ref = _storage.ref('chat/$conversationId/voice/${_uuid.v4()}.m4a');
+    await _checkedFile(filePath, what: 'Message vocal');
+    // Un navigateur qui ne sait pas enregistrer en AAC/MP4 produit du WebM
+    // (Opus) : on le reconnaît à sa signature pour l'annoncer tel quel.
+    final webm = kIsWeb && await _isWebm(filePath);
+    final ref = _storage.ref(
+      'chat/$conversationId/voice/${_uuid.v4()}.${webm ? 'webm' : 'm4a'}',
+    );
     // Sans type, le vocal était servi en `application/octet-stream` : le
     // lecteur iOS (AVPlayer) refuse alors parfois de le lire en flux.
-    await ref.putFile(
-      file,
+    await (await LocalMedia.upload(
+      ref,
+      filePath,
       SettableMetadata(
-        contentType: 'audio/mp4',
+        contentType: webm ? 'audio/webm' : 'audio/mp4',
         cacheControl: 'public, max-age=31536000, immutable',
       ),
-    );
+    ));
     return ref.getDownloadURL();
   }
 
+  /// Signature EBML (1A 45 DF A3) d'un fichier WebM/Matroska.
+  static Future<bool> _isWebm(String path) async {
+    try {
+      final b = await LocalMedia.bytes(path);
+      return b.length > 4 &&
+          b[0] == 0x1A &&
+          b[1] == 0x45 &&
+          b[2] == 0xDF &&
+          b[3] == 0xA3;
+    } on Object {
+      return false;
+    }
+  }
+
   Future<String> uploadImage(String filePath, String conversationId) async {
-    final file = await _checkedFile(filePath, what: 'Photo');
+    await _checkedFile(filePath, what: 'Photo');
     final ext = ChatAttachment.extensionOf(filePath);
     final fileName = '${_uuid.v4()}.${ext.isEmpty ? 'jpg' : ext}';
     final ref = _storage.ref('chat/$conversationId/images/$fileName');
@@ -751,13 +777,14 @@ class ChatService {
     // une pièce jointe servie en `application/octet-stream` est traitée
     // comme un fichier binaire. Le type suit l'extension : le sélecteur
     // recompresse en JPEG, mais une capture d'écran reste en PNG.
-    await ref.putFile(
-      file,
+    await (await LocalMedia.upload(
+      ref,
+      filePath,
       SettableMetadata(
         contentType: ChatAttachment.imageContentTypeFor(filePath),
         cacheControl: 'public, max-age=31536000, immutable',
       ),
-    );
+    ));
     return ref.getDownloadURL();
   }
 
@@ -795,8 +822,7 @@ class ChatService {
     String conversationId, {
     void Function(double progress)? onProgress,
   }) async {
-    final file = File(filePath);
-    final bytes = await file.length();
+    final bytes = await LocalMedia.length(filePath);
     if (bytes >= maxVideoBytes) {
       throw ChatVideoTooLarge(bytes: bytes, maxBytes: maxVideoBytes);
     }
@@ -809,7 +835,11 @@ class ChatService {
     final ref = _storage.ref(
       'chat/$conversationId/videos/${_uuid.v4()}.$safeExtension',
     );
-    final task = ref.putFile(file, _videoMetadataFor(filePath));
+    final task = await LocalMedia.upload(
+      ref,
+      filePath,
+      _videoMetadataFor(filePath),
+    );
     // Une vidéo met de longues secondes à monter sur un réseau mobile :
     // sans progression, la bulle semble figée.
     final sub = onProgress == null
@@ -836,13 +866,14 @@ class ChatService {
     final ref = _storage.ref(
       'chat/$conversationId/videos/${_uuid.v4()}_thumb.jpg',
     );
-    await ref.putFile(
-      File(filePath),
+    await (await LocalMedia.upload(
+      ref,
+      filePath,
       SettableMetadata(
         contentType: 'image/jpeg',
         cacheControl: 'public, max-age=31536000, immutable',
       ),
-    );
+    ));
     return ref.getDownloadURL();
   }
 
@@ -851,7 +882,7 @@ class ChatService {
     String conversationId,
     String originalName,
   ) async {
-    final file = await _checkedFile(filePath, what: 'Document');
+    await _checkedFile(filePath, what: 'Document');
     // Le nom d'origine reste dans le message (`fileName`) ; le chemin, lui,
     // n'en garde qu'une version sûre — un `#` ou un `?` y cassait l'URL.
     final ref = _storage.ref(
@@ -861,14 +892,15 @@ class ChatService {
     // Type réel et nom d'origine : sans eux, le téléphone d'en face
     // recevait un fichier binaire anonyme au lieu d'un PDF qu'il sait
     // ouvrir.
-    await ref.putFile(
-      file,
+    await (await LocalMedia.upload(
+      ref,
+      filePath,
       SettableMetadata(
         contentType: ChatAttachment.contentTypeFor(originalName),
         contentDisposition: ChatAttachment.contentDispositionFor(originalName),
         cacheControl: 'private, max-age=31536000',
       ),
-    );
+    ));
     return ref.getDownloadURL();
   }
 }

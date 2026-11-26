@@ -14,6 +14,7 @@ import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/expandable_text.dart';
 import '../../widgets/feed_image.dart';
+import '../../widgets/feed_impression.dart';
 import '../../widgets/feed_skeleton.dart';
 import '../../widgets/post_media.dart';
 import '../../widgets/foumbot_app_bar.dart';
@@ -47,10 +48,17 @@ class HomeScreen extends GetView<HomeController> {
         appBar: FoumbotAppBar(
           isDark: isDark,
           actions: [
+            IconButton(
+              tooltip: 'Rechercher',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => Get.toNamed(AppRoutes.search),
+              icon: Icon(Icons.search_rounded, color: ink),
+            ),
             // Lives : le point rouge et le nombre disent tout de suite
             // si quelqu'un est en direct.
             IconButton(
               tooltip: 'Lives',
+              visualDensity: VisualDensity.compact,
               onPressed: controller.openLives,
               icon: Obx(() {
                 final count = Get.find<LiveService>().lives.length;
@@ -71,6 +79,7 @@ class HomeScreen extends GetView<HomeController> {
             ),
             IconButton(
               tooltip: 'Notifications',
+              visualDensity: VisualDensity.compact,
               onPressed: controller.openNotifications,
               icon: Obx(() {
                 final unread = controller.unreadNotifications.value;
@@ -89,14 +98,8 @@ class HomeScreen extends GetView<HomeController> {
                 );
               }),
             ),
-            IconButton(
-              tooltip: 'Thème',
-              onPressed: controller.toggleTheme,
-              icon: Icon(
-                isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                color: AppColors.orange,
-              ),
-            ),
+            // Thème : dans le menu latéral — la barre garde la place pour
+            // la recherche sans couper le titre sur les petits écrans.
             WeatherBadge(isDark: isDark),
           ],
         ),
@@ -126,129 +129,213 @@ class HomeScreen extends GetView<HomeController> {
                     ],
             ),
           ),
-          child: RefreshIndicator(
-            color: AppColors.orange,
-            backgroundColor: isDark ? AppColors.blackElevated : AppColors.white,
-            onRefresh: controller.refreshFeed,
-            child: Obx(() {
-              final items = controller.items;
-              final loading = controller.isLoading.value;
-              final loadingMore = controller.isLoadingMore.value;
-              final filter = controller.filter.value;
-              return CustomScrollView(
-                controller: controller.scrollController,
-                physics: const AlwaysScrollableScrollPhysics(
-                  parent: BouncingScrollPhysics(),
-                ),
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'COMMUNE DE FOUMBOT',
-                            style: GoogleFonts.manrope(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1.2,
-                              color: AppColors.orange,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Fil d’actualité',
-                            style: GoogleFonts.spaceGrotesk(
-                              fontSize: 28,
-                              fontWeight: FontWeight.w700,
-                              color: ink,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Infos, annonces et publications des habitants — likez et commentez.',
-                            style: GoogleFonts.manrope(
-                              fontSize: 16,
-                              height: 1.45,
-                              color: muted,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _ComposerEntry(
-                            isDark: isDark,
-                            onTap: controller.openCompose,
-                          ),
-                          const SizedBox(height: 16),
-                          SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: RefreshIndicator(
+                  color: AppColors.orange,
+                  backgroundColor: isDark
+                      ? AppColors.blackElevated
+                      : AppColors.white,
+                  onRefresh: controller.refreshFeed,
+                  child: Obx(() {
+                    final items = controller.items;
+                    final loading = controller.isLoading.value;
+                    final loadingMore = controller.isLoadingMore.value;
+                    final filter = controller.filter.value;
+                    return CustomScrollView(
+                      controller: controller.scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(
+                        parent: BouncingScrollPhysics(),
+                      ),
+                      slivers: [
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _FilterChip(
-                                  label: 'Tout',
-                                  selected: filter == FeedFilter.all,
-                                  isDark: isDark,
-                                  onTap: () =>
-                                      controller.setFilter(FeedFilter.all),
-                                ),
-                                const SizedBox(width: 8),
-                                _FilterChip(
-                                  label: 'Population',
-                                  selected: filter == FeedFilter.population,
-                                  isDark: isDark,
-                                  onTap: () => controller.setFilter(
-                                    FeedFilter.population,
+                                Text(
+                                  'COMMUNE DE FOUMBOT',
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 1.2,
+                                    color: AppColors.orange,
                                   ),
                                 ),
-                                const SizedBox(width: 8),
-                                _FilterChip(
-                                  label: 'Vente & Achats',
-                                  selected: filter == FeedFilter.venteAchat,
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Fil d’actualité',
+                                  style: GoogleFonts.spaceGrotesk(
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.w700,
+                                    color: ink,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Infos, annonces et publications des habitants — likez et commentez.',
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 16,
+                                    height: 1.45,
+                                    color: muted,
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                _ComposerEntry(
                                   isDark: isDark,
-                                  onTap: () => controller.setFilter(
-                                    FeedFilter.venteAchat,
+                                  onTap: controller.openCompose,
+                                ),
+                                const SizedBox(height: 16),
+                                SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: Row(
+                                    children: [
+                                      _FilterChip(
+                                        label: 'Tout',
+                                        selected: filter == FeedFilter.all,
+                                        isDark: isDark,
+                                        onTap: () => controller.setFilter(
+                                          FeedFilter.all,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      _FilterChip(
+                                        label: 'Population',
+                                        selected:
+                                            filter == FeedFilter.population,
+                                        isDark: isDark,
+                                        onTap: () => controller.setFilter(
+                                          FeedFilter.population,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      _FilterChip(
+                                        label: 'Vente & Achats',
+                                        selected:
+                                            filter == FeedFilter.venteAchat,
+                                        isDark: isDark,
+                                        onTap: () => controller.setFilter(
+                                          FeedFilter.venteAchat,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
                             ),
                           ),
+                        ),
+                        // Barre de statuts, hors de l'en-tête pour qu'elle
+                        // défile d'un bord à l'autre : enfermée dans la marge
+                        // de 20 px du titre, on ne pouvait pas la faire glisser
+                        // jusqu'au bord de l'écran. Réservée au fil : l'onglet
+                        // « Vente & Achats » montre des annonces, pas l'humeur
+                        // du jour.
+                        if (!controller.isMarketMode)
+                          SliverToBoxAdapter(child: StatusBar(isDark: isDark)),
+                        if (controller.isMarketMode) ...[
+                          ..._buildMarketSliver(
+                            controller: controller,
+                            isDark: isDark,
+                            muted: muted,
+                            loading: loading,
+                            loadingMore: loadingMore,
+                          ),
+                        ] else ...[
+                          ..._buildFeedSliver(
+                            controller: controller,
+                            items: items,
+                            isDark: isDark,
+                            muted: muted,
+                            loading: loading,
+                            loadingMore: loadingMore,
+                          ),
                         ],
+                      ],
+                    );
+                  }),
+                ),
+              ),
+              // Nouvelles publications arrivées pendant la lecture : on ne
+              // les glisse pas sous le doigt, on propose de les afficher.
+              Positioned(
+                top: 10,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Obx(() {
+                    final count = controller.pendingNew.length;
+                    return AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 250),
+                      transitionBuilder: (child, anim) => SlideTransition(
+                        position: Tween(
+                          begin: const Offset(0, -1),
+                          end: Offset.zero,
+                        ).animate(anim),
+                        child: FadeTransition(opacity: anim, child: child),
                       ),
-                    ),
-                  ),
-                  // Barre de statuts, hors de l'en-tête pour qu'elle
-                  // défile d'un bord à l'autre : enfermée dans la marge
-                  // de 20 px du titre, on ne pouvait pas la faire glisser
-                  // jusqu'au bord de l'écran. Réservée au fil : l'onglet
-                  // « Vente & Achats » montre des annonces, pas l'humeur
-                  // du jour.
-                  if (!controller.isMarketMode)
-                    SliverToBoxAdapter(child: StatusBar(isDark: isDark)),
-                  if (controller.isMarketMode) ...[
-                    ..._buildMarketSliver(
-                      controller: controller,
-                      isDark: isDark,
-                      muted: muted,
-                      loading: loading,
-                      loadingMore: loadingMore,
-                    ),
-                  ] else ...[
-                    ..._buildFeedSliver(
-                      controller: controller,
-                      items: items,
-                      isDark: isDark,
-                      muted: muted,
-                      loading: loading,
-                      loadingMore: loadingMore,
-                    ),
-                  ],
-                ],
-              );
-            }),
+                      child: count == 0 || controller.isMarketMode
+                          ? const SizedBox.shrink()
+                          : _NewPostsPill(
+                              count: count,
+                              onTap: controller.showPendingNew,
+                            ),
+                    );
+                  }),
+                ),
+              ),
+            ],
           ),
         ),
       );
     });
+  }
+}
+
+class _NewPostsPill extends StatelessWidget {
+  const _NewPostsPill({required this.count, required this.onTap});
+
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.orange,
+      elevation: 6,
+      shadowColor: Colors.black45,
+      borderRadius: BorderRadius.circular(22),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.arrow_upward_rounded,
+                color: AppColors.white,
+                size: 18,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                count == 1
+                    ? 'Nouvelle publication'
+                    : '$count nouvelles publications',
+                style: GoogleFonts.manrope(
+                  color: AppColors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -292,15 +379,23 @@ List<Widget> _buildFeedSliver({
           separatorBuilder: (_, _) => const SizedBox(height: 12),
           itemBuilder: (context, i) {
             final item = items[i];
-            return _FeedCard(
+            FeedImagePrefetch.ahead(context, [
+              for (final next in items.skip(i + 1).take(3))
+                ...next.imageUrls.take(4),
+            ]);
+            return FeedImpression(
               key: ValueKey(item.id),
-              item: item,
-              isDark: isDark,
-              timeLabel: controller.timeAgo(item.publishedAt),
-              onOpen: () => controller.openPost(item),
-              onLike: () => controller.toggleLike(item.id),
-              onComment: () => controller.openPost(item),
-              onRepost: () => controller.repostPost(item),
+              onSeen: () => controller.markSeen(item),
+              onDwell: () => controller.markDwell(item),
+              child: _FeedCard(
+                item: item,
+                isDark: isDark,
+                timeLabel: controller.timeAgo(item.publishedAt),
+                onOpen: () => controller.openPost(item),
+                onLike: () => controller.toggleLike(item.id),
+                onComment: () => controller.openPost(item),
+                onRepost: () => controller.repostPost(item),
+              ),
             );
           },
         ),
@@ -438,6 +533,10 @@ List<Widget> _buildMarketSliver({
           separatorBuilder: (_, _) => const SizedBox(height: 12),
           itemBuilder: (context, i) {
             final item = items[i];
+            FeedImagePrefetch.ahead(context, [
+              for (final next in items.skip(i + 1).take(3))
+                ...next.imageUrls.take(1),
+            ]);
             return _MarketFeedCard(
               item: item,
               isDark: isDark,
@@ -569,7 +668,6 @@ class _FilterChip extends StatelessWidget {
 
 class _FeedCard extends StatelessWidget {
   const _FeedCard({
-    super.key,
     required this.item,
     required this.isDark,
     required this.timeLabel,

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../theme/app_colors.dart';
+import '../utils/image_url.dart';
 
 /// Avatar utilisateur : photo réseau légère (cache + décodage borné) ou
 /// initiales en secours — utilisé sur le fil, le profil, la composition, etc.
@@ -73,7 +74,7 @@ class UserAvatar extends StatelessWidget {
       backgroundColor: bg,
       child: ClipOval(
         child: CachedNetworkImage(
-          imageUrl: url,
+          imageUrl: displayImageUrl(url),
           width: diameter.toDouble(),
           height: diameter.toDouble(),
           fit: BoxFit.cover,

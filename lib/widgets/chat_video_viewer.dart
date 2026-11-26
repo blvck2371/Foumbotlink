@@ -1,4 +1,3 @@
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +6,7 @@ import 'package:video_player/video_player.dart';
 import '../theme/app_colors.dart';
 import 'capture_shield.dart';
 import 'foumbot_loader.dart';
+import '../utils/local_media.dart';
 
 /// Ouvre une vidéo de discussion en plein écran.
 ///
@@ -82,7 +82,7 @@ class _ChatVideoViewerState extends State<_ChatVideoViewer> {
     final source = widget.source;
     final controller = source.startsWith('http')
         ? VideoPlayerController.networkUrl(Uri.parse(source))
-        : VideoPlayerController.file(File(source));
+        : LocalMedia.video(source);
     try {
       await controller.initialize();
     } on Exception {

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -10,6 +9,7 @@ import '../models/chat_message.dart';
 import '../models/conversation.dart';
 import '../models/user_status.dart';
 import 'chat_service.dart';
+import '../utils/local_media.dart';
 
 /// Média trop lourd pour un statut, constaté **avant** l'envoi.
 ///
@@ -342,25 +342,27 @@ class StatusService {
       // départ peut ainsi passer sous le plafond.
       final prepared = await VideoCompressionService.prepare(localVideoPath);
       final sentPath = prepared.path;
-      final file = File(sentPath);
       try {
-        await _ensureFitsUnder(file, maxVideoBytes);
+        await _ensureFitsUnder(sentPath, maxVideoBytes);
         // L'extension du fichier envoyé suit celle du fichier réel : un
         // `.mov` stocké sous `.mp4` se lirait mal côté Android.
         final extension = sentPath.toLowerCase().endsWith('.mov')
             ? 'mov'
             : 'mp4';
         final ref = _storage.ref('statuses/$authorUid/${docRef.id}.$extension');
-        await ref.putFile(file, _videoMetadataFor(sentPath));
+        await (await LocalMedia.upload(
+          ref,
+          sentPath,
+          _videoMetadataFor(sentPath),
+        ));
         videoUrl = await ref.getDownloadURL();
       } finally {
         await prepared.discard();
       }
     } else if (localImagePath != null && localImagePath.isNotEmpty) {
-      final file = File(localImagePath);
-      await _ensureFitsUnder(file, maxImageBytes);
+      await _ensureFitsUnder(localImagePath, maxImageBytes);
       final ref = _storage.ref('statuses/$authorUid/${docRef.id}.jpg');
-      await ref.putFile(file, _imageMetadata);
+      await (await LocalMedia.upload(ref, localImagePath, _imageMetadata));
       imageUrl = await ref.getDownloadURL();
     }
 
@@ -397,8 +399,8 @@ class StatusService {
 
   /// Refuse tout de suite un fichier que les règles Storage rejetteraient
   /// de toute façon, mais après l'avoir téléversé.
-  static Future<void> _ensureFitsUnder(File file, int maxBytes) async {
-    final bytes = await file.length();
+  static Future<void> _ensureFitsUnder(String path, int maxBytes) async {
+    final bytes = await LocalMedia.length(path);
     if (bytes >= maxBytes) {
       throw StatusMediaTooLarge(bytes: bytes, maxBytes: maxBytes);
     }

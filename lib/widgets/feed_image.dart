@@ -1,9 +1,13 @@
-import 'dart:io';
+
+import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
+import '../utils/image_url.dart';
+import '../utils/local_media.dart';
+import 'image_shimmer.dart';
 
 /// `imageUrls` mélange des URLs réseau (photos de démo) et des chemins
 /// de fichiers locaux (photos jointes par l'utilisateur via la galerie).
@@ -11,11 +15,15 @@ bool _isNetworkUrl(String path) =>
     path.startsWith('http://') || path.startsWith('https://');
 
 /// Image d'une publication, réseau ou locale, façon Facebook : pas de
-/// roue de chargement — un fond neutre qui s'efface en fondu doux dès que
-/// la photo est prête. Les photos réseau passent par un cache disque
+/// roue de chargement — un reflet lent ([ImageShimmer]) puis la photo en
+/// fondu. Les photos réseau passent par un cache disque
 /// (`cached_network_image`) pour réapparaître instantanément une fois
 /// vues, sans re-téléchargement, y compris après avoir quitté l'app.
-class FeedNetworkImage extends StatelessWidget {
+///
+/// Un échec (réseau qui flanche) est retenté tout seul, deux fois, sans
+/// rien montrer d'autre que le reflet. Ce n'est qu'ensuite qu'un discret
+/// bouton « recharger » apparaît — jamais une icône d'image cassée.
+class FeedNetworkImage extends StatefulWidget {
   const FeedNetworkImage({
     super.key,
     required this.url,
@@ -41,42 +49,128 @@ class FeedNetworkImage extends StatelessWidget {
   final int decodeWidth;
 
   @override
-  Widget build(BuildContext context) {
-    final placeholder = isDark ? AppColors.blackElevated : AppColors.whiteSoft;
-    final errorFallback = ColoredBox(
-      color: placeholder,
-      child: Icon(
-        Icons.image_not_supported_outlined,
-        color: isDark ? AppColors.whiteMuted : AppColors.gray,
-      ),
-    );
+  State<FeedNetworkImage> createState() => _FeedNetworkImageState();
+}
 
-    if (!_isNetworkUrl(url)) {
-      return Image.file(
-        File(url),
-        fit: fit,
+class _FeedNetworkImageState extends State<FeedNetworkImage> {
+  static const _autoRetries = 2;
+
+  int _attempt = 0;
+  bool _retryScheduled = false;
+
+  String get _src => displayImageUrl(widget.url);
+
+  @override
+  void didUpdateWidget(covariant FeedNetworkImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) {
+      _attempt = 0;
+      _retryScheduled = false;
+    }
+  }
+
+  void _retry() {
+    if (!mounted) return;
+    unawaited(CachedNetworkImage.evictFromCache(_src));
+    setState(() {
+      _attempt++;
+      _retryScheduled = false;
+    });
+  }
+
+  Widget _onError() {
+    if (_attempt < _autoRetries) {
+      if (!_retryScheduled) {
+        _retryScheduled = true;
+        // Délai croissant : un réseau qui vient de flancher a besoin d'un
+        // instant pour revenir.
+        Future<void>.delayed(
+          Duration(milliseconds: 1200 * (_attempt + 1)),
+          _retry,
+        );
+      }
+      return ImageShimmer(isDark: widget.isDark);
+    }
+    return _ReloadTile(isDark: widget.isDark, onTap: _retry);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isNetworkUrl(widget.url)) {
+      return Image(
+        image: LocalMedia.image(widget.url),
+        fit: widget.fit,
         width: double.infinity,
         height: double.infinity,
-        errorBuilder: (context, error, stackTrace) => errorFallback,
+        errorBuilder: (context, error, stackTrace) =>
+            _ReloadTile(isDark: widget.isDark, onTap: null),
       );
     }
 
     return CachedNetworkImage(
-      imageUrl: url,
-      fit: fit,
+      key: ValueKey(_attempt),
+      imageUrl: _src,
+      fit: widget.fit,
       width: double.infinity,
       height: double.infinity,
       // Décodage borné en mémoire : sans ça, une photo 3000×4000 uploadée
       // telle quelle occupe ~48 Mo de RAM une fois décodée — quelques-unes
       // dans le fil et l'app passe son temps en GC. 1080 px de large suffit
       // largement pour l'affichage.
-      memCacheWidth: fullResolution ? null : decodeWidth,
-      maxWidthDiskCache: fullResolution ? 2160 : 1440,
-      fadeInDuration: const Duration(milliseconds: 200),
+      memCacheWidth: widget.fullResolution ? null : widget.decodeWidth,
+      maxWidthDiskCache: widget.fullResolution ? 2160 : 1440,
+      fadeInDuration: const Duration(milliseconds: 280),
       fadeInCurve: Curves.easeOut,
-      placeholder: (context, _) => ColoredBox(color: placeholder),
-      errorWidget: (context, _, error) => errorFallback,
+      fadeOutDuration: const Duration(milliseconds: 180),
+      placeholder: (context, _) => ImageShimmer(isDark: widget.isDark),
+      errorWidget: (context, _, error) => _onError(),
     );
+  }
+}
+
+/// Dernier recours, après les tentatives automatiques : la surface reste
+/// neutre, avec un petit bouton pour réessayer — pas d'image « cassée ».
+class _ReloadTile extends StatelessWidget {
+  const _ReloadTile({required this.isDark, required this.onTap});
+
+  final bool isDark;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
+    return ColoredBox(
+      color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
+      child: Center(
+        child: onTap == null
+            ? Icon(Icons.image_outlined, color: muted.withValues(alpha: 0.5))
+            : IconButton(
+                tooltip: 'Recharger la photo',
+                onPressed: onTap,
+                icon: Icon(Icons.refresh_rounded, color: muted),
+              ),
+      ),
+    );
+  }
+}
+
+/// Précharge les photos des prochaines cartes du fil pendant qu'on lit
+/// celle-ci, comme Facebook : quand on y arrive, elles sont déjà là.
+/// Une même photo n'est demandée qu'une fois par session.
+abstract final class FeedImagePrefetch {
+  static final _done = <String>{};
+
+  static void ahead(BuildContext context, Iterable<String> urls) {
+    for (final url in urls) {
+      if (!_isNetworkUrl(url) || !_done.add(url)) continue;
+      unawaited(
+        precacheImage(
+          CachedNetworkImageProvider(displayImageUrl(url)),
+          context,
+          onError: (_, _) => _done.remove(url),
+        ),
+      );
+    }
   }
 }
 
@@ -320,6 +414,10 @@ class _SingleFeedImageState extends State<_SingleFeedImage> {
   static const _minRatio = 3 / 4; // le plus haut toléré (portrait)
   static const _maxRatio = 16 / 9; // le plus large toléré (paysage)
 
+  /// Formes déjà mesurées : en remontant le fil, une carte revient
+  /// directement au bon cadre au lieu de repartir du 4:5.
+  static final _knownRatios = <String, double>{};
+
   ImageStream? _stream;
   ImageStreamListener? _listener;
   double? _ratio;
@@ -327,15 +425,16 @@ class _SingleFeedImageState extends State<_SingleFeedImage> {
   @override
   void initState() {
     super.initState();
-    _resolve();
+    _ratio = _knownRatios[widget.url];
+    if (_ratio == null) _resolve();
   }
 
   @override
   void didUpdateWidget(covariant _SingleFeedImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.url != widget.url) {
-      _ratio = null;
-      _resolve();
+      _ratio = _knownRatios[widget.url];
+      if (_ratio == null) _resolve();
     }
   }
 
@@ -347,14 +446,16 @@ class _SingleFeedImageState extends State<_SingleFeedImage> {
     // le ratio est identique à toute résolution, inutile de décoder la
     // photo en pleine taille juste pour mesurer sa forme.
     final base = _isNetworkUrl(widget.url)
-        ? CachedNetworkImageProvider(widget.url)
-        : FileImage(File(widget.url)) as ImageProvider;
+        ? CachedNetworkImageProvider(displayImageUrl(widget.url))
+        : LocalMedia.image(widget.url);
     final provider = ResizeImage(base, width: 100, allowUpscaling: true);
     final stream = provider.resolve(const ImageConfiguration());
     final listener = ImageStreamListener((info, _) {
       if (!mounted) return;
       final raw = info.image.width / info.image.height;
-      setState(() => _ratio = raw.clamp(_minRatio, _maxRatio).toDouble());
+      final ratio = raw.clamp(_minRatio, _maxRatio).toDouble();
+      _knownRatios[widget.url] = ratio;
+      setState(() => _ratio = ratio);
     });
     stream.addListener(listener);
     _stream = stream;
@@ -369,10 +470,15 @@ class _SingleFeedImageState extends State<_SingleFeedImage> {
 
   @override
   Widget build(BuildContext context) {
-    return AspectRatio(
-      // Format 4:5 par défaut pendant la résolution du vrai ratio, pour
-      // éviter un cadre trop plat qui sauterait ensuite en hauteur.
-      aspectRatio: _ratio ?? 4 / 5,
+    // Format 4:5 par défaut pendant la résolution du vrai ratio, pour
+    // éviter un cadre trop plat ; le passage au vrai format se fait en
+    // douceur plutôt que d'un coup sec sous le doigt.
+    return TweenAnimationBuilder<double>(
+      tween: Tween(end: _ratio ?? 4 / 5),
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+      builder: (context, ratio, child) =>
+          AspectRatio(aspectRatio: ratio, child: child),
       child: widget.child,
     );
   }

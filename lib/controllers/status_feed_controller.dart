@@ -163,11 +163,7 @@ class StatusFeedController extends GetxController {
     try {
       _followingUids.addAll(await _follow.getFollowing(uid, limit: 200));
     } catch (e) {
-      developer.log(
-        'Abonnements',
-        name: 'StatusFeedController',
-        error: e,
-      );
+      developer.log('Abonnements', name: 'StatusFeedController', error: e);
     }
   }
 
@@ -317,9 +313,9 @@ class StatusFeedController extends GetxController {
   /// sans relancer les flux.
   void _applyMirrors() {
     UserStatus withMirrors(UserStatus s) => s.copyWith(
-          viewedByMe: _viewedIds.contains(s.id),
-          likedByMe: _likedIds.contains(s.id),
-        );
+      viewedByMe: _viewedIds.contains(s.id),
+      likedByMe: _likedIds.contains(s.id),
+    );
 
     for (var i = 0; i < _followedStatuses.length; i++) {
       _followedStatuses[i] = withMirrors(_followedStatuses[i]);

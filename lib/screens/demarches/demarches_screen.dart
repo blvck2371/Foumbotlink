@@ -11,6 +11,9 @@ import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
+import '../../widgets/verified_badge.dart';
+import '../../widgets/demarche_deadline.dart';
+import '../../services/demarche_companion.dart';
 
 class DemarchesScreen extends StatelessWidget {
   const DemarchesScreen({super.key});
@@ -72,8 +75,9 @@ class DemarchesScreen extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                'Retrouvez toutes les démarches administratives de la commune de Foumbot : '
-                'documents requis, lieux, coûts et étapes.',
+                'Les démarches publiées par les structures de Foumbot — '
+                'mairie, services publics, entreprises, associations : '
+                'pièces à fournir, lieux, tarifs et étapes.',
                 style: GoogleFonts.manrope(
                   fontSize: 15,
                   height: 1.45,
@@ -86,48 +90,87 @@ class DemarchesScreen extends StatelessWidget {
               // plupart des gens viennent faire ici, une fois leur
               // dossier déposé. Le guide, lui, se consulte une fois.
               const _TrackingEntry(),
-              const SizedBox(height: 26),
+              const SizedBox(height: 22),
+              _SearchField(controller: catalogue, isDark: isDark),
+              const SizedBox(height: 22),
+
+              // Échéances suivies (naissance à déclarer, décès…) : ce qui
+              // presse passe avant tout le reste.
+              _DeadlinesSection(isDark: isDark, ink: ink, muted: muted),
 
               if (catalogue.isLoading.value)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 40),
                   child: Center(child: FoumbotLoader()),
                 )
-              else if (catalogue.loadError.value case final error?)
-                _CatalogueNotice(
-                  icon: Icons.wifi_off_rounded,
-                  title: 'Démarches indisponibles',
-                  message: error,
-                  isDark: isDark,
-                  ink: ink,
-                  muted: muted,
-                )
-              else if (catalogue.isEmpty)
-                _CatalogueNotice(
-                  icon: Icons.assignment_outlined,
-                  title: 'Aucune démarche publiée',
-                  message: 'Les structures de la commune n’ont pas encore '
-                      'décrit leurs démarches. Chacune publie les siennes, '
-                      'avec ses propres pièces, tarifs et délais.',
-                  isDark: isDark,
-                  ink: ink,
-                  muted: muted,
-                )
-              else
-                // `byCategory` est lu **ici**, dans la closure de l'`Obx` :
-                // une lecture faite dans le `build` de la section enfant
-                // se ferait hors du champ réactif, et la liste resterait
-                // vide à l'arrivée des données.
-                for (final cat in DemarcheCategory.values) ...[
-                  _CategorySection(
-                    items: catalogue.byCategory(cat),
-                    category: cat,
+              else ...[
+                if (catalogue.loadError.value case final error?) ...[
+                  _CatalogueNotice(
+                    icon: Icons.wifi_off_rounded,
+                    title: 'Connexion difficile',
+                    message: error,
                     isDark: isDark,
                     ink: ink,
                     muted: muted,
                   ),
                   const SizedBox(height: 20),
                 ],
+                if (catalogue.isEmpty)
+                  _CatalogueNotice(
+                    icon: Icons.storefront_outlined,
+                    title: 'Aucune démarche publiée pour l’instant',
+                    message:
+                        'Chaque structure — mairie, tribunal, entreprise, '
+                        'association… — publie ici ses propres démarches, '
+                        'avec ses pièces, ses tarifs et ses délais, et les '
+                        'tient à jour.',
+                    isDark: isDark,
+                    ink: ink,
+                    muted: muted,
+                  )
+                else ...[
+                  Text(
+                    'Démarches par structure',
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: ink,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Lu **ici**, dans la closure de l'`Obx`, pour que la
+                  // liste suive les données et le filtre.
+                  _StructureFilter(
+                    structures: catalogue.structures,
+                    selected: catalogue.selectedStructure.value,
+                    onSelect: (uid) => catalogue.selectedStructure.value = uid,
+                    isDark: isDark,
+                  ),
+                  const SizedBox(height: 16),
+                  for (final st in catalogue.visibleStructures) ...[
+                    _StructureSection(
+                      structure: st,
+                      isDark: isDark,
+                      ink: ink,
+                      muted: muted,
+                    ),
+                    const SizedBox(height: 24),
+                  ],
+                  if (catalogue.visibleStructures.isEmpty)
+                    _CatalogueNotice(
+                      icon: Icons.search_off_rounded,
+                      title: 'Aucune démarche trouvée',
+                      message: catalogue.selectedStructure.value == null
+                          ? 'Essayez un autre mot : « naissance », '
+                                '« terrain », « abonnement »…'
+                          : 'Cette structure ne propose pas de démarche '
+                                'correspondante. Essayez « Toutes ».',
+                      isDark: isDark,
+                      ink: ink,
+                      muted: muted,
+                    ),
+                ],
+              ],
             ],
           ),
         ),
@@ -146,47 +189,54 @@ class _TrackingEntry extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Get.find<ThemeController>().isDarkMode;
-    final profile = Get.find<UserProfileService>().profile.value;
-    final isDesk =
-        profile != null &&
-        profile.accountType == AccountType.structure &&
-        profile.verified;
+    // `Obx` propre : le profil arrive souvent après le premier rendu
+    // (surtout sur le web), et sans lui les entrées de la structure
+    // resteraient masquées.
+    return Obx(() {
+      final isDark = Get.find<ThemeController>().isDarkMode;
+      final profile = Get.find<UserProfileService>().profile.value;
+      final isDesk =
+          profile != null &&
+          profile.accountType == AccountType.structure &&
+          profile.verified;
 
-    return Column(
-      children: [
-        _EntryCard(
-          isDark: isDark,
-          icon: Icons.pending_actions_rounded,
-          title: 'Suivre mes dossiers',
-          subtitle:
-              'Votre code de suivi et l’avancement de vos démarches, en '
-              'temps réel.',
-          highlighted: true,
-          onTap: () => Get.toNamed(AppRoutes.dossiers),
-        ),
-        if (isDesk) ...[
-          const SizedBox(height: 12),
+      return Column(
+        children: [
           _EntryCard(
             isDark: isDark,
-            icon: Icons.desk_rounded,
-            title: 'Guichet',
+            icon: Icons.pending_actions_rounded,
+            title: 'Suivre mes dossiers',
             subtitle:
-                'Réceptionner un dossier et faire avancer ceux du service.',
-            onTap: () => Get.toNamed(AppRoutes.structureDesk),
+                'Votre code de suivi et l’avancement de vos démarches, en '
+                'temps réel.',
+            highlighted: true,
+            onTap: () => Get.toNamed(AppRoutes.dossiers),
           ),
-          const SizedBox(height: 10),
-          _EntryCard(
-            isDark: isDark,
-            icon: Icons.assignment_outlined,
-            title: 'Mes démarches',
-            subtitle:
-                'Publier et tenir à jour les démarches de votre guichet.',
-            onTap: () => Get.toNamed(AppRoutes.structureDemarches),
-          ),
+          if (isDesk) ...[
+            const SizedBox(height: 12),
+            _EntryCard(
+              isDark: isDark,
+              icon: Icons.desk_rounded,
+              title: 'Guichet',
+              subtitle:
+                  'Scanner le QR code d’un habitant, réceptionner son dossier '
+                  'et le faire avancer d’étape en étape.',
+              onTap: () => Get.toNamed(AppRoutes.structureDesk),
+            ),
+            const SizedBox(height: 10),
+            _EntryCard(
+              isDark: isDark,
+              icon: Icons.assignment_outlined,
+              title: 'Mes démarches (structure)',
+              subtitle:
+                  'Créer vos démarches, leurs pièces et leurs étapes de suivi, '
+                  'et les tenir à jour.',
+              onTap: () => Get.toNamed(AppRoutes.structureDemarches),
+            ),
+          ],
         ],
-      ],
-    );
+      );
+    });
   }
 }
 
@@ -276,53 +326,154 @@ class _EntryCard extends StatelessWidget {
   }
 }
 
-class _CategorySection extends StatelessWidget {
-  const _CategorySection({
-    required this.items,
-    required this.category,
+/// Les démarches d'une structure : son nom (qui mène à son profil) puis
+/// ses démarches.
+class _StructureSection extends StatelessWidget {
+  const _StructureSection({
+    required this.structure,
     required this.isDark,
     required this.ink,
     required this.muted,
   });
 
-  final List<Demarche> items;
-  final DemarcheCategory category;
+  final DemarcheStructure structure;
   final bool isDark;
   final Color ink;
   final Color muted;
 
   @override
   Widget build(BuildContext context) {
-    if (items.isEmpty) return const SizedBox.shrink();
-
+    final n = structure.demarches.length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text(category.icon, style: const TextStyle(fontSize: 22)),
-            const SizedBox(width: 10),
-            Text(
-              category.label,
-              style: GoogleFonts.spaceGrotesk(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: ink,
-              ),
+        InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => Get.toNamed(
+            AppRoutes.userProfile,
+            arguments: structure.uid,
+            preventDuplicates: false,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.orange.withValues(alpha: 0.13),
+                  ),
+                  child: const Icon(
+                    Icons.account_balance_rounded,
+                    color: AppColors.orange,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              structure.name,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.spaceGrotesk(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w700,
+                                color: ink,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          // Seule une structure validée peut publier.
+                          const VerifiedBadge(size: 15),
+                        ],
+                      ),
+                      Text(
+                        '$n démarche${n > 1 ? 's' : ''} · voir le profil',
+                        style: GoogleFonts.manrope(fontSize: 12, color: muted),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
-        const SizedBox(height: 12),
-        for (var i = 0; i < items.length; i++) ...[
+        const SizedBox(height: 10),
+        for (var i = 0; i < n; i++) ...[
           if (i > 0) const SizedBox(height: 10),
           _DemarcheCard(
-            demarche: items[i],
+            demarche: structure.demarches[i],
             isDark: isDark,
             ink: ink,
             muted: muted,
           ),
         ],
       ],
+    );
+  }
+}
+
+/// Filtre par structure : « Toutes », puis chaque structure qui publie.
+class _StructureFilter extends StatelessWidget {
+  const _StructureFilter({
+    required this.structures,
+    required this.selected,
+    required this.onSelect,
+    required this.isDark,
+  });
+
+  final List<DemarcheStructure> structures;
+  final String? selected;
+  final ValueChanged<String?> onSelect;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    if (structures.length < 2) return const SizedBox.shrink();
+    Widget chip(String label, String? uid) {
+      final on = selected == uid;
+      return Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: ChoiceChip(
+          label: Text(label),
+          selected: on,
+          onSelected: (_) => onSelect(uid),
+          showCheckmark: false,
+          selectedColor: AppColors.orange,
+          backgroundColor: isDark
+              ? AppColors.blackElevated
+              : AppColors.whiteSoft,
+          side: BorderSide(
+            color: on
+                ? AppColors.orange
+                : AppColors.orange.withValues(alpha: 0.2),
+          ),
+          labelStyle: GoogleFonts.manrope(
+            fontWeight: FontWeight.w700,
+            color: on
+                ? AppColors.white
+                : (isDark ? AppColors.white : AppColors.black),
+          ),
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 40,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          chip('Toutes', null),
+          for (final st in structures) chip(st.name, st.uid),
+        ],
+      ),
     );
   }
 }
@@ -382,6 +533,7 @@ class _DemarcheCard extends StatelessWidget {
                         color: ink,
                       ),
                     ),
+                    _CardBadges(demarche: demarche, muted: muted),
                     const SizedBox(height: 3),
                     Text(
                       demarche.description,
@@ -488,5 +640,191 @@ class _CatalogueNotice extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// Recherche dans les démarches : titre, description, pièces, lieu.
+class _SearchField extends StatefulWidget {
+  const _SearchField({required this.controller, required this.isDark});
+
+  final DemarchesController controller;
+  final bool isDark;
+
+  @override
+  State<_SearchField> createState() => _SearchFieldState();
+}
+
+class _SearchFieldState extends State<_SearchField> {
+  late final _text = TextEditingController(text: widget.controller.query.value);
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = widget.isDark;
+    final ink = isDark ? AppColors.white : AppColors.black;
+    final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
+    return TextField(
+      controller: _text,
+      onChanged: (v) => widget.controller.query.value = v,
+      textInputAction: TextInputAction.search,
+      style: GoogleFonts.manrope(fontSize: 15, color: ink),
+      cursorColor: AppColors.orange,
+      decoration: InputDecoration(
+        filled: true,
+        fillColor: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
+        prefixIcon: Icon(Icons.search_rounded, color: muted),
+        suffixIcon: Obx(
+          () => widget.controller.query.value.isEmpty
+              ? const SizedBox.shrink()
+              : IconButton(
+                  tooltip: 'Effacer',
+                  icon: Icon(Icons.cancel_rounded, color: muted, size: 20),
+                  onPressed: () {
+                    _text.clear();
+                    widget.controller.query.value = '';
+                  },
+                ),
+        ),
+        hintText: 'Quelle démarche ? Naissance, abonnement, terrain…',
+        hintStyle: GoogleFonts.manrope(fontSize: 14.5, color: muted),
+        contentPadding: const EdgeInsets.symmetric(vertical: 14),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide.none,
+        ),
+      ),
+    );
+  }
+}
+
+/// Catégorie et progression de la checklist (« 3/5 pièces »).
+class _CardBadges extends StatelessWidget {
+  const _CardBadges({required this.demarche, required this.muted});
+
+  final Demarche demarche;
+  final Color muted;
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      final p = Get.find<DemarcheCompanion>().progress(demarche);
+      final started = p.done > 0;
+      return Padding(
+        padding: const EdgeInsets.only(top: 5),
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            if (started)
+              _Pill(
+                text: p.done == p.total
+                    ? 'Dossier complet'
+                    : '${p.done}/${p.total} pièces prêtes',
+                color: p.done == p.total ? AppColors.success : AppColors.orange,
+                icon: p.done == p.total
+                    ? Icons.check_circle_rounded
+                    : Icons.checklist_rounded,
+              ),
+            _Pill(
+              text: '${demarche.category.icon} ${demarche.category.label}',
+              color: muted,
+            ),
+          ],
+        ),
+      );
+    });
+  }
+}
+
+class _Pill extends StatelessWidget {
+  const _Pill({required this.text, required this.color, this.icon});
+
+  final String text;
+  final Color color;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 12, color: color),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            text,
+            style: GoogleFonts.manrope(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Échéances suivies, la plus proche d'abord.
+class _DeadlinesSection extends StatelessWidget {
+  const _DeadlinesSection({
+    required this.isDark,
+    required this.ink,
+    required this.muted,
+  });
+
+  final bool isDark;
+  final Color ink;
+  final Color muted;
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      final list = Get.find<DemarcheCompanion>().deadlines.toList();
+      if (list.isEmpty) return const SizedBox.shrink();
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 26),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Mes échéances',
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: ink,
+              ),
+            ),
+            const SizedBox(height: 12),
+            for (final d in list) ...[
+              DeadlineCard(
+                deadline: d,
+                isDark: isDark,
+                onTap: () {
+                  final live = Get.find<DemarchesController>().demarches
+                      .firstWhereOrNull((e) => e.id == d.demarcheId);
+                  if (live != null) {
+                    Get.toNamed(AppRoutes.demarcheDetail, arguments: live);
+                  }
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
+          ],
+        ),
+      );
+    });
   }
 }

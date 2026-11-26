@@ -42,7 +42,7 @@
 		<key>NSMicrophoneUsageDescription</key>
 		<string>Foumbot Link a besoin du micro pour enregistrer des messages vocaux et passer des appels.</string>
 		<key>NSCameraUsageDescription</key>
-		<string>Foumbot Link a besoin de la caméra pour les appels vidéo.</string>
+		<string>Foumbot Link utilise la caméra pour les appels vidéo, les photos et la lecture du QR code de suivi des dossiers au guichet.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
 		<string>Foumbot Link a besoin d’accéder à vos photos pour les joindre à une publication.</string>
 		<key>UIApplicationSceneManifest</key>

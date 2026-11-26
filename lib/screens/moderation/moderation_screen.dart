@@ -14,6 +14,7 @@ import '../../theme/theme_controller.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
+import '../../utils/image_url.dart';
 
 /// Dossier de la file de modération (`moderationQueue/{id}`), tel
 /// qu'écrit par `onReportCreated`.
@@ -366,7 +367,7 @@ class _EntryCard extends StatelessWidget {
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: CachedNetworkImage(
-                imageUrl: image,
+                imageUrl: displayImageUrl(image),
                 height: 180,
                 width: double.infinity,
                 fit: BoxFit.cover,

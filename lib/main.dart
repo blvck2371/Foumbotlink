@@ -10,6 +10,7 @@ import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'firebase_options.dart';
 import 'routes/app_pages.dart';
@@ -41,6 +42,7 @@ import 'services/weather_service.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
+import 'services/demarche_companion.dart';
 
 /// Réception d'un message FCM quand l'app est en arrière-plan ou tuée.
 /// Doit rester une fonction top-level annotée `vm:entry-point` : elle tourne
@@ -130,7 +132,11 @@ Future<void> main() async {
   // Appels entrants quand l'app n'est pas au premier plan : le message FCM
   // réveille cet isolate, qui lève l'écran d'appel CallKit ; l'action
   // « Refuser » depuis app tuée passe par le handler CallKit.
-  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  // Web : les messages en arrière-plan passent par le service worker
+  // (web/firebase-messaging-sw.js), pas par un isolate Dart.
+  if (!kIsWeb) {
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  }
 
   // Android uniquement : `registerBackgroundHandler` n'existe que dans la
   // partie Kotlin de flutter_callkit_incoming — le plugin iOS ne
@@ -208,6 +214,7 @@ Future<void> main() async {
     () async => LocalNotificationsService().init(),
     permanent: true,
   );
+  await Get.putAsync(() => DemarcheCompanion().init(), permanent: true);
   Get.put(PushService(), permanent: true);
 
   runApp(const FoumbotlikApp());
@@ -230,10 +237,55 @@ class FoumbotlikApp extends StatelessWidget {
         initialRoute: AppPages.initial,
         getPages: AppPages.routes,
         defaultTransition: Transition.fadeIn,
+        // Textes de Flutter lui-même (calendrier, copier/coller…) en
+        // français.
+        locale: const Locale('fr', 'FR'),
+        fallbackLocale: const Locale('fr', 'FR'),
+        supportedLocales: const [Locale('fr', 'FR'), Locale('en')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
         // Page « pas de connexion » posée au-dessus de tous les écrans —
         // voir [ConnectivityGate].
-        builder: (context, child) =>
-            ConnectivityGate(child: child ?? const SizedBox.shrink()),
+        builder: (context, child) => _WebColumn(
+          child: ConnectivityGate(child: child ?? const SizedBox.shrink()),
+        ),
+      ),
+    );
+  }
+}
+
+/// Web sur grand écran : l'app, pensée pour un téléphone, tient dans une
+/// colonne centrée au lieu de s'étirer sur toute la largeur (cartes et
+/// photos démesurées). Les écrans étroits — téléphones, navigateur
+/// mobile — ne changent pas.
+class _WebColumn extends StatelessWidget {
+  const _WebColumn({required this.child});
+
+  final Widget child;
+
+  static const _maxWidth = 600.0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!kIsWeb) return child;
+    final media = MediaQuery.of(context);
+    if (media.size.width <= _maxWidth) return child;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return ColoredBox(
+      color: dark ? const Color(0xFF050505) : const Color(0xFFEDEDED),
+      child: Center(
+        child: SizedBox(
+          width: _maxWidth,
+          child: ClipRect(
+            // Les écrans mesurent leur place avec MediaQuery : on leur
+            // annonce la colonne, pas la fenêtre entière.
+            child: MediaQuery(
+              data: media.copyWith(
+                size: Size(_maxWidth, media.size.height),
+              ),
+              child: child,
+            ),
+          ),
+        ),
       ),
     );
   }

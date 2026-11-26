@@ -859,14 +859,34 @@ exports.onDossierWritten = onDocumentWritten(
         before.data().status :
         null;
 
-      // Seul un changement d'état intéresse : une correction de référence
-      // ne doit pas faire sonner le téléphone de quelqu'un.
-      if (previousStatus === dossier.status) return;
+      const previousStep = before && before.exists ?
+        (before.data().stepIndex || 0) :
+        null;
+      const step = dossier.stepIndex || 0;
 
-      const message = DOSSIER_MESSAGES[dossier.status];
+      // Seul un changement d'état ou d'étape intéresse : une correction de
+      // référence ne doit pas faire sonner le téléphone de quelqu'un.
+      if (previousStatus === dossier.status && previousStep === step) return;
+
+      let message = DOSSIER_MESSAGES[dossier.status];
       if (!message) {
         logger.warn(`État de dossier inconnu : ${dossier.status}`);
         return;
+      }
+
+      // Étapes définies par la structure (« Phase de signature »,
+      // « Disponible »…) : c'est leur nom que la personne attend.
+      const steps = Array.isArray(dossier.steps) ? dossier.steps : [];
+      const onStep = ["receptionne", "enCours", "termine"]
+          .includes(dossier.status);
+      if (steps.length > 0 && onStep && steps[step]) {
+        const last = step === steps.length - 1;
+        message = {
+          title: `Votre dossier : ${steps[step]}`,
+          body: (d) => last ?
+            `${d.structureName} : dernière étape atteinte.` :
+            `${d.structureName} · étape ${step + 1} sur ${steps.length}.`,
+        };
       }
 
       // Ni l'intitulé de la démarche, ni le motif saisi par l'agent ne
@@ -2280,3 +2300,9 @@ exports.deleteAccount = onCall({timeoutSeconds: 540}, async (request) => {
   logger.info(`deleteAccount : ${uid} supprimé`);
   return {deleted: true};
 });
+
+// --- Recherche globale (voir search_index.js) -------------------------
+const searchIndex = require("./search_index");
+exports.indexUserForSearch = searchIndex.indexUser;
+exports.indexPostForSearch = searchIndex.indexPost;
+exports.indexMarketForSearch = searchIndex.indexMarket;

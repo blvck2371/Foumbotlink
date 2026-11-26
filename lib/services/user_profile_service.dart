@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:developer' as developer;
-import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -12,6 +11,7 @@ import '../models/phone_contact.dart';
 import '../models/user_profile.dart';
 import 'auth_service.dart';
 import 'dossier_service.dart';
+import '../utils/local_media.dart';
 
 /// Lit/écrit le profil Firestore (`users/{uid}`) associé au compte
 /// Firebase Auth courant : type de compte, nom affiché.
@@ -401,10 +401,11 @@ class UserProfileService extends GetxService {
   Future<String> uploadProfilePhoto(String filePath) async {
     final uid = _auth.uid;
     final ref = _storage.ref('profiles/$uid/avatar.jpg');
-    await ref.putFile(
-      File(filePath),
+    await (await LocalMedia.upload(
+      ref,
+      filePath,
       SettableMetadata(contentType: 'image/jpeg'),
-    );
+    ));
     final url = await ref.getDownloadURL();
     await _usersRef.doc(uid).set({'photoUrl': url}, SetOptions(merge: true));
     _syncCopies();

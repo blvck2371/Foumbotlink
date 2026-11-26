@@ -1,6 +1,7 @@
 import 'dart:developer' as developer;
 
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_contacts/flutter_contacts.dart';
 
 import '../models/phone_contact.dart';
@@ -38,6 +39,9 @@ enum ContactMatchFailure {
   /// fonction. Distingué d'une panne réseau : il n'y a rien à réessayer
   /// tout de suite, et le dire évite qu'on s'acharne.
   quotaAtteint,
+
+  /// Navigateur : aucun accès au répertoire du téléphone.
+  indisponibleSurLeWeb,
 }
 
 /// Résultat d'un rapprochement : les comptes trouvés, ou la raison de
@@ -75,6 +79,11 @@ class ContactMatchService {
   static const _batchSize = 500;
 
   Future<ContactMatchResult> findFriends() async {
+    if (kIsWeb) {
+      return const ContactMatchResult.failed(
+        ContactMatchFailure.indisponibleSurLeWeb,
+      );
+    }
     try {
       // Lecture seule : l'app n'a aucune raison d'écrire dans le
       // répertoire, et c'est ce que la demande de permission annonce.

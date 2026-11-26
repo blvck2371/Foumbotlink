@@ -79,8 +79,7 @@ class ContactsController extends GetxController {
       return true;
     } catch (e) {
       developer.log('savePhone', name: 'ContactsController', error: e);
-      phoneError.value =
-          'Enregistrement impossible. Vérifiez votre connexion.';
+      phoneError.value = 'Enregistrement impossible. Vérifiez votre connexion.';
       return false;
     } finally {
       isSavingPhone.value = false;

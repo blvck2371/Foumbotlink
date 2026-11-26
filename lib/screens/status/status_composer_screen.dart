@@ -1,4 +1,3 @@
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -7,6 +6,7 @@ import 'package:video_player/video_player.dart';
 
 import '../../models/user_status.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/local_media.dart';
 
 /// Ce que la composition renvoie à l'appelant, qui se charge de publier —
 /// l'écran ne connaît ni Firestore ni Storage.
@@ -107,7 +107,10 @@ class _StatusComposerScreenState extends State<StatusComposerScreen> {
         children: [
           if (_isPhoto)
             Center(
-              child: Image.file(File(widget.imagePath!), fit: BoxFit.contain),
+              child: Image(
+                image: LocalMedia.image(widget.imagePath!),
+                fit: BoxFit.contain,
+              ),
             ),
           if (_isVideo) _VideoPreview(path: widget.videoPath!),
 
@@ -246,7 +249,7 @@ class _VideoPreviewState extends State<_VideoPreview> {
   @override
   void initState() {
     super.initState();
-    _controller = VideoPlayerController.file(File(widget.path));
+    _controller = LocalMedia.video(widget.path);
     _controller.initialize().then((_) {
       if (!mounted) return;
       _controller

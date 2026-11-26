@@ -62,7 +62,8 @@ class StructureDemarchesScreen extends GetView<StructureDemarchesController> {
                   if (!controller.canPublish) ...[
                     _Notice(
                       icon: Icons.hourglass_top_rounded,
-                      text: 'Votre compte structure doit être validé avant '
+                      text:
+                          'Votre compte structure doit être validé avant '
                           'de publier des démarches.',
                       isDark: isDark,
                       muted: muted,
@@ -74,7 +75,7 @@ class StructureDemarchesScreen extends GetView<StructureDemarchesController> {
                       isDark: isDark,
                       ink: ink,
                       muted: muted,
-                      onImport: () => _import(context),
+                      onCreate: () => _openForm(context, isDark: isDark),
                     )
                   else ...[
                     for (final demarche in items) ...[
@@ -92,24 +93,6 @@ class StructureDemarchesScreen extends GetView<StructureDemarchesController> {
                       ),
                       const SizedBox(height: 10),
                     ],
-                    if (controller.modelesDisponibles.isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      TextButton.icon(
-                        onPressed: () => _import(context),
-                        icon: const Icon(
-                          Icons.download_rounded,
-                          color: AppColors.orange,
-                        ),
-                        label: Text(
-                          'Reprendre ${controller.modelesDisponibles.length} '
-                          'modèle(s) courant(s)',
-                          style: GoogleFonts.manrope(
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.orange,
-                          ),
-                        ),
-                      ),
-                    ],
                   ],
                 ],
               ),
@@ -117,33 +100,11 @@ class StructureDemarchesScreen extends GetView<StructureDemarchesController> {
     });
   }
 
-  Future<void> _import(BuildContext context) async {
-    final confirmed = await confirmAction(
-      title: 'Reprendre les modèles ?',
-      message: 'Les démarches courantes seront ajoutées à votre liste. '
-          'Corrigez ensuite vos lieux, tarifs et délais — les modèles ne '
-          'les connaissent pas.',
-      confirmLabel: 'Reprendre',
-      destructive: false,
-    );
-    if (!confirmed) return;
-
-    final error = await controller.importerModeles();
-    if (error != null) {
-      Get.snackbar('Import impossible', error, duration: const Duration(seconds: 4));
-      return;
-    }
-    Get.snackbar(
-      'Modèles repris',
-      'Relisez chaque démarche : les tarifs et lieux sont à adapter.',
-      duration: const Duration(seconds: 4),
-    );
-  }
-
   Future<void> _delete(BuildContext context, Demarche demarche) async {
     final confirmed = await confirmAction(
       title: 'Retirer cette démarche ?',
-      message: '« ${demarche.title} » ne sera plus visible par les '
+      message:
+          '« ${demarche.title} » ne sera plus visible par les '
           'habitants. Les dossiers déjà reçus ne sont pas touchés.',
       confirmLabel: 'Retirer',
     );
@@ -151,8 +112,11 @@ class StructureDemarchesScreen extends GetView<StructureDemarchesController> {
 
     final error = await controller.remove(demarche);
     if (error != null) {
-      Get.snackbar('Suppression impossible', error,
-          duration: const Duration(seconds: 4));
+      Get.snackbar(
+        'Suppression impossible',
+        error,
+        duration: const Duration(seconds: 4),
+      );
     }
   }
 
@@ -160,9 +124,8 @@ class StructureDemarchesScreen extends GetView<StructureDemarchesController> {
     BuildContext context, {
     required bool isDark,
     Demarche? demarche,
-    DemarcheModele? modele,
   }) async {
-    controller.startEditing(demarche: demarche, modele: modele);
+    controller.startEditing(demarche: demarche);
     await Get.bottomSheet<void>(
       _DemarcheForm(isDark: isDark),
       isScrollControlled: true,
@@ -219,13 +182,13 @@ class _EmptyState extends StatelessWidget {
     required this.isDark,
     required this.ink,
     required this.muted,
-    required this.onImport,
+    required this.onCreate,
   });
 
   final bool isDark;
   final Color ink;
   final Color muted;
-  final VoidCallback onImport;
+  final VoidCallback onCreate;
 
   @override
   Widget build(BuildContext context) {
@@ -249,8 +212,9 @@ class _EmptyState extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Créez vos démarches une par une, ou partez des modèles '
-            'courants et adaptez-les à votre guichet.',
+            'Créez chacune de vos démarches : pièces à fournir, lieu, '
+            'tarif, délai et étapes. Vous les modifiez à tout moment, et '
+            'les habitants voient aussitôt la mise à jour.',
             style: GoogleFonts.manrope(
               fontSize: 14,
               height: 1.45,
@@ -259,10 +223,10 @@ class _EmptyState extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           TextButton.icon(
-            onPressed: onImport,
-            icon: const Icon(Icons.download_rounded, color: AppColors.orange),
+            onPressed: onCreate,
+            icon: const Icon(Icons.add_rounded, color: AppColors.orange),
             label: Text(
-              'Partir des modèles courants',
+              'Créer ma première démarche',
               style: GoogleFonts.manrope(
                 fontWeight: FontWeight.w700,
                 color: AppColors.orange,
@@ -304,8 +268,10 @@ class _DemarcheRow extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
           child: Row(
             children: [
-              Text(demarche.category.icon,
-                  style: const TextStyle(fontSize: 20)),
+              Text(
+                demarche.category.icon,
+                style: const TextStyle(fontSize: 20),
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -397,12 +363,14 @@ class _DemarcheForm extends GetView<StructureDemarchesController> {
                 DropdownButtonFormField<DemarcheCategory>(
                   initialValue: controller.category.value,
                   isExpanded: true,
-                  dropdownColor:
-                      isDark ? AppColors.blackElevated : AppColors.white,
+                  dropdownColor: isDark
+                      ? AppColors.blackElevated
+                      : AppColors.white,
                   decoration: InputDecoration(
                     filled: true,
-                    fillColor:
-                        isDark ? AppColors.blackElevated : AppColors.whiteSoft,
+                    fillColor: isDark
+                        ? AppColors.blackElevated
+                        : AppColors.whiteSoft,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(14),
                       borderSide: BorderSide.none,
@@ -418,8 +386,7 @@ class _DemarcheForm extends GetView<StructureDemarchesController> {
                         value: cat,
                         child: Text(
                           '${cat.icon}  ${cat.label}',
-                          style:
-                              GoogleFonts.manrope(fontSize: 14, color: ink),
+                          style: GoogleFonts.manrope(fontSize: 14, color: ink),
                         ),
                       ),
                   ],
@@ -478,14 +445,73 @@ class _DemarcheForm extends GetView<StructureDemarchesController> {
                   ink: ink,
                   muted: muted,
                 ),
+                _Label(text: 'Délai à respecter (facultatif)', muted: muted),
+                Text(
+                  'Si la démarche doit être faite dans un délai — par '
+                  'exemple 90 jours après une naissance —, indiquez-le : '
+                  'les habitants pourront saisir leur date et recevoir des '
+                  'rappels. Si vous le modifiez, leurs rappels suivent.',
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: muted,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 110,
+                      child: _Field(
+                        label: 'Jours',
+                        hint: '90',
+                        ctrl: controller.echeanceJoursCtrl,
+                        isDark: isDark,
+                        ink: ink,
+                        muted: muted,
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _Field(
+                        label: 'À compter de',
+                        hint: 'la naissance de l’enfant',
+                        ctrl: controller.echeanceDepuisCtrl,
+                        isDark: isDark,
+                        ink: ink,
+                        muted: muted,
+                      ),
+                    ),
+                  ],
+                ),
+                _Label(
+                  text: 'Étapes de suivi du dossier — une par ligne',
+                  muted: muted,
+                ),
+                Text(
+                  'Les étapes par lesquelles passe un dossier chez vous, '
+                  'dans l’ordre. Au guichet, vous scannez le QR code de '
+                  'l’habitant, puis vous faites avancer son dossier '
+                  'd’étape en étape : il est prévenu à chaque fois.',
+                  style: GoogleFonts.manrope(
+                    fontSize: 12,
+                    height: 1.4,
+                    color: muted,
+                  ),
+                ),
+                const SizedBox(height: 10),
                 _Field(
-                  label: 'Étapes — une par ligne',
-                  hint: 'Se présenter au guichet\nRemplir le formulaire',
+                  label: '',
+                  hint:
+                      'Dossier réceptionné\nPhase de signature\n'
+                      'Disponible au retrait',
                   ctrl: controller.etapesCtrl,
                   isDark: isDark,
                   ink: ink,
                   muted: muted,
-                  maxLines: 5,
+                  maxLines: 6,
                 ),
                 if (controller.formError.value case final error?) ...[
                   const SizedBox(height: 6),
@@ -560,6 +586,7 @@ class _Field extends StatelessWidget {
     required this.ink,
     required this.muted,
     this.maxLines = 1,
+    this.keyboardType,
   });
 
   final String label;
@@ -569,18 +596,20 @@ class _Field extends StatelessWidget {
   final Color ink;
   final Color muted;
   final int maxLines;
+  final TextInputType? keyboardType;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _Label(text: label, muted: muted),
+        if (label.isNotEmpty) _Label(text: label, muted: muted),
         FormFieldBox(
           isDark: isDark,
           child: TextField(
             controller: ctrl,
             maxLines: maxLines,
+            keyboardType: keyboardType,
             style: GoogleFonts.manrope(fontSize: 14, height: 1.4, color: ink),
             decoration: InputDecoration.collapsed(
               hintText: hint,

@@ -8,13 +8,13 @@ import '../models/video_compression_policy.dart';
 import '../services/video_compression_service.dart';
 import '../widgets/video_quality_sheet.dart';
 import 'package:get_thumbnail_video/video_thumbnail.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:video_player/video_player.dart';
 
 import '../models/call.dart';
 import '../models/chat_message.dart';
@@ -29,6 +29,7 @@ import '../services/auth_service.dart';
 import '../services/chat_service.dart';
 import '../services/follow_service.dart';
 import '../services/moderation_service.dart';
+import '../utils/local_media.dart';
 
 /// Durée d'inactivité de saisie après laquelle on repasse à "idle" côté
 /// local (indépendamment du côté distant, qui a sa propre marge — voir
@@ -493,8 +494,8 @@ class ChatController extends GetxController {
       if (at != null && (next == null || at.isBefore(next))) next = at;
     }
     if (next == null) return;
-    final wait = next.difference(DateTime.now()) +
-        const Duration(milliseconds: 200);
+    final wait =
+        next.difference(DateTime.now()) + const Duration(milliseconds: 200);
     _expiryTimer = Timer(
       wait.isNegative ? Duration.zero : wait,
       _rebuildMessages,
@@ -1275,14 +1276,22 @@ class ChatController extends GetxController {
       final hasPermission = await _recorder.hasPermission();
       if (!hasPermission) return;
 
-      final dir = await getTemporaryDirectory();
-      final path =
-          '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      // Web : pas de dossier temporaire, l'enregistrement reste en
+      // mémoire (`stop` rend une adresse `blob:`). AAC/MP4 d'abord — c'est
+      // ce que lisent aussi les iPhone ; un navigateur qui ne sait pas
+      // l'encoder enregistre en Opus.
+      var encoder = AudioEncoder.aacLc;
+      var path = '';
+      if (kIsWeb) {
+        if (!await _recorder.isEncoderSupported(encoder)) {
+          encoder = AudioEncoder.opus;
+        }
+      } else {
+        final dir = await getTemporaryDirectory();
+        path = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      }
 
-      await _recorder.start(
-        const RecordConfig(encoder: AudioEncoder.aacLc),
-        path: path,
-      );
+      await _recorder.start(RecordConfig(encoder: encoder), path: path);
 
       isRecording.value = true;
       recordDuration.value = 0;
@@ -1434,8 +1443,8 @@ class ChatController extends GetxController {
     var quality = VideoSendQuality.standard;
     int originalBytes;
     try {
-      originalBytes = await File(picked.path).length();
-    } on FileSystemException catch (e) {
+      originalBytes = await LocalMedia.length(picked.path);
+    } on Object catch (e) {
       _reportSendError('video length failed', e);
       return;
     }
@@ -1464,6 +1473,9 @@ class ChatController extends GetxController {
   /// Un échec n'empêche rien : la vidéo part sans vignette, la bulle
   /// retombe sur sa tuile.
   Future<String?> _extractVideoThumb(String path, int? durationMs) async {
+    // Web : pas de fichier où déposer la vignette ; la bulle retombe sur
+    // sa tuile, comme pour un échec.
+    if (kIsWeb) return null;
     try {
       final dir = await getTemporaryDirectory();
       final thumb = await VideoThumbnail.thumbnailFile(
@@ -1490,7 +1502,7 @@ class ChatController extends GetxController {
   /// Un échec ici n'empêche rien : la vidéo part sans sa durée, la bulle
   /// s'en passe.
   Future<int?> _probeVideoDuration(String path) async {
-    final probe = VideoPlayerController.file(File(path));
+    final probe = LocalMedia.video(path);
     try {
       await probe.initialize();
       final value = probe.value.duration;
@@ -1556,17 +1568,25 @@ class ChatController extends GetxController {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.any,
       allowMultiple: false,
+      // Web : pas de chemin de fichier, seulement les octets.
+      withData: kIsWeb,
     );
     if (result == null || result.files.isEmpty) return;
 
     final file = result.files.first;
-    if (file.path == null) return;
+    // Web : les octets deviennent une adresse `blob:`, que le reste de
+    // l'envoi lit comme un chemin (voir LocalMedia).
+    final bytes = file.bytes;
+    final picked = kIsWeb
+        ? (bytes == null ? null : XFile.fromData(bytes, name: file.name).path)
+        : file.path;
+    if (picked == null) return;
 
     final replyTo = replyingTo.value;
     replyingTo.value = null;
 
     final id = _chat.newMessageId(_conversationId);
-    final path = await _chat.keepForOutbox(file.path!, id);
+    final path = await _chat.keepForOutbox(picked, id);
     _addLocalMessage(
       _pendingMessage(
         id: id,
@@ -1727,7 +1747,7 @@ class ChatController extends GetxController {
   }
 
   void _safeDeleteFile(String? path) {
-    if (path == null) return;
+    if (path == null || kIsWeb) return;
     try {
       final f = File(path);
       if (f.existsSync()) f.deleteSync();

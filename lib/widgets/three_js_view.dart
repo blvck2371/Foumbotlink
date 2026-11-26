@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'foumbot_loader.dart';
+import 'three_js/web_frame.dart';
 
 /// Affiche une scène Three.js chargée depuis les assets locaux.
 class ThreeJsView extends StatefulWidget {
@@ -36,6 +37,9 @@ class ThreeJsView extends StatefulWidget {
 
 class _ThreeJsViewState extends State<ThreeJsView> {
   WebViewController? _controller;
+
+  /// Web : la page, scripts inclus, pour l'`iframe`.
+  String? _webHtml;
   bool _ready = false;
   String? _error;
   String? _servedScene;
@@ -71,7 +75,32 @@ class _ThreeJsViewState extends State<ThreeJsView> {
     return dir;
   }
 
+  /// Web : pas de WebView ni de fichiers temporaires. La page est
+  /// assemblée en mémoire, ses deux scripts insérés en ligne.
+  Future<void> _bootstrapWeb() async {
+    try {
+      final html = await rootBundle.loadString('assets/web/onboarding.html');
+      final three = await rootBundle.loadString('assets/threejs/three.min.js');
+      final geometry = await rootBundle.loadString('assets/web/map_geometry.js');
+      final page = html
+          .replaceFirst(
+            '<script src="./three.min.js"></script>',
+            '<script>$three</script>',
+          )
+          .replaceFirst(
+            '<script src="./map_geometry.js"></script>',
+            '<script>$geometry</script>',
+          );
+      if (!mounted) return;
+      setState(() => _webHtml = page);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.toString());
+    }
+  }
+
   Future<void> _bootstrap() async {
+    if (kIsWeb) return _bootstrapWeb();
     try {
       late final WebViewController controller;
       controller = WebViewController()
@@ -92,16 +121,8 @@ class _ThreeJsViewState extends State<ThreeJsView> {
           ),
         );
 
-      if (kIsWeb) {
-        // Fallback web: inline minimal bootstrap is not supported here.
-        await controller.loadHtmlString(
-          '<html><body style="background:transparent"></body></html>',
-        );
-      } else {
-        final dir = await _prepareWebRoot();
-        final htmlPath = '${dir.path}/onboarding.html';
-        await controller.loadFile(htmlPath);
-      }
+      final dir = await _prepareWebRoot();
+      await controller.loadFile('${dir.path}/onboarding.html');
 
       if (!mounted) return;
       setState(() => _controller = controller);
@@ -171,6 +192,29 @@ class _ThreeJsViewState extends State<ThreeJsView> {
               style: Theme.of(context).textTheme.bodyMedium,
             ),
           );
+    }
+
+    final webHtml = _webHtml;
+    if (webHtml != null) {
+      // Pas d'opacité 0 sur l'iframe : Flutter ne dessinerait pas la vue,
+      // la page ne se chargerait jamais et ne se dirait jamais prête. Son
+      // fond est transparent ; le chargeur la recouvre le temps qu'elle
+      // démarre.
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          ThreeJsWebFrame(
+            html: webHtml,
+            scene: widget.scene,
+            onReady: () {
+              if (!mounted) return;
+              setState(() => _ready = true);
+              widget.onReady?.call();
+            },
+          ),
+          if (!_ready) widget.fallback ?? const Center(child: FoumbotLoader()),
+        ],
+      );
     }
 
     if (_controller == null) {

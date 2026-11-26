@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:video_compress/video_compress.dart';
 
 import '../models/video_compression_policy.dart';
+import '../utils/local_media.dart';
 
 /// Vidéo prête à partir : l'original, ou sa version compressée.
 class PreparedVideo {
@@ -73,14 +75,16 @@ class VideoCompressionService {
     VideoSendQuality quality,
     void Function(double progress)? onProgress,
   ) async {
-    final original = File(path);
-    final originalBytes = await original.length();
+    final originalBytes = await LocalMedia.length(path);
     final asIs = PreparedVideo(
       path: path,
       bytes: originalBytes,
       originalBytes: originalBytes,
       compressed: false,
     );
+    // Web : pas d'encodeur vidéo accessible depuis le navigateur — la
+    // vidéo part telle quelle (le plafond de taille s'applique toujours).
+    if (kIsWeb) return asIs;
     if (!VideoCompressionPolicy.shouldCompress(originalBytes)) return asIs;
 
     Subscription? progress;

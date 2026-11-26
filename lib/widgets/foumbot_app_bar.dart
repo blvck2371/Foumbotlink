@@ -38,12 +38,20 @@ class FoumbotAppBar extends StatelessWidget implements PreferredSizeWidget {
       leading: leading,
       iconTheme: IconThemeData(color: ink),
       actionsIconTheme: IconThemeData(color: ink),
-      title: Text(
-        title,
-        style: GoogleFonts.spaceGrotesk(
-          fontSize: 22,
-          fontWeight: FontWeight.w700,
-          color: ink,
+      titleSpacing: 8,
+      // Sur un petit écran chargé d'icônes, le titre rétrécit un peu au
+      // lieu d'être coupé (« Foum… »).
+      title: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: Text(
+          title,
+          maxLines: 1,
+          style: GoogleFonts.spaceGrotesk(
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
+            color: ink,
+          ),
         ),
       ),
       actions: actions,

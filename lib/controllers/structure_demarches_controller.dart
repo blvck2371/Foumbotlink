@@ -30,6 +30,10 @@ class StructureDemarchesController extends GetxController {
   final documentsCtrl = TextEditingController();
   final etapesCtrl = TextEditingController();
 
+  /// Délai à respecter (facultatif) : nombre de jours, et à partir de quoi.
+  final echeanceJoursCtrl = TextEditingController();
+  final echeanceDepuisCtrl = TextEditingController();
+
   final category = DemarcheCategory.etatCivil.obs;
   final formError = RxnString();
 
@@ -50,15 +54,6 @@ class StructureDemarchesController extends GetxController {
     return profile != null && profile.canPublish && profile.verified;
   }
 
-  /// Les modèles que la structure n'a pas encore repris, comparés par
-  /// intitulé : réimporter en double n'aiderait personne.
-  List<DemarcheModele> get modelesDisponibles {
-    final existing = demarches.map((d) => d.title.toLowerCase().trim()).toSet();
-    return DemarcheModele.catalogue
-        .where((m) => !existing.contains(m.title.toLowerCase().trim()))
-        .toList();
-  }
-
   @override
   void onInit() {
     super.onInit();
@@ -75,6 +70,8 @@ class StructureDemarchesController extends GetxController {
     delaiCtrl.dispose();
     documentsCtrl.dispose();
     etapesCtrl.dispose();
+    echeanceJoursCtrl.dispose();
+    echeanceDepuisCtrl.dispose();
     super.onClose();
   }
 
@@ -95,22 +92,21 @@ class StructureDemarchesController extends GetxController {
   // -----------------------------------------------------------------------
 
   /// Prépare le formulaire : vide pour une création, rempli pour une
-  /// modification, prérempli depuis un modèle quand on en reprend un.
-  void startEditing({Demarche? demarche, DemarcheModele? modele}) {
+  /// modification.
+  void startEditing({Demarche? demarche}) {
     editing.value = demarche;
     formError.value = null;
 
-    category.value =
-        demarche?.category ?? modele?.category ?? DemarcheCategory.etatCivil;
-    titleCtrl.text = demarche?.title ?? modele?.title ?? '';
-    descriptionCtrl.text = demarche?.description ?? modele?.description ?? '';
-    lieuCtrl.text = demarche?.lieu ?? modele?.lieu ?? '';
-    coutCtrl.text = demarche?.cout ?? modele?.cout ?? '';
-    delaiCtrl.text = demarche?.delai ?? modele?.delai ?? '';
-    documentsCtrl.text =
-        (demarche?.documents ?? modele?.documents ?? const <String>[]).join('\n');
-    etapesCtrl.text =
-        (demarche?.etapes ?? modele?.etapes ?? const <String>[]).join('\n');
+    category.value = demarche?.category ?? DemarcheCategory.etatCivil;
+    titleCtrl.text = demarche?.title ?? '';
+    descriptionCtrl.text = demarche?.description ?? '';
+    lieuCtrl.text = demarche?.lieu ?? '';
+    coutCtrl.text = demarche?.cout ?? '';
+    delaiCtrl.text = demarche?.delai ?? '';
+    documentsCtrl.text = (demarche?.documents ?? const <String>[]).join('\n');
+    etapesCtrl.text = (demarche?.etapes ?? const <String>[]).join('\n');
+    echeanceJoursCtrl.text = demarche?.echeanceJours?.toString() ?? '';
+    echeanceDepuisCtrl.text = demarche?.echeanceDepuis ?? '';
   }
 
   void setCategory(DemarcheCategory value) => category.value = value;
@@ -129,6 +125,25 @@ class StructureDemarchesController extends GetxController {
           'Votre compte structure doit être validé avant de publier des '
           'démarches.';
       return false;
+    }
+
+    // Délai : les deux champs ensemble, ou aucun.
+    final joursText = echeanceJoursCtrl.text.trim();
+    final depuis = echeanceDepuisCtrl.text.trim();
+    int? jours;
+    if (joursText.isNotEmpty || depuis.isNotEmpty) {
+      jours = int.tryParse(joursText);
+      if (jours == null || jours < 1 || jours > 3650) {
+        formError.value =
+            'Le délai doit être un nombre de jours (entre 1 et 3650).';
+        return false;
+      }
+      if (depuis.isEmpty) {
+        formError.value =
+            'Précisez à partir de quand court le délai (ex. « la naissance '
+            'de l’enfant »).';
+        return false;
+      }
     }
 
     final documents = _lines(documentsCtrl.text);
@@ -150,6 +165,8 @@ class StructureDemarchesController extends GetxController {
           cout: coutCtrl.text,
           delai: delaiCtrl.text,
           etapes: etapes,
+          echeanceJours: jours,
+          echeanceDepuis: jours == null ? null : depuis,
         );
       } else {
         await _service.update(
@@ -165,6 +182,9 @@ class StructureDemarchesController extends GetxController {
             cout: coutCtrl.text,
             delai: delaiCtrl.text,
             etapes: etapes,
+            echeanceJours: jours,
+            echeanceDepuis: jours == null ? null : depuis,
+            clearEcheance: jours == null,
           ),
         );
       }
@@ -190,41 +210,6 @@ class StructureDemarchesController extends GetxController {
     }
   }
 
-  /// Reprend d'un geste les modèles pas encore publiés.
-  ///
-  /// Ce ne sont que des points de départ : une fois importés, ils
-  /// appartiennent à la structure, qui doit y corriger ses propres lieux,
-  /// tarifs et délais.
-  Future<String?> importerModeles() async {
-    if (!canPublish) {
-      return 'Votre compte structure doit être validé avant de publier des '
-          'démarches.';
-    }
-    final modeles = modelesDisponibles;
-    if (modeles.isEmpty) return 'Tous les modèles sont déjà repris.';
-
-    isSaving.value = true;
-    try {
-      await _service.importModeles(
-        structureUid: _auth.uid,
-        structureName: _structureName,
-        modeles: modeles,
-      );
-      return null;
-    } catch (e) {
-      developer.log('importerModeles',
-          name: 'StructureDemarchesController', error: e);
-      return 'Import impossible. Vérifiez votre connexion.';
-    } finally {
-      isSaving.value = false;
-    }
-  }
-
-  /// Une ligne vide n'est pas une pièce à fournir : on les écarte plutôt
-  /// que d'afficher des puces vides à l'habitant.
-  static List<String> _lines(String raw) => raw
-      .split('\n')
-      .map((e) => e.trim())
-      .where((e) => e.isNotEmpty)
-      .toList();
+  static List<String> _lines(String raw) =>
+      raw.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
 }

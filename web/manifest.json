@@ -3,9 +3,9 @@
     "short_name": "Foumbot Link",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#EF6C00",
+    "background_color": "#0A0A0A",
     "theme_color": "#EF6C00",
-    "description": "A new Flutter project.",
+    "description": "L’actualité, le marché, les démarches et les appels de la commune de Foumbot, au même endroit.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

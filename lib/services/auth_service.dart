@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:get/get.dart';
 
 /// Authentification Firebase — email/mot de passe et téléphone/SMS.
@@ -8,6 +9,11 @@ class AuthService extends GetxService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   final firebaseUser = Rxn<User>();
+
+  /// Web : la vérification du numéro passe par `signInWithPhoneNumber`
+  /// (reCAPTCHA invisible), qui rend une confirmation à garder jusqu'à la
+  /// saisie du code — `verifyPhoneNumber` n'existe que sur mobile.
+  ConfirmationResult? _webConfirmation;
 
   bool get isSignedIn => firebaseUser.value != null;
   String get uid => firebaseUser.value!.uid;
@@ -67,6 +73,19 @@ class AuthService extends GetxService {
     required void Function(String message) onError,
     required void Function() onAutoVerified,
   }) async {
+    if (kIsWeb) {
+      try {
+        _webConfirmation = await _auth.signInWithPhoneNumber(
+          phoneNumber.trim(),
+        );
+        onCodeSent(_webConfirmation!.verificationId);
+      } on FirebaseAuthException catch (e) {
+        onError(_messageFor(e));
+      } catch (_) {
+        onError(_genericError);
+      }
+      return;
+    }
     try {
       await _auth.verifyPhoneNumber(
         phoneNumber: phoneNumber.trim(),
@@ -96,6 +115,12 @@ class AuthService extends GetxService {
     String smsCode,
   ) async {
     try {
+      final web = _webConfirmation;
+      if (kIsWeb && web != null) {
+        await web.confirm(smsCode.trim());
+        _webConfirmation = null;
+        return null;
+      }
       final credential = PhoneAuthProvider.credential(
         verificationId: verificationId,
         smsCode: smsCode.trim(),
@@ -124,6 +149,9 @@ class AuthService extends GetxService {
     'invalid-phone-number' => 'Numéro de téléphone invalide.',
     'invalid-verification-code' => 'Code incorrect.',
     'too-many-requests' => 'Trop de tentatives, réessayez plus tard.',
+    'captcha-check-failed' ||
+    'missing-app-credential' =>
+      'La vérification anti-robot a échoué. Rechargez la page et réessayez.',
     'network-request-failed' => 'Pas de connexion internet.',
     _ => e.message ?? _genericError,
   };

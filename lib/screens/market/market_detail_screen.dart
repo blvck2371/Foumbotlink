@@ -19,6 +19,7 @@ import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
 import '../../widgets/safety_notice.dart';
 import 'seller_review_sheet.dart';
+import '../../utils/image_url.dart';
 
 class MarketDetailScreen extends StatefulWidget {
   const MarketDetailScreen({super.key});
@@ -680,7 +681,7 @@ class _OtherListingCard extends StatelessWidget {
                   width: double.infinity,
                   child: item.hasImages
                       ? CachedNetworkImage(
-                          imageUrl: item.imageUrls.first,
+                          imageUrl: displayImageUrl(item.imageUrls.first),
                           fit: BoxFit.cover,
                           placeholder: (_, _) =>
                               ColoredBox(color: accent.withValues(alpha: 0.06)),

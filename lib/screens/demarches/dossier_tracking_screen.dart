@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
@@ -173,11 +174,30 @@ class _TrackingCodeCard extends GetView<DossierController> {
                 ),
               ],
             ),
-          const SizedBox(height: 10),
+          if (code.isNotEmpty && error == null) ...[
+            const SizedBox(height: 14),
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.white,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: QrImageView(
+                  data: TrackingCode.qrPayload(code),
+                  size: 170,
+                  padding: EdgeInsets.zero,
+                  backgroundColor: AppColors.white,
+                  semanticsLabel: 'QR code de suivi',
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
           Text(
-            'Écrivez ce code en gros sur la chemise de votre dossier avant '
-            'de le déposer. Le service le saisit à la réception, et le '
-            'suivi démarre ici.',
+            'Au guichet, montrez ce QR code : la structure le scanne et '
+            'votre dossier apparaît ici, étape par étape. Vous pouvez aussi '
+            'écrire le code sur la chemise de votre dossier.',
             style: GoogleFonts.manrope(
               fontSize: 12.5,
               height: 1.45,
@@ -207,7 +227,7 @@ class _DossierCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = dossierStatusColor(dossier.status);
+    final color = dossierColor(dossier);
 
     return Material(
       color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
@@ -238,7 +258,7 @@ class _DossierCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 10),
-                  DossierStatusChip(status: dossier.status),
+                  DossierStatusChip(dossier: dossier),
                 ],
               ),
               const SizedBox(height: 4),
@@ -247,7 +267,7 @@ class _DossierCard extends StatelessWidget {
                 style: GoogleFonts.manrope(fontSize: 12.5, color: muted),
               ),
               const SizedBox(height: 14),
-              DossierTimeline(status: dossier.status, muted: muted),
+              DossierTimeline(dossier: dossier, muted: muted),
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -310,66 +330,80 @@ String formatDossierDate(DateTime date) {
   return 'le ${DateFormat('d MMMM yyyy à HH:mm', 'fr_FR').format(date)}';
 }
 
-class DossierStatusChip extends StatelessWidget {
-  const DossierStatusChip({super.key, required this.status});
+/// Couleur de l'état d'un dossier : celle de son embranchement ou de sa
+/// clôture, sinon celle de l'étape atteinte (réception, traitement, fin).
+Color dossierColor(Dossier d) =>
+    d.status.isBranch || d.status == DossierStatus.retire
+    ? dossierStatusColor(d.status)
+    : dossierStatusColor(Dossier.statusForStep(d.currentStep, d.steps.length));
 
-  final DossierStatus status;
+class DossierStatusChip extends StatelessWidget {
+  const DossierStatusChip({super.key, required this.dossier});
+
+  final Dossier dossier;
 
   @override
   Widget build(BuildContext context) {
-    final color = dossierStatusColor(status);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.13),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(dossierStatusIcon(status), size: 13, color: color),
-          const SizedBox(width: 5),
-          Text(
-            status.label,
-            style: GoogleFonts.manrope(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
-              color: color,
+    final color = dossierColor(dossier);
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 170),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.13),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(dossierStatusIcon(dossier.status), size: 13, color: color),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(
+                dossier.currentLabel,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.manrope(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                ),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
 
-/// Frise en quatre temps — réceptionné, en cours, terminé, retiré.
+/// Frise des étapes du dossier, telles que la structure les a définies.
 ///
 /// Un embranchement (pièce manquante, rejet) n'ajoute pas de case : il
-/// colore l'étape en cours en rouge. Ajouter une case décalerait tout le
-/// parcours et donnerait l'impression d'un chemin plus long, alors qu'il
-/// s'agit d'une interruption.
+/// colore l'étape en cours en rouge — c'est une interruption, pas un
+/// chemin plus long.
 class DossierTimeline extends StatelessWidget {
-  const DossierTimeline({super.key, required this.status, required this.muted});
+  const DossierTimeline({
+    super.key,
+    required this.dossier,
+    required this.muted,
+  });
 
-  final DossierStatus status;
+  final Dossier dossier;
   final Color muted;
 
   @override
   Widget build(BuildContext context) {
+    final steps = dossier.steps;
+    final status = dossier.status;
+    final reached = dossier.currentStep;
     final branchColor = dossierStatusColor(status);
-    // Un embranchement laisse le curseur là où il s'est arrêté : reçu
-    // pour une pièce manquante juste après le dépôt, en cours sinon.
-    final reached = switch (status) {
-      DossierStatus.complementRequis => 1,
-      DossierStatus.rejete => 1,
-      _ => DossierStatus.timeline.indexOf(status),
-    };
+    final done = status == DossierStatus.retire;
 
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (var i = 0; i < DossierStatus.timeline.length; i++) ...[
+        for (var i = 0; i < steps.length; i++) ...[
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -381,39 +415,34 @@ class DossierTimeline extends StatelessWidget {
                     color: i <= reached
                         ? (status.isBranch && i == reached
                               ? branchColor
+                              : done
+                              ? AppColors.success
                               : AppColors.orange)
                         : muted.withValues(alpha: 0.22),
                   ),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  _shortLabel(DossierStatus.timeline[i]),
+                  steps[i],
                   style: GoogleFonts.manrope(
                     fontSize: 9.5,
+                    height: 1.25,
                     fontWeight: i == reached
                         ? FontWeight.w800
                         : FontWeight.w500,
                     color: i <= reached ? null : muted,
                   ),
-                  maxLines: 1,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
           ),
-          if (i != DossierStatus.timeline.length - 1) const SizedBox(width: 5),
+          if (i != steps.length - 1) const SizedBox(width: 5),
         ],
       ],
     );
   }
-
-  static String _shortLabel(DossierStatus status) => switch (status) {
-    DossierStatus.receptionne => 'Reçu',
-    DossierStatus.enCours => 'En cours',
-    DossierStatus.termine => 'Terminé',
-    DossierStatus.retire => 'Retiré',
-    _ => '',
-  };
 }
 
 class _SectionLabel extends StatelessWidget {

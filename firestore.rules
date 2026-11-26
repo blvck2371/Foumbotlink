@@ -584,6 +584,12 @@ service cloud.firestore {
       allow create: if isVerifiedStructure()
         && request.resource.data.structureUid == request.auth.uid
         && request.resource.data.status == 'receptionne'
+        // Étapes de suivi définies par la structure : le dossier part
+        // toujours de la première.
+        && request.resource.data.get('stepIndex', 0) == 0
+        && (!('steps' in request.resource.data)
+            || (request.resource.data.steps is list
+                && request.resource.data.steps.size() <= 20))
         && request.resource.data.title is string
         && request.resource.data.trackingCode is string
         && exists(/databases/$(database)/documents/trackingCodes/$(request.resource.data.trackingCode))
@@ -601,7 +607,9 @@ service cloud.firestore {
         && request.resource.data.structureUid == resource.data.structureUid
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['status', 'updatedAt', 'events', 'reference']);
+             .hasOnly(['status', 'updatedAt', 'events', 'reference', 'stepIndex'])
+        && request.resource.data.get('stepIndex', 0) is int
+        && request.resource.data.get('stepIndex', 0) >= 0;
 
       // Un dossier ne s'efface pas : il est la trace de ce qu'on a
       // déposé. Le ménage, s'il en faut un, revient à l'Admin SDK.

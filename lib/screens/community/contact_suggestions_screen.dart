@@ -585,6 +585,12 @@ class _FailureNotice extends StatelessWidget {
         'Vous avez fait beaucoup de recherches aujourd’hui. Elles '
             'reprennent demain — inutile de réessayer d’ici là.',
       ),
+      ContactMatchFailure.indisponibleSurLeWeb => (
+        'Disponible sur l’application mobile',
+        'Un navigateur n’a pas accès au répertoire de votre téléphone. '
+            'Ouvrez Foumbot Link sur votre téléphone pour retrouver vos '
+            'contacts.',
+      ),
     };
 
     return Container(

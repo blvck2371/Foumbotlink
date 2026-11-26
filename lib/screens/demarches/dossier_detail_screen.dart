@@ -78,7 +78,7 @@ class _DetailBody extends StatelessWidget {
       final isDark = theme.isDarkMode;
       final ink = isDark ? AppColors.white : AppColors.black;
       final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
-      final color = dossierStatusColor(dossier.status);
+      final color = dossierColor(dossier);
 
       return Scaffold(
         backgroundColor: isDark ? AppColors.black : AppColors.white,
@@ -123,7 +123,7 @@ class _DetailBody extends StatelessWidget {
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          dossier.status.label,
+                          dossier.currentLabel,
                           style: GoogleFonts.spaceGrotesk(
                             fontSize: 16.5,
                             fontWeight: FontWeight.w700,
@@ -135,7 +135,7 @@ class _DetailBody extends StatelessWidget {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    dossier.status.citizenHint,
+                    _hint(dossier),
                     style: GoogleFonts.manrope(
                       fontSize: 13.5,
                       height: 1.45,
@@ -169,7 +169,7 @@ class _DetailBody extends StatelessWidget {
             ),
 
             const SizedBox(height: 24),
-            DossierTimeline(status: dossier.status, muted: muted),
+            DossierTimeline(dossier: dossier, muted: muted),
             const SizedBox(height: 28),
 
             _InfoRow(
@@ -218,6 +218,19 @@ class _DetailBody extends StatelessWidget {
       );
     });
   }
+}
+
+/// Ce que la personne doit comprendre à l'étape où elle en est.
+String _hint(Dossier d) {
+  if (d.status.isBranch || d.status.isClosed) return d.status.citizenHint;
+  final n = d.steps.length;
+  final i = d.currentStep;
+  if (i == n - 1) {
+    return 'Dernière étape atteinte chez ${d.structureName}. Si un '
+        'document est à retirer, vous pouvez vous présenter au guichet.';
+  }
+  return 'Étape ${i + 1} sur $n. Prochaine étape : « ${d.steps[i + 1]} ». '
+      'Vous serez prévenu dès que le dossier avance.';
 }
 
 class _InfoRow extends StatelessWidget {
@@ -320,7 +333,7 @@ class _HistoryTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    event.status.label,
+                    event.label,
                     style: GoogleFonts.manrope(
                       fontSize: 14,
                       fontWeight: FontWeight.w800,

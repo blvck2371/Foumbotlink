@@ -15,6 +15,8 @@ import '../models/market_item.dart';
 import '../models/report.dart';
 import '../routes/app_routes.dart';
 import '../services/auth_service.dart';
+import '../services/feed_memory.dart';
+import '../services/feed_ranker.dart';
 import '../services/feed_service.dart';
 import '../services/follow_service.dart';
 import '../services/live_service.dart';
@@ -89,10 +91,47 @@ class HomeController extends GetxController {
   /// [FeedService.fetchFollowingHighlights]).
   final _followingUids = <String>{};
 
-  /// Les publications remontées en tête au dernier rafraîchissement. Elles
-  /// sont aussi dans la pagination chronologique, qui balaie toute la
-  /// collection : sans cet ensemble, chacune s'afficherait deux fois.
-  final _highlightIds = <String>{};
+  /// Toutes les publications candidates chargées pour cette visite —
+  /// affichées ou en attente. Le classement ([FeedRanker]) puise ici.
+  final _pool = <String, FeedItem>{};
+
+  /// Publications classées, pas encore affichées : le défilement infini
+  /// les sert par lots de [_batch]. Quand il en reste peu, une page de plus
+  /// est chargée et reclassée avec elles.
+  var _queue = <FeedItem>[];
+
+  /// Taille d'un lot servi au défilement.
+  static const _batch = 10;
+
+  /// Candidates demandées au premier chargement, puis à chaque page : le
+  /// classement a besoin de matière pour choisir, pas seulement des 8
+  /// dernières publications.
+  static const _firstPoolSize = 60;
+  static const _nextPoolSize = 30;
+
+  /// Reste-t-il des pages côté serveur ?
+  bool _morePages = true;
+
+  /// Début de la visite : une publication plus récente est une vraie
+  /// nouveauté, annoncée par la pastille « Nouvelles publications ».
+  DateTime _visitStart = DateTime.now();
+
+  /// Nouvelles publications arrivées pendant la lecture. Facebook ne les
+  /// glisse pas sous le doigt : une pastille propose de les afficher.
+  final pendingNew = <FeedItem>[].obs;
+
+  /// Publications plus anciennes arrivées après coup (fil servi par le
+  /// cache, puis le serveur complète) : regroupées et classées ensemble.
+  final _lateArrivals = <FeedItem>[];
+  Timer? _lateTimer;
+
+  /// Publications sur lesquelles on s'est attardé pendant cette visite.
+  final _dwelled = <String>{};
+
+  FeedMemory get _memory => FeedMemory.instance;
+
+  /// Comptes suivis par la session — la recherche les fait remonter.
+  Set<String> get followingUids => Set.unmodifiable(_followingUids);
   StreamSubscription? _watchSub;
   StreamSubscription? _marketWatchSub;
   StreamSubscription? _notificationsSub;
@@ -297,8 +336,7 @@ class HomeController extends GetxController {
   /// d'auteur. `MarketController` filtre déjà sa propre grille ainsi ; le
   /// fil doit s'aligner, sinon un compte bloqué reste visible dès qu'on
   /// bascule sur « Vente & Achat ».
-  bool _isListingVisible(MarketItem item) =>
-      !_moderation.hides(item.sellerUid);
+  bool _isListingVisible(MarketItem item) => !_moderation.hides(item.sellerUid);
 
   /// Recale le badge « certifié » des cartes du fil sur le profil de leurs
   /// auteurs.
@@ -399,6 +437,7 @@ class HomeController extends GetxController {
     final saved = !savedPostIds.contains(post.id);
 
     HapticFeedback.selectionClick();
+    if (saved) _memory.bump(post.authorUid, FeedMemory.save);
     if (saved) {
       savedPostIds.add(post.id);
     } else {
@@ -469,16 +508,11 @@ class HomeController extends GetxController {
 
     _watchSub = _feed.watchPosts(
       isLikedByMe: isLikedByMe,
-      onAdded: (item) {
-        if (items.every((e) => e.id != item.id) &&
-            _matchesFilter(item) &&
-            _isVisible(item)) {
-          items.insert(0, item);
-          items.refresh();
-          unawaited(_syncVerifiedBadges());
-        }
-      },
+      onAdded: _onPostArrived,
       onModified: (updated) {
+        if (_pool.containsKey(updated.id)) _pool[updated.id] = updated;
+        final q = _queue.indexWhere((e) => e.id == updated.id);
+        if (q >= 0) _queue[q] = updated;
         final i = items.indexWhere((e) => e.id == updated.id);
         if (i < 0) return;
         if (!_isVisible(updated)) {
@@ -492,6 +526,9 @@ class HomeController extends GetxController {
         items.refresh();
       },
       onRemoved: (id) {
+        _pool.remove(id);
+        _queue.removeWhere((e) => e.id == id);
+        pendingNew.removeWhere((e) => e.id == id);
         items.removeWhere((e) => e.id == id);
         items.refresh();
       },
@@ -523,6 +560,122 @@ class HomeController extends GetxController {
     );
   }
 
+  /// Une publication signalée par l'écoute temps réel.
+  ///
+  /// - la sienne, à l'instant : en tête, tout de suite ;
+  /// - une vraie nouveauté : en tête si l'on est en haut du fil, sinon
+  ///   dans la pastille « Nouvelles publications » — rien ne bouge sous
+  ///   le doigt pendant la lecture ;
+  /// - une plus ancienne, inconnue jusque-là : rejoint les candidates.
+  void _onPostArrived(FeedItem item) {
+    if (_pool.containsKey(item.id) || items.any((e) => e.id == item.id)) {
+      return;
+    }
+    if (!_matchesFilter(item) || !_isVisible(item)) return;
+    _pool[item.id] = item;
+
+    final mine = _uid != null && item.authorUid == _uid;
+    final fresh = item.publishedAt.isAfter(
+      _visitStart.subtract(const Duration(minutes: 1)),
+    );
+    if (mine && fresh) {
+      items.insert(0, item);
+      items.refresh();
+      _scrollToTop();
+      return;
+    }
+    if (fresh) {
+      if (_nearTop) {
+        items.insert(0, item);
+        items.refresh();
+        unawaited(_syncVerifiedBadges());
+      } else {
+        pendingNew.insert(0, item);
+      }
+      return;
+    }
+    _lateArrivals.add(item);
+    _lateTimer?.cancel();
+    _lateTimer = Timer(const Duration(milliseconds: 400), _absorbLateArrivals);
+  }
+
+  /// Intègre les publications arrivées après coup : si personne n'a encore
+  /// fait défiler, tout le fil est reclassé avec elles ; sinon elles
+  /// rejoignent les publications à venir, sans toucher à ce qui est lu.
+  void _absorbLateArrivals() {
+    if (_lateArrivals.isEmpty) return;
+    _lateArrivals.clear();
+    if (_nearTop) {
+      _rankAll();
+    } else {
+      _rerankQueue(Random(_feedSeed + ++_pageIndex));
+    }
+    hasMore.value = _queue.isNotEmpty || _morePages;
+  }
+
+  bool get _nearTop =>
+      !scrollController.hasClients || scrollController.offset < 40;
+
+  void _scrollToTop() {
+    if (!scrollController.hasClients) return;
+    scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 450),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  /// Affiche les nouvelles publications annoncées par la pastille.
+  void showPendingNew() {
+    if (pendingNew.isEmpty) return;
+    final fresh = pendingNew.where(_isVisible).toList();
+    pendingNew.clear();
+    items.insertAll(0, fresh);
+    items.refresh();
+    unawaited(_syncVerifiedBadges());
+    _scrollToTop();
+  }
+
+  FeedViewer _viewer() =>
+      _memory.viewer(uid: _uid, following: _followingUids, liked: _myLikes);
+
+  /// Classe toutes les candidates et repart du haut : un premier lot à
+  /// l'écran, le reste en attente.
+  void _rankAll() {
+    final ranked = FeedRanker.rank(
+      _pool.values.where(_isVisible),
+      _viewer(),
+      random: Random(_feedSeed),
+    );
+    items.assignAll(ranked.take(_batch));
+    _queue = ranked.skip(_batch).toList();
+    unawaited(_syncVerifiedBadges());
+  }
+
+  /// Reclasse les publications pas encore affichées, en y ajoutant les
+  /// candidates qui n'y sont pas encore — ce qui est à l'écran ne bouge pas.
+  void _rerankQueue(Random random) {
+    final shown = items.map((e) => e.id).toSet();
+    _queue = FeedRanker.rank(
+      _pool.values.where((e) => !shown.contains(e.id) && _isVisible(e)),
+      _viewer(),
+      random: random,
+    );
+  }
+
+  /// La carte [item] est restée à l'écran : vue. Appelé par la carte.
+  void markSeen(FeedItem item) => _memory.markSeen(item.id);
+
+  /// On s'est attardé plusieurs secondes sur [item] : signe d'intérêt
+  /// pour son auteur.
+  void markDwell(FeedItem item) {
+    if (_dwelled.add(item.id)) _memory.bump(item.authorUid, FeedMemory.dwell);
+  }
+
+  String? _authorOf(String postId) =>
+      (_pool[postId] ?? items.firstWhereOrNull((e) => e.id == postId))
+          ?.authorUid;
+
   bool _matchesFilter(FeedItem item) {
     return switch (filter.value) {
       FeedFilter.all => true,
@@ -532,6 +685,11 @@ class HomeController extends GetxController {
   }
 
   void _onScroll() {
+    if (scrollController.hasClients &&
+        scrollController.offset <= 0 &&
+        pendingNew.isNotEmpty) {
+      showPendingNew();
+    }
     if (!scrollController.hasClients || isLoadingMore.value || !hasMore.value) {
       return;
     }
@@ -549,7 +707,7 @@ class HomeController extends GetxController {
     if (isLoading.value) return;
     isLoading.value = true;
     hasMore.value = true;
-    Future<bool>? highlights;
+    Future<void>? highlights;
     try {
       if (isMarketMode) {
         // `MarketService` ne pagine plus : il sert une fenêtre unique
@@ -563,24 +721,29 @@ class HomeController extends GetxController {
         // ne retombe pas sur le fil de la veille, à l'identique.
         _feedSeed = DateTime.now().microsecondsSinceEpoch;
         _pageIndex = 0;
+        _visitStart = DateTime.now();
+        await _memory.use(_uid);
         final page = await _feed.fetchPage(
           filter: filter.value,
           reset: true,
           likedPostIds: _myLikes,
           preferCache: preferCache,
-          // Première page volontairement large : la rotation a besoin de
-          // matière, sinon le haut du fil reste occupé par les mêmes
-          // publications d'une visite à l'autre.
-          limit: FeedService.firstPageSize,
-        );
-        items.assignAll(
-          FeedService.rotate(page.where(_isVisible), random: Random(_feedSeed)),
+          // Première page volontairement large : le classement a besoin
+          // de matière pour choisir ce qui ouvre le fil.
+          limit: _firstPoolSize,
         );
         // Basé sur la page brute, pas sur la liste filtrée : masquer des
         // posts (modération, blocage) raccourcit la page sans pour autant
         // signifier qu'on a atteint la fin du fil.
-        hasMore.value = _feed.lastPageWasFull;
-        unawaited(_syncVerifiedBadges());
+        _morePages = _feed.lastPageWasFull;
+        _pool
+          ..clear()
+          ..addEntries(page.map((e) => MapEntry(e.id, e)));
+        pendingNew.clear();
+        _lateArrivals.clear();
+        _dwelled.clear();
+        _rankAll();
+        hasMore.value = _queue.isNotEmpty || _morePages;
         // La mise en avant des abonnements demande deux requêtes de plus.
         // Au tout premier affichage (page servie par le cache), on ne les
         // attend pas : le fil chronologique s'affiche tout de suite et se
@@ -593,31 +756,21 @@ class HomeController extends GetxController {
       isLoading.value = false;
     }
 
-    // Enchaînement d'une page, hors du verrou `isLoading` — `loadMore`
-    // s'ignore tant qu'il est tenu. Cas rare mais bloquant : quand la mise
-    // en avant a absorbé toute la première page, il ne reste rien sous elle
-    // pour déclencher le défilement infini.
     if (highlights == null) return;
     if (preferCache) {
-      unawaited(highlights.then(_loadMoreIfPageEmptied));
+      unawaited(highlights);
     } else {
-      await highlights.then(_loadMoreIfPageEmptied);
+      await highlights;
     }
   }
 
-  void _loadMoreIfPageEmptied(bool emptied) {
-    if (emptied && hasMore.value) unawaited(loadMore());
-  }
-
-  /// Remonte en tête la dernière publication de chaque compte suivi, dans
-  /// un ordre aléatoire, quand elle date de moins de
-  /// [FeedService.followingHighlightWindow]. Au-delà de cette fenêtre elle
-  /// n'est pas mise en avant : elle reste dans le fil, à sa date, comme
-  /// n'importe quelle autre publication.
-  /// Renvoie vrai si la mise en avant a absorbé toute la page
-  /// chronologique déjà chargée — il faut alors en charger une de plus,
-  /// sans quoi le fil n'aurait plus rien à faire défiler.
-  Future<bool> _refreshFollowingHighlights() async {
+  /// Ajoute aux candidates la dernière publication du jour de chaque
+  /// compte suivi — souvent absente de la première page — et recharge la
+  /// liste des abonnements, qui pèse dans le classement.
+  ///
+  /// Si l'on n'a pas encore fait défiler, tout le fil est reclassé avec ces
+  /// informations ; sinon seules les publications à venir le sont.
+  Future<void> _refreshFollowingHighlights() async {
     final wantedFilter = filter.value;
     await _loadFollowing();
     final List<FeedItem> highlights;
@@ -628,33 +781,31 @@ class HomeController extends GetxController {
         likedPostIds: _myLikes,
       );
     } catch (e) {
-      // La mise en avant est un bonus : son échec laisse le fil
-      // chronologique en place plutôt que de faire échouer le
-      // rafraîchissement — et, au premier affichage, elle est attendue
-      // hors du `await` de `refreshFeed`, où une exception ne serait
-      // rattrapée par personne.
+      // Un bonus : son échec laisse le fil tel quel — et, au premier
+      // affichage, elle est attendue hors du `await` de `refreshFeed`, où
+      // une exception ne serait rattrapée par personne.
       developer.log(
         'Mise en avant des abonnements',
         name: 'HomeController',
         error: e,
       );
-      return false;
+      return;
     }
     // Le fil a pu changer de filtre (ou passer en mode marché) pendant les
     // deux requêtes : ces publications ne correspondent plus à ce qui est
-    // affiché, on les jette plutôt que de les remonter au mauvais endroit.
-    if (filter.value != wantedFilter) return false;
+    // affiché.
+    if (filter.value != wantedFilter || isMarketMode) return;
 
-    _highlightIds
-      ..clear()
-      ..addAll(highlights.map((e) => e.id));
-    if (highlights.isEmpty) return false;
-
-    final promoted = highlights.where(_isVisible).toList();
-    final rest = items.where((e) => !_highlightIds.contains(e.id)).toList();
-    items.assignAll([...promoted, ...rest]);
-    unawaited(_syncVerifiedBadges());
-    return rest.isEmpty;
+    for (final h in highlights) {
+      _pool.putIfAbsent(h.id, () => h);
+    }
+    if (_followingUids.isEmpty && highlights.isEmpty) return;
+    if (_nearTop) {
+      _rankAll();
+    } else {
+      _rerankQueue(Random(_feedSeed + ++_pageIndex));
+    }
+    hasMore.value = _queue.isNotEmpty || _morePages;
   }
 
   Future<void> loadMore() async {
@@ -667,40 +818,51 @@ class HomeController extends GetxController {
         return;
       }
 
-      // Une page peut n'apporter aucune publication visible : la
-      // pagination balaie toute la collection par date, elle repasse donc
-      // sur celles déjà remontées en tête par la mise en avant, et le
-      // filtrage retire au passage les contenus masqués et les auteurs
-      // bloqués. Quand il ne reste rien, la liste ne s'allonge pas, aucun
-      // nouvel événement de défilement ne part — et le fil s'arrêtait net
-      // alors qu'il restait des publications à lire. On enchaîne donc les
-      // pages jusqu'à en ajouter au moins une.
-      for (var chase = 0; chase < _maxEmptyPageChases; chase++) {
-        final page = await _feed.fetchPage(
-          filter: filter.value,
-          likedPostIds: _myLikes,
-        );
-        hasMore.value = _feed.lastPageWasFull;
-
-        final known = items.map((e) => e.id).toSet();
-        final additions = page
-            .where(_isVisible)
-            .where((e) => !known.contains(e.id))
-            .toList();
-
-        if (additions.isNotEmpty) {
-          _pageIndex++;
-          items.addAll(
-            FeedService.rotate(
-              additions,
-              random: Random(_feedSeed + _pageIndex),
-            ),
+      // Il reste peu de publications classées : on charge une page de
+      // plus, que l'on classe avec elles. Une page peut n'apporter aucune
+      // publication nouvelle et visible (déjà connues, auteurs bloqués) :
+      // on enchaîne alors, sans quoi le défilement s'arrêterait net alors
+      // qu'il reste des publications à lire.
+      if (_queue.length < _batch && _morePages) {
+        for (var chase = 0; chase < _maxEmptyPageChases; chase++) {
+          final page = await _feed.fetchPage(
+            filter: filter.value,
+            likedPostIds: _myLikes,
+            limit: _nextPoolSize,
           );
-          unawaited(_syncVerifiedBadges());
-          return;
+          _morePages = _feed.lastPageWasFull;
+          var added = false;
+          for (final p in page) {
+            if (_pool.containsKey(p.id) || !_isVisible(p)) continue;
+            _pool[p.id] = p;
+            added = true;
+          }
+          if (added) {
+            _rerankQueue(Random(_feedSeed + ++_pageIndex));
+            break;
+          }
+          if (!_morePages) break;
         }
-        if (!hasMore.value) return;
       }
+
+      // Lot suivant : jamais une histoire déjà à l'écran (une republication
+      // dont l'original vient de passer), et pas le même auteur que les
+      // dernières cartes quand on peut l'éviter.
+      final shownStories = {for (final e in items) e.repostOfId ?? e.id};
+      _queue = FeedRanker.diversify(
+        _queue
+            .where(_isVisible)
+            .where((e) => !shownStories.contains(e.repostOfId ?? e.id))
+            .toList(),
+        before: items,
+      );
+      final next = _queue.take(_batch).toList();
+      _queue = _queue.skip(next.length).toList();
+      if (next.isNotEmpty) {
+        items.addAll(next);
+        unawaited(_syncVerifiedBadges());
+      }
+      hasMore.value = _queue.isNotEmpty || _morePages;
     } finally {
       isLoadingMore.value = false;
     }
@@ -714,14 +876,11 @@ class HomeController extends GetxController {
   void reshuffleFeed() {
     _feedSeed = DateTime.now().microsecondsSinceEpoch;
     _pageIndex = 0;
-    items.assignAll(FeedService.rotate(items, random: Random(_feedSeed)));
-    if (scrollController.hasClients) {
-      scrollController.animateTo(
-        0,
-        duration: const Duration(milliseconds: 450),
-        curve: Curves.easeOutCubic,
-      );
-    }
+    // Le classement tient compte de tout ce qui vient d'être vu : ce qui
+    // a été lu recule, le reste remonte.
+    _rankAll();
+    hasMore.value = _queue.isNotEmpty || _morePages;
+    _scrollToTop();
   }
 
   Future<void> setFilter(FeedFilter value) async {
@@ -755,6 +914,10 @@ class HomeController extends GetxController {
     final shown = index >= 0 ? items[index] : null;
     final liked = !(_desiredLike[postId] ?? _myLikes.contains(postId));
     _desiredLike[postId] = liked;
+    _memory.bump(
+      shown?.authorUid ?? _authorOf(postId),
+      liked ? FeedMemory.like : FeedMemory.unlike,
+    );
 
     // L'ensemble bascule tout de suite : c'est lui, et non le document du
     // post, qui décide de l'état affiché du cœur — y compris pour les
@@ -822,6 +985,7 @@ class HomeController extends GetxController {
   }) async {
     if (!await _ensureAuthenticated()) return;
     final profile = _profiles.profile.value!;
+    _memory.bump(_authorOf(postId), FeedMemory.comment);
     await _feed.addComment(
       postId: postId,
       authorUid: _auth.uid,
@@ -867,6 +1031,8 @@ class HomeController extends GetxController {
   }
 
   void _removeItem(String postId) {
+    _pool.remove(postId);
+    _queue.removeWhere((e) => e.id == postId);
     items.removeWhere((e) => e.id == postId);
     items.refresh();
   }
@@ -934,6 +1100,7 @@ class HomeController extends GetxController {
     final profile = _profiles.profile.value;
     if (profile == null) return;
 
+    _memory.bump(post.authorUid, FeedMemory.repost);
     try {
       await _feed.repostPost(
         original: post,
@@ -1112,6 +1279,7 @@ class HomeController extends GetxController {
   }
 
   void openPost(FeedItem item) {
+    _memory.bump(item.authorUid, FeedMemory.open);
     Get.toNamed(AppRoutes.feedPost, arguments: item.id);
   }
 
@@ -1144,6 +1312,7 @@ class HomeController extends GetxController {
   }
 
   void publishPost(FeedItem item) {
+    _pool[item.id] = item;
     items.insert(0, item);
     if (scrollController.hasClients) {
       scrollController.animateTo(

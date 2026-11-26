@@ -70,17 +70,34 @@
     }
   },
   "hosting": {
-    "public": "public",
+    "public": "build/web",
+    "predeploy": [
+      "flutter build web --release",
+      "cp public/confidentialite.html public/securite-enfants.html public/suppression-compte.html public/style.css build/web/"
+    ],
     "cleanUrls": true,
     "ignore": [
       "firebase.json",
       "**/.*"
     ],
-    "redirects": [
+    "headers": [
       {
         "source": "/",
-        "destination": "/confidentialite",
-        "type": 301
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "**/*.@(html|js|json|wasm)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
       }
     ]
   }

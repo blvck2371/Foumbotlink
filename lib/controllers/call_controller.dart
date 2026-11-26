@@ -10,6 +10,7 @@ import 'dart:io' show Platform;
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:livekit_client/livekit_client.dart';
@@ -429,7 +430,7 @@ class CallController extends GetxController {
     try {
       // Décroché depuis l'UI native iOS : CallKit a la main sur la session
       // audio, LiveKit doit s'y plier.
-      if (_autoAccept && Platform.isIOS) await _useCallkitAudio();
+      if (_autoAccept && !kIsWeb && Platform.isIOS) await _useCallkitAudio();
 
       await _joinRoom();
       if (_closing) return;
@@ -511,7 +512,10 @@ class CallController extends GetxController {
     _room = room;
     _listenRoom(room);
 
-    await AudioManager.instance.setSpeakerOutputPreferred(isSpeakerOn.value);
+    // Web : le navigateur choisit lui-même la sortie audio.
+    if (!kIsWeb) {
+      await AudioManager.instance.setSpeakerOutputPreferred(isSpeakerOn.value);
+    }
     await room.connect(ticket.url, ticket.token);
     if (_closing || _room != room) return;
 
@@ -589,7 +593,10 @@ class CallController extends GetxController {
         if (_anyonePresent && _canBeActive) _markConnected();
       })
       ..on<RoomDisconnectedEvent>((e) {
-        developer.log('salle: déconnectée (${e.reason})', name: 'CallController');
+        developer.log(
+          'salle: déconnectée (${e.reason})',
+          name: 'CallController',
+        );
         if (_closing || _room != room) return;
         switch (e.reason) {
           case DisconnectReason.roomDeleted:
@@ -628,7 +635,8 @@ class CallController extends GetxController {
       list.add(
         CallTile(
           uid: p.identity,
-          name: c.members[p.identity]?.name ??
+          name:
+              c.members[p.identity]?.name ??
               (p.name.isNotEmpty ? p.name : 'Habitant'),
           video: switch (cam?.track) {
             final VideoTrack t => t,
@@ -971,7 +979,10 @@ class CallController extends GetxController {
       myUid,
       if (c != null && c.isGroup)
         ...c.activeMembers.map((m) => m.uid)
-      else if (c != null) ...[c.callerUid, c.calleeUid],
+      else if (c != null) ...[
+        c.callerUid,
+        c.calleeUid,
+      ],
     };
     final conversations = await Get.find<ChatService>().recentConversations(
       myUid,

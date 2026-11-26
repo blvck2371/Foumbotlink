@@ -186,20 +186,12 @@ class ProfileController extends GetxController {
       try {
         viewed = await _statuses.myViewedStatusIds(_auth.uid);
       } catch (e) {
-        developer.log(
-          'Statuts déjà vus',
-          name: 'ProfileController',
-          error: e,
-        );
+        developer.log('Statuts déjà vus', name: 'ProfileController', error: e);
       }
       try {
         liked = await _statuses.myLikedStatusIds(_auth.uid);
       } catch (e) {
-        developer.log(
-          'Statuts aimés',
-          name: 'ProfileController',
-          error: e,
-        );
+        developer.log('Statuts aimés', name: 'ProfileController', error: e);
       }
     }
 
@@ -319,16 +311,22 @@ class ProfileController extends GetxController {
       // Storage non déployées, ou fichier hors plafond) ne se corrige pas
       // du tout comme « retry-limit-exceeded » (réseau). Un message unique
       // « vérifiez votre connexion » envoyait sur la mauvaise piste.
-      developer.log('Publication du statut',
-          name: 'ProfileController', error: e);
+      developer.log(
+        'Publication du statut',
+        name: 'ProfileController',
+        error: e,
+      );
       Get.snackbar(
         'Publication impossible',
         '${e.code} — ${e.message ?? 'erreur inconnue'}',
         duration: const Duration(seconds: 8),
       );
     } catch (e) {
-      developer.log('Publication du statut',
-          name: 'ProfileController', error: e);
+      developer.log(
+        'Publication du statut',
+        name: 'ProfileController',
+        error: e,
+      );
       Get.snackbar(
         'Publication impossible',
         '$e',
@@ -347,8 +345,11 @@ class ProfileController extends GetxController {
       await _statuses.deleteStatus(status.id);
       statuses.removeWhere((s) => s.id == status.id);
     } catch (e) {
-      developer.log('Suppression du statut',
-          name: 'ProfileController', error: e);
+      developer.log(
+        'Suppression du statut',
+        name: 'ProfileController',
+        error: e,
+      );
       Get.snackbar(
         'Suppression impossible',
         'Réessayez dans un instant.',

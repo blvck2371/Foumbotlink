@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:audioplayers/audioplayers.dart';
@@ -33,6 +32,8 @@ import '../../widgets/sealed_image_viewer.dart';
 import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
 import '../../widgets/live_ring.dart';
+import '../../utils/local_media.dart';
+import '../../utils/image_url.dart';
 
 class ChatScreen extends GetView<ChatController> {
   const ChatScreen({super.key});
@@ -2093,8 +2094,8 @@ class _MessageBubbleState extends State<_MessageBubble> {
     if (!_isRemote(msg.content)) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(16),
-        child: Image.file(
-          File(msg.content),
+        child: Image(
+          image: LocalMedia.image(msg.content),
           width: 220,
           fit: BoxFit.cover,
           errorBuilder: (_, _, _) => Container(
@@ -2129,7 +2130,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(16),
           child: CachedNetworkImage(
-            imageUrl: msg.content,
+            imageUrl: displayImageUrl(msg.content),
             width: 220,
             fit: BoxFit.cover,
             placeholder: (_, _) => Container(
@@ -2203,12 +2204,12 @@ class _MessageBubbleState extends State<_MessageBubble> {
                   Positioned.fill(
                     child: _isRemote(thumb)
                         ? CachedNetworkImage(
-                            imageUrl: thumb,
+                            imageUrl: displayImageUrl(thumb),
                             fit: BoxFit.cover,
                             errorWidget: (_, _, _) => const SizedBox.shrink(),
                           )
-                        : Image.file(
-                            File(thumb),
+                        : Image(
+                            image: LocalMedia.image(thumb),
                             fit: BoxFit.cover,
                             errorBuilder: (_, _, _) => const SizedBox.shrink(),
                           ),
@@ -2400,7 +2401,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
             fit: StackFit.expand,
             children: [
               CachedNetworkImage(
-                imageUrl: urls[index],
+                imageUrl: displayImageUrl(urls[index]),
                 fit: BoxFit.cover,
                 placeholder: (_, _) => Container(
                   color: AppColors.orange.withValues(alpha: 0.05),

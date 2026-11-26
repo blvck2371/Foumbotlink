@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:developer' as developer;
-import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -8,6 +7,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import '../models/market_filters.dart';
 import '../models/market_item.dart';
 import '../models/market_text.dart';
+import '../utils/local_media.dart';
 
 /// Accès Firestore/Storage du marché.
 ///
@@ -643,15 +643,15 @@ class MarketService {
     final urls = <String>[];
     for (var i = 0; i < localPaths.length; i++) {
       urls.add(
-        await _uploadImage(File(localPaths[i]), '$storagePath/${stamp}_$i.jpg'),
+        await _uploadImage(localPaths[i], '$storagePath/${stamp}_$i.jpg'),
       );
     }
     return urls;
   }
 
-  Future<String> _uploadImage(File file, String fullPath) async {
+  Future<String> _uploadImage(String localPath, String fullPath) async {
     final ref = _storage.ref(fullPath);
-    await ref.putFile(file, _imageMetadata);
+    await (await LocalMedia.upload(ref, localPath, _imageMetadata));
     return ref.getDownloadURL();
   }
 

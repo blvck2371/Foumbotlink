@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../theme/app_colors.dart';
 import 'capture_shield.dart';
 import 'foumbot_loader.dart';
+import '../utils/image_url.dart';
 
 /// Visionneuse d'une **photo à vue unique**.
 ///
@@ -46,7 +47,7 @@ class _SealedImageViewer extends StatelessWidget {
             Positioned.fill(
               child: CaptureShield(
                 child: CachedNetworkImage(
-                  imageUrl: imageUrl,
+                  imageUrl: displayImageUrl(imageUrl),
                   fit: BoxFit.contain,
                   placeholder: (_, _) => const Center(child: FoumbotLoader()),
                   errorWidget: (_, _, _) => const Center(

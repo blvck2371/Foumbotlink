@@ -214,13 +214,19 @@ class DossierService {
     required String title,
     String? demarcheId,
     String? reference,
+    List<String> steps = const [],
   }) async {
     final ref = _dossiersRef.doc();
     final now = DateTime.now();
+    final cleanSteps = [
+      for (final s in steps)
+        if (s.trim().isNotEmpty) s.trim(),
+    ];
     final event = DossierEvent(
       status: DossierStatus.receptionne,
       at: now,
       byName: structureName,
+      step: (cleanSteps.isNotEmpty ? cleanSteps : Dossier.defaultSteps).first,
     );
 
     await ref.set({
@@ -234,6 +240,8 @@ class DossierService {
       if (reference != null && reference.trim().isNotEmpty)
         'reference': reference.trim(),
       'status': DossierStatus.receptionne.name,
+      if (cleanSteps.isNotEmpty) 'steps': cleanSteps,
+      'stepIndex': 0,
       'createdAt': Timestamp.fromDate(now),
       'updatedAt': Timestamp.fromDate(now),
       'events': [event.toMap()],
@@ -253,6 +261,7 @@ class DossierService {
       createdAt: now,
       updatedAt: now,
       events: [event],
+      steps: cleanSteps,
     );
   }
 
@@ -261,19 +270,21 @@ class DossierService {
   /// ferme l'app dans la seconde.
   Future<void> advance({
     required Dossier dossier,
-    required DossierStatus status,
+    required DossierAction action,
     String? note,
   }) async {
     final now = DateTime.now();
     final event = DossierEvent(
-      status: status,
+      status: action.status,
       at: now,
       note: note?.trim(),
       byName: dossier.structureName,
+      step: action.step,
     );
 
     await _dossiersRef.doc(dossier.id).update({
-      'status': status.name,
+      'status': action.status.name,
+      'stepIndex': action.stepIndex,
       'updatedAt': Timestamp.fromDate(now),
       // `arrayUnion` plutôt qu'une réécriture du tableau : deux agents du
       // même service peuvent enregistrer une étape en même temps, et une

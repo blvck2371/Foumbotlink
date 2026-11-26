@@ -54,9 +54,7 @@ class CommunityController extends GetxController {
   }
 
   void _onScroll() {
-    if (!scrollController.hasClients ||
-        isLoadingMore.value ||
-        !hasMore.value) {
+    if (!scrollController.hasClients || isLoadingMore.value || !hasMore.value) {
       return;
     }
     final pos = scrollController.position;
@@ -132,14 +130,17 @@ class CommunityController extends GetxController {
           hasMore.value = false;
           return;
         }
-        final snap =
-            await _baseQuery.startAfterDocument(cursor).limit(pageSize).get();
+        final snap = await _baseQuery
+            .startAfterDocument(cursor)
+            .limit(pageSize)
+            .get();
         if (snap.docs.isNotEmpty) _lastDoc = snap.docs.last;
         hasMore.value = snap.docs.length >= pageSize;
 
         final known = members.map((e) => e.uid).toSet();
-        final additions =
-            _profilesFrom(snap).where((p) => !known.contains(p.uid)).toList();
+        final additions = _profilesFrom(
+          snap,
+        ).where((p) => !known.contains(p.uid)).toList();
         if (additions.isNotEmpty) {
           members.addAll(additions);
           if (_uid != null) {

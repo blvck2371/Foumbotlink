@@ -46,8 +46,11 @@ class DemarcheService {
         .listen(
           (snap) => onData(_sorted(snap)),
           onError: (Object e) {
-            developer.log('watchByStructure',
-                name: 'DemarcheService', error: e);
+            developer.log(
+              'watchByStructure',
+              name: 'DemarcheService',
+              error: e,
+            );
             onError?.call(e);
           },
         );
@@ -70,8 +73,12 @@ class DemarcheService {
     required String cout,
     required String delai,
     required List<String> etapes,
+    int? echeanceJours,
+    String? echeanceDepuis,
   }) async {
     final doc = _ref.doc();
+    final echeance =
+        (echeanceJours ?? 0) > 0 && (echeanceDepuis ?? '').trim().isNotEmpty;
     await doc.set({
       'structureUid': structureUid,
       'structureName': structureName,
@@ -83,6 +90,8 @@ class DemarcheService {
       'cout': cout.trim(),
       'delai': delai.trim(),
       'etapes': etapes,
+      if (echeance) 'echeanceJours': echeanceJours,
+      if (echeance) 'echeanceDepuis': echeanceDepuis!.trim(),
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
@@ -102,41 +111,17 @@ class DemarcheService {
       'cout': demarche.cout.trim(),
       'delai': demarche.delai.trim(),
       'etapes': demarche.etapes,
+      // Délai retiré par la structure : le champ disparaît, et les rappels
+      // des habitants avec (voir `DemarcheCompanion.sync`).
+      'echeanceJours': demarche.hasEcheance
+          ? demarche.echeanceJours
+          : FieldValue.delete(),
+      'echeanceDepuis': demarche.hasEcheance
+          ? demarche.echeanceDepuis!.trim()
+          : FieldValue.delete(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
   Future<void> delete(String id) => _ref.doc(id).delete();
-
-  /// Reprend des modèles à son compte, en un seul aller-retour.
-  ///
-  /// Les modèles ne sont qu'un point de départ : une fois importés, ce
-  /// sont des démarches ordinaires de la structure, qu'elle corrige
-  /// ensuite comme les autres.
-  Future<int> importModeles({
-    required String structureUid,
-    required String structureName,
-    required List<DemarcheModele> modeles,
-  }) async {
-    if (modeles.isEmpty) return 0;
-    final batch = _db.batch();
-    for (final m in modeles) {
-      batch.set(_ref.doc(), {
-        'structureUid': structureUid,
-        'structureName': structureName,
-        'category': m.category.name,
-        'title': m.title,
-        'description': m.description,
-        'documents': m.documents,
-        'lieu': m.lieu,
-        'cout': m.cout,
-        'delai': m.delai,
-        'etapes': m.etapes,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    }
-    await batch.commit();
-    return modeles.length;
-  }
 }

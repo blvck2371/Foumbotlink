@@ -50,6 +50,7 @@ import '../screens/profile/user_profile_screen.dart';
 import '../screens/settings/settings_screen.dart';
 import '../screens/splash/splash_screen.dart';
 import 'app_routes.dart';
+import '../screens/search/search_screen.dart';
 
 class AppPages {
   static const initial = AppRoutes.splash;
@@ -86,6 +87,13 @@ class AppPages {
       page: () => const FeedPostScreen(),
       transition: Transition.cupertino,
       transitionDuration: const Duration(milliseconds: 320),
+    ),
+    GetPage(
+      name: AppRoutes.search,
+      page: () => const SearchScreen(),
+      binding: SearchBinding(),
+      transition: Transition.fadeIn,
+      transitionDuration: const Duration(milliseconds: 200),
     ),
     GetPage(
       name: AppRoutes.savedPosts,
