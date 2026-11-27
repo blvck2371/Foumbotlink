@@ -34,7 +34,12 @@ class LiveViewer {
 /// inscrivent le compte dans `liveMembers`, sans quoi les règles refusent
 /// commentaires et cœurs.
 class LiveFeed {
-  LiveFeed({required this.liveId, required this.me, required this.isHost});
+  LiveFeed({
+    required this.liveId,
+    required this.me,
+    required this.isHost,
+    bool present = true,
+  }) : _present = present;
 
   final String liveId;
   final LiveMe me;
@@ -79,6 +84,11 @@ class LiveFeed {
   DateTime _lastComment = DateTime.fromMillisecondsSinceEpoch(0);
   int? _lastLikes;
   bool _closed = false;
+
+  /// Le spectateur est vraiment entré dans le live (et pas seulement en
+  /// train de le voir passer en aperçu) : lui seul compte parmi les
+  /// spectateurs, s'annonce (« a rejoint ») et peut être invité.
+  bool _present;
 
   bool _hides(String uid) =>
       uid != me.uid && (_moderation?.hides(uid) ?? false);
@@ -193,7 +203,10 @@ class LiveFeed {
     // qu'une fois.
     _subs.add(
       _service.connectedRef.onValue.listen((e) {
-        if (e.snapshot.value == true && !_closed && !ended.value) {
+        if (e.snapshot.value == true &&
+            !_closed &&
+            !ended.value &&
+            (_present || isHost)) {
           unawaited(_armPresence().catchError((Object _) {}));
         }
       }),
@@ -220,6 +233,22 @@ class LiveFeed {
         'at': ServerValue.timestamp,
       });
     }
+  }
+
+  /// Entrer dans le live (présence signalée) ou revenir à l'aperçu
+  /// (présence retirée).
+  Future<void> setPresent(bool present) async {
+    if (isHost || _closed || _present == present) return;
+    _present = present;
+    try {
+      if (present) {
+        if (!ended.value) await _armPresence();
+      } else {
+        final ref = _service.viewersRef(liveId).child(me.uid);
+        await ref.onDisconnect().cancel();
+        if (!ended.value) await ref.remove();
+      }
+    } catch (_) {}
   }
 
   void _push(LiveFeedItem item) {

@@ -31,37 +31,51 @@ class LiveViewerScreen extends GetView<LiveViewerController> {
       value: SystemUiOverlayStyle.light.copyWith(
         statusBarColor: Colors.transparent,
       ),
-      child: Scaffold(
-        backgroundColor: AppColors.black,
-        // Le clavier ne rétrécit pas la vidéo : seuls les contrôles
-        // remontent (voir _LivePage).
-        resizeToAvoidBottomInset: false,
-        body: Obx(() {
-          if (controller.missing.value) return const _EndedPage(live: null);
-          if (controller.loading.value || controller.pages.isEmpty) {
-            return const Center(child: FoumbotLoader());
-          }
-          final pages = controller.pages.toList();
-          return PageView.builder(
-            controller: controller.pageController,
-            scrollDirection: Axis.vertical,
-            // Sur le panel, on ne glisse pas vers un autre live par
-            // mégarde : on le quitte d'abord.
-            physics: controller.session.value?.publishing.value ?? false
-                ? const NeverScrollableScrollPhysics()
-                : null,
-            onPageChanged: controller.onPageChanged,
-            itemCount: pages.length,
-            itemBuilder: (context, i) => Obx(() {
-              final s = controller.session.value;
-              final active = s != null && s.initial.id == pages[i].id;
-              return active
-                  ? _LivePage(session: s)
-                  : _Backdrop(live: pages[i], label: null);
-            }),
-          );
-        }),
+      child: Obx(
+        () => PopScope(
+          // Dans un live, « retour » ramène à l'aperçu ; en aperçu, il
+          // ferme les lives.
+          canPop: !controller.entered.value,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) controller.backToPreview();
+          },
+          child: _scaffold(),
+        ),
       ),
+    );
+  }
+
+  Widget _scaffold() {
+    return Scaffold(
+      backgroundColor: AppColors.black,
+      // Le clavier ne rétrécit pas la vidéo : seuls les contrôles
+      // remontent (voir _LivePage).
+      resizeToAvoidBottomInset: false,
+      body: Obx(() {
+        if (controller.missing.value) return const _EndedPage(live: null);
+        if (controller.loading.value || controller.pages.isEmpty) {
+          return const Center(child: FoumbotLoader());
+        }
+        final pages = controller.pages.toList();
+        return PageView.builder(
+          controller: controller.pageController,
+          scrollDirection: Axis.vertical,
+          // Sur le panel, on ne glisse pas vers un autre live par
+          // mégarde : on le quitte d'abord.
+          physics: controller.session.value?.publishing.value ?? false
+              ? const NeverScrollableScrollPhysics()
+              : null,
+          onPageChanged: controller.onPageChanged,
+          itemCount: pages.length,
+          itemBuilder: (context, i) => Obx(() {
+            final s = controller.session.value;
+            final active = s != null && s.initial.id == pages[i].id;
+            return active
+                ? _LivePage(session: s)
+                : _Backdrop(live: pages[i], label: null);
+          }),
+        );
+      }),
     );
   }
 }
@@ -130,6 +144,8 @@ class _LivePage extends StatelessWidget {
       final status = session.status.value;
       final feed = session.feed.value;
       final live = session.live;
+      final entered = session.entered.value;
+      final viewer = Get.find<LiveViewerController>();
 
       if (status == LiveWatchStatus.ended) return _EndedPage(live: live);
       if (status == LiveWatchStatus.failed) {
@@ -173,15 +189,21 @@ class _LivePage extends StatelessWidget {
 
       return GestureDetector(
         // Double tape : un cœur, comme sur TikTok.
-        onDoubleTap: feed?.tapHeart,
+        onDoubleTap: entered ? feed?.tapHeart : null,
         child: Stack(
           fit: StackFit.expand,
           children: [
             LiveStageGrid(
               tiles: tiles,
-              onTapSeat: canAsk ? session.requestJoin : null,
+              onTapSeat: !entered
+                  ? viewer.enter
+                  : canAsk
+                  ? session.requestJoin
+                  : null,
               onTapTile: (t) {
-                if (t.uid != session.me.uid && !t.isHost) {
+                if (!entered) {
+                  viewer.enter();
+                } else if (t.uid != session.me.uid && !t.isHost) {
                   unawaited(
                     Get.toNamed(AppRoutes.userProfile, arguments: t.uid),
                   );
@@ -214,104 +236,107 @@ class _LivePage extends StatelessWidget {
                   ),
                 ),
               ),
-            AnimatedPadding(
-              duration: const Duration(milliseconds: 120),
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.viewInsetsOf(context).bottom,
-              ),
-              child: SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-                  child: Column(
-                    children: [
-                      _TopBar(session: session),
-                      const Spacer(),
-                      // Le haut (hôte, fermer) s'affiche tout de suite ;
-                      // commentaires et actions dès que le fil est ouvert.
-                      if (feed != null) ...[
-                        if (me?.status == LiveGuestStatus.invited)
-                          _InviteCard(
-                            session: session,
-                            hostName: live.hostName,
-                          ),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Expanded(
-                              child: SizedBox(
+            if (!entered)
+              _PreviewOverlay(session: session, onEnter: viewer.enter)
+            else
+              AnimatedPadding(
+                duration: const Duration(milliseconds: 120),
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.viewInsetsOf(context).bottom,
+                ),
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                    child: Column(
+                      children: [
+                        _TopBar(session: session),
+                        const Spacer(),
+                        // Le haut (hôte, fermer) s'affiche tout de suite ;
+                        // commentaires et actions dès que le fil est ouvert.
+                        if (feed != null) ...[
+                          if (me?.status == LiveGuestStatus.invited)
+                            _InviteCard(
+                              session: session,
+                              hostName: live.hostName,
+                            ),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Expanded(
+                                child: SizedBox(
+                                  height: liveFeedHeight(context),
+                                  child: LiveCommentsList(
+                                    feed: feed,
+                                    hostUid: live.hostUid,
+                                    onLongPress: (c) => _commentActions(c),
+                                  ),
+                                ),
+                              ),
+                              SizedBox(
+                                width: 72,
                                 height: liveFeedHeight(context),
-                                child: LiveCommentsList(
-                                  feed: feed,
-                                  hostUid: live.hostUid,
-                                  onLongPress: (c) => _commentActions(c),
-                                ),
-                              ),
-                            ),
-                            SizedBox(
-                              width: 72,
-                              height: liveFeedHeight(context),
-                              child: FloatingHearts(bursts: feed.hearts),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        LiveComposer(
-                          feed: feed,
-                          actions: [
-                            if (onStage) ...[
-                              LiveRoundButton(
-                                icon: session.micOn.value && !me!.mutedByHost
-                                    ? Icons.mic_none_rounded
-                                    : Icons.mic_off_rounded,
-                                tooltip: me!.mutedByHost
-                                    ? 'Micro coupé par l’hôte'
-                                    : session.micOn.value
-                                    ? 'Couper le micro'
-                                    : 'Rallumer le micro',
-                                color: session.micOn.value && !me.mutedByHost
-                                    ? null
-                                    : liveRed,
-                                size: 44,
-                                onTap: session.toggleMic,
-                              ),
-                              if (session.camera.value != null)
-                                LiveRoundButton(
-                                  icon: Icons.cameraswitch_outlined,
-                                  tooltip: 'Changer de caméra',
-                                  size: 44,
-                                  onTap: session.switchCamera,
-                                ),
-                              LiveRoundButton(
-                                icon: Icons.call_end_rounded,
-                                tooltip: 'Quitter le panel',
-                                color: liveRed,
-                                size: 44,
-                                onTap: () => _confirmLeaveStage(),
-                              ),
-                            ] else ...[
-                              _JoinStageButton(session: session),
-                              LiveRoundButton(
-                                icon: Icons.favorite_rounded,
-                                tooltip: 'Envoyer un cœur',
-                                color: liveRed,
-                                size: 44,
-                                onTap: feed.tapHeart,
+                                child: FloatingHearts(bursts: feed.hearts),
                               ),
                             ],
-                            LiveRoundButton(
-                              icon: Icons.more_horiz_rounded,
-                              tooltip: 'Plus',
-                              size: 44,
-                              onTap: () => _liveActions(live),
-                            ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(height: 10),
+                          LiveComposer(
+                            feed: feed,
+                            actions: [
+                              if (onStage) ...[
+                                LiveRoundButton(
+                                  icon: session.micOn.value && !me!.mutedByHost
+                                      ? Icons.mic_none_rounded
+                                      : Icons.mic_off_rounded,
+                                  tooltip: me!.mutedByHost
+                                      ? 'Micro coupé par l’hôte'
+                                      : session.micOn.value
+                                      ? 'Couper le micro'
+                                      : 'Rallumer le micro',
+                                  color: session.micOn.value && !me.mutedByHost
+                                      ? null
+                                      : liveRed,
+                                  size: 44,
+                                  onTap: session.toggleMic,
+                                ),
+                                if (session.camera.value != null)
+                                  LiveRoundButton(
+                                    icon: Icons.cameraswitch_outlined,
+                                    tooltip: 'Changer de caméra',
+                                    size: 44,
+                                    onTap: session.switchCamera,
+                                  ),
+                                LiveRoundButton(
+                                  icon: Icons.call_end_rounded,
+                                  tooltip: 'Quitter le panel',
+                                  color: liveRed,
+                                  size: 44,
+                                  onTap: () => _confirmLeaveStage(),
+                                ),
+                              ] else ...[
+                                _JoinStageButton(session: session),
+                                LiveRoundButton(
+                                  icon: Icons.favorite_rounded,
+                                  tooltip: 'Envoyer un cœur',
+                                  color: liveRed,
+                                  size: 44,
+                                  onTap: feed.tapHeart,
+                                ),
+                              ],
+                              LiveRoundButton(
+                                icon: Icons.more_horiz_rounded,
+                                tooltip: 'Plus',
+                                size: 44,
+                                onTap: () => _liveActions(live),
+                              ),
+                            ],
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       );
@@ -507,7 +532,9 @@ class _TopBar extends StatelessWidget {
             icon: Icons.close_rounded,
             tooltip: 'Quitter le live',
             size: 34,
-            onTap: Get.back,
+            // On sort de la salle, pas de l'écran : le live repasse en
+            // aperçu, d'où l'on glisse vers un autre ou l'on ferme.
+            onTap: Get.find<LiveViewerController>().backToPreview,
           ),
         ],
       );
@@ -858,6 +885,120 @@ class _InviteCard extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Le live qui passe, avant d'y entrer — comme le fil LIVE de TikTok :
+/// l'image et le son de l'hôte (et de ses invités), qui il est, combien
+/// regardent. On glisse pour passer au suivant, on touche pour entrer.
+class _PreviewOverlay extends StatelessWidget {
+  const _PreviewOverlay({required this.session, required this.onEnter});
+  final LiveWatchSession session;
+  final VoidCallback onEnter;
+
+  @override
+  Widget build(BuildContext context) {
+    final viewer = Get.find<LiveViewerController>();
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: onEnter,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+          child: Obx(() {
+            final live = session.feed.value?.live.value ?? session.initial;
+            final more = viewer.pages.length > 1;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          LiveHostChip(live: live),
+                          const SizedBox(height: 8),
+                          LiveElapsedBadge(startedAt: live.startedAt),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ViewersPill(count: live.viewers),
+                    const SizedBox(width: 8),
+                    LiveRoundButton(
+                      icon: Icons.close_rounded,
+                      tooltip: 'Fermer les lives',
+                      size: 34,
+                      onTap: Get.back,
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                Text(
+                  live.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 22,
+                    height: 1.2,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.white,
+                    shadows: const [
+                      Shadow(blurRadius: 8, color: Color(0x99000000)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  more
+                      ? 'Touchez pour entrer · glissez vers le haut pour '
+                            'un autre live'
+                      : 'Touchez pour entrer dans le live',
+                  style: GoogleFonts.manrope(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.white.withValues(alpha: 0.85),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 50,
+                        child: FilledButton.icon(
+                          onPressed: onEnter,
+                          icon: const Icon(Icons.login_rounded, size: 20),
+                          label: const Text('Rejoindre le live'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.white,
+                            foregroundColor: AppColors.black,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            textStyle: GoogleFonts.manrope(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    const SizedBox(
+                      height: 50,
+                      child: _GoLiveButton(label: true),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          }),
+        ),
       ),
     );
   }

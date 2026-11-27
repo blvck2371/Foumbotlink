@@ -27,10 +27,16 @@ enum LiveWatchStatus { connecting, watching, ended, failed }
 /// la salle et publie sa caméra et son micro. Quand l'hôte le fait
 /// descendre, ses pistes sont retirées et il redevient spectateur.
 class LiveWatchSession {
-  LiveWatchSession(this.initial, this.me);
+  LiveWatchSession(this.initial, this.me, {bool entered = false})
+    : entered = entered.obs;
 
   final LiveSession initial;
   final LiveMe me;
+
+  /// Comme sur TikTok : le live passe d'abord en aperçu (image et son,
+  /// sans y être compté) ; le toucher fait entrer vraiment — commentaires,
+  /// cœurs, panel.
+  final RxBool entered;
 
   final status = LiveWatchStatus.connecting.obs;
   final message = RxnString();
@@ -88,7 +94,12 @@ class LiveWatchSession {
     }
     if (_disposed) return;
 
-    final f = LiveFeed(liveId: initial.id, me: me, isHost: false);
+    final f = LiveFeed(
+      liveId: initial.id,
+      me: me,
+      isHost: false,
+      present: entered.value,
+    );
     feed.value = f;
     // Fil temps réel et salle vidéo s'ouvrent en même temps : l'image
     // n'attend pas les commentaires.
@@ -258,6 +269,27 @@ class LiveWatchSession {
     } catch (_) {}
   }
 
+  /// Entrer vraiment dans le live.
+  Future<void> enter() async {
+    if (entered.value) return;
+    entered.value = true;
+    await feed.value?.setPresent(true);
+  }
+
+  /// Revenir à l'aperçu : on quitte le panel (ou sa demande) et on cesse
+  /// d'être compté parmi les spectateurs ; l'image continue de passer.
+  Future<void> backToPreview() async {
+    if (!entered.value) return;
+    entered.value = false;
+    if (publishing.value || myGuest?.onStage == true) {
+      await leaveStage();
+    } else if (myGuest != null) {
+      _cancelledByMe = true;
+      await _leave();
+    }
+    await feed.value?.setPresent(false);
+  }
+
   // -----------------------------------------------------------------------
   // Actions du spectateur
   // -----------------------------------------------------------------------
@@ -372,6 +404,10 @@ class LiveViewerController extends GetxController {
   ModerationService get _moderation => Get.find<ModerationService>();
 
   final pages = <LiveSession>[].obs;
+
+  /// Entré dans un live (et non en aperçu). Le reste en glissant vers le
+  /// suivant, comme dans une salle TikTok.
+  final entered = false.obs;
   final index = 0.obs;
   final session = Rxn<LiveWatchSession>();
 
@@ -390,6 +426,9 @@ class LiveViewerController extends GetxController {
     super.onInit();
     final args = Get.arguments;
     final wanted = args is Map ? args['liveId'] as String? : null;
+    // Ouvert sur un live précis (vignette, anneau LIVE, notification) : on
+    // y entre directement. Depuis le bouton Lives : aperçu d'abord.
+    entered.value = wanted != null;
     unawaited(WakelockPlus.enable().catchError((Object _) {}));
 
     // La liste est figée à l'ouverture (les lives ne changent pas de
@@ -447,12 +486,24 @@ class LiveViewerController extends GetxController {
     final previous = session.value;
     if (previous?.initial.id == pages[i].id) return;
     unawaited(previous?.dispose());
-    final next = LiveWatchSession(pages[i], _me());
+    final next = LiveWatchSession(pages[i], _me(), entered: entered.value);
     session.value = next;
     unawaited(next.open());
     // Le live suivant (et le précédent) s'ouvriront sans attente.
     if (i + 1 < pages.length) _service.prefetch(pages[i + 1].id);
     if (i > 0) _service.prefetch(pages[i - 1].id);
+  }
+
+  /// Toucher le live en aperçu : on y entre.
+  void enter() {
+    entered.value = true;
+    unawaited(session.value?.enter());
+  }
+
+  /// Quitter la salle : retour à l'aperçu, d'où l'on glisse ou l'on ferme.
+  void backToPreview() {
+    entered.value = false;
+    unawaited(session.value?.backToPreview());
   }
 
   LiveMe _me() {
