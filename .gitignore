@@ -44,3 +44,6 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 .firebase/
+
+# Vidéos promotionnelles (lourdes, hors de l’app)
+/design/video/
