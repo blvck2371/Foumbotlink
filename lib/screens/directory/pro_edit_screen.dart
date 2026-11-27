@@ -112,6 +112,11 @@ class _ProEditScreenState extends State<ProEditScreen> {
           snackPosition: SnackPosition.BOTTOM);
       return;
     }
+    if (_photos.isEmpty) {
+      Get.snackbar('Annuaire', 'Ajoutez au moins une photo de votre activité.',
+          snackPosition: SnackPosition.BOTTOM);
+      return;
+    }
     setState(() => _saving = true);
     final e = _existing;
     final listing = ProListing(
@@ -360,13 +365,13 @@ class _ProEditScreenState extends State<ProEditScreen> {
                           : null,
                     ),
                     label(
-                      'Photos de votre activité '
+                      'Photos de votre activité * '
                       '(${_photos.length}/${ProListing.maxPhotos})',
                     ),
                     Text(
-                      'Vos réalisations, votre atelier, votre matériel : les '
-                      'habitants choisissent plus volontiers un pro qui montre '
-                      'son travail.',
+                      'Au moins une photo : vos réalisations, votre atelier, '
+                      'votre matériel. Les habitants choisissent plus '
+                      'volontiers un pro qui montre son travail.',
                       style: GoogleFonts.manrope(
                         fontSize: 12.5,
                         height: 1.4,

@@ -67,6 +67,7 @@ function listing(overrides = {}) {
     quartier: "Centre",
     hours: "",
     photoUrl: null,
+    photos: ["https://exemple/atelier.jpg"],
     updatedAt: serverTimestamp(),
     ratingCount: 0,
     ratingSum: 0,
@@ -127,6 +128,9 @@ async function main() {
       ratingCount: 50, ratingSum: 250, ratingAvg: 5, rankScore: 5,
     })));
   });
+  await check("création sans photo refusée", async () => {
+    await assertFails(setDoc(doc(pro, "directory", PRO), listing({photos: []})));
+  });
   await check("créer la fiche d'un autre refusé", async () => {
     await assertFails(setDoc(doc(client, "directory", PRO), listing()));
   });
@@ -144,6 +148,9 @@ async function main() {
     await assertSucceeds(updateDoc(doc(pro, "directory", PRO), {
       photos: ["https://a/1.jpg", "https://a/2.jpg", "https://a/3.jpg"],
     }));
+  });
+  await check("retirer toutes les photos est refusé", async () => {
+    await assertFails(updateDoc(doc(pro, "directory", PRO), {photos: []}));
   });
   await check("une 4e photo est refusée", async () => {
     await assertFails(updateDoc(doc(pro, "directory", PRO), {

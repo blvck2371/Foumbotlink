@@ -293,6 +293,7 @@ service cloud.firestore {
           && data.get('quartier', '').size() <= 60
           && data.get('hours', '').size() <= 60
           && data.get('photos', []) is list
+          && data.get('photos', []).size() >= 1
           && data.get('photos', []).size() <= 3;
       }
 
