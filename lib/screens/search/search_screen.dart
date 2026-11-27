@@ -9,6 +9,7 @@ import '../../models/feed_item.dart';
 import '../../models/live_session.dart';
 import '../../models/market_item.dart';
 import '../../models/search_text.dart';
+import '../../models/search_trend.dart';
 import '../../models/user_profile.dart';
 import '../../services/search_service.dart';
 import '../../theme/app_colors.dart';
@@ -157,6 +158,7 @@ class _Suggestions extends StatelessWidget {
       final recent = controller.recent.toList();
       final lives = controller.currentLives;
       final popular = controller.popular.toList();
+      final trends = controller.trends.take(8).toList();
       return ListView(
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.only(bottom: 32),
@@ -181,6 +183,16 @@ class _Suggestions extends StatelessWidget {
                 onTap: () => controller.useRecent(q),
               ),
           ],
+          if (trends.isNotEmpty) ...[
+            _SectionHeader(title: 'Tendances', p: p),
+            for (final (i, t) in trends.indexed)
+              _TrendTile(
+                rank: i + 1,
+                trend: t,
+                p: p,
+                onTap: () => controller.useRecent(t.query),
+              ),
+          ],
           if (lives.isNotEmpty) ...[
             _SectionHeader(title: 'En direct maintenant', p: p),
             _LiveStrip(lives: lives, tokens: const [], c: controller, p: p),
@@ -190,7 +202,10 @@ class _Suggestions extends StatelessWidget {
             for (final u in popular)
               _UserTile(user: u, tokens: const [], c: controller, p: p),
           ],
-          if (recent.isEmpty && lives.isEmpty && popular.isEmpty)
+          if (recent.isEmpty &&
+              trends.isEmpty &&
+              lives.isEmpty &&
+              popular.isEmpty)
             _Hint(
               icon: Icons.travel_explore_rounded,
               title: 'Rechercher dans Foumbot',
@@ -225,8 +240,20 @@ class _Results extends StatelessWidget {
       // montre pas « aucun résultat » trop tôt.
       final waiting = controller.isSearching.value && r.isEmpty;
 
+      final suggestions = controller.typing.value
+          ? controller.suggestions.toList()
+          : const <SearchSuggestion>[];
+
       return Column(
         children: [
+          for (final sug in suggestions)
+            _SuggestionTile(
+              suggestion: sug,
+              tokens: tokens,
+              p: p,
+              onTap: () => controller.useRecent(sug.text),
+            ),
+          if (suggestions.isNotEmpty) Divider(height: 1, color: p.line),
           _Tabs(results: r, current: tab, c: controller, p: p),
           Divider(height: 1, color: p.line),
           Expanded(
@@ -444,6 +471,98 @@ class _TabChip extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // Éléments
 // ---------------------------------------------------------------------------
+
+/// Une tendance de la commune : rang, recherche, nombre de recherches.
+class _TrendTile extends StatelessWidget {
+  const _TrendTile({
+    required this.rank,
+    required this.trend,
+    required this.p,
+    required this.onTap,
+  });
+
+  final int rank;
+  final SearchTrend trend;
+  final _Palette p;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final top = rank <= 3;
+    return ListTile(
+      dense: true,
+      onTap: onTap,
+      leading: SizedBox(
+        width: 28,
+        child: Center(
+          child: Text(
+            '$rank',
+            style: GoogleFonts.spaceGrotesk(
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+              color: top ? AppColors.orange : p.muted,
+            ),
+          ),
+        ),
+      ),
+      title: Text(
+        trend.query,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: p.title(size: 15),
+      ),
+      subtitle: trend.count > 1
+          ? Text(
+              _count(trend.count, 'recherche', 'recherches'),
+              style: p.body(size: 12),
+            )
+          : null,
+      trailing: Icon(
+        top ? Icons.local_fire_department_rounded : Icons.trending_up_rounded,
+        color: top ? AppColors.orange : p.muted,
+        size: 20,
+      ),
+    );
+  }
+}
+
+/// Complément proposé pendant la frappe : une de mes recherches, ou une
+/// tendance de la commune. Le début déjà tapé est mis en valeur.
+class _SuggestionTile extends StatelessWidget {
+  const _SuggestionTile({
+    required this.suggestion,
+    required this.tokens,
+    required this.p,
+    required this.onTap,
+  });
+
+  final SearchSuggestion suggestion;
+  final List<String> tokens;
+  final _Palette p;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = p.body(size: 15);
+    return ListTile(
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      onTap: onTap,
+      leading: Icon(
+        suggestion.isRecent ? Icons.history_rounded : Icons.trending_up_rounded,
+        color: suggestion.isRecent ? p.muted : AppColors.orange,
+        size: 20,
+      ),
+      title: HighlightedText(
+        suggestion.text,
+        tokens: tokens,
+        style: style,
+        highlight: style.copyWith(fontWeight: FontWeight.w800),
+      ),
+      trailing: Icon(Icons.north_west_rounded, color: p.muted, size: 18),
+    );
+  }
+}
 
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader({

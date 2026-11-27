@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -11,6 +12,7 @@ import '../models/feed_item.dart';
 import '../models/live_session.dart';
 import '../models/market_item.dart';
 import '../models/search_text.dart';
+import '../models/search_trend.dart';
 import '../models/user_profile.dart';
 import 'auth_service.dart';
 import 'feed_memory.dart';
@@ -343,6 +345,84 @@ class SearchService extends GetxService {
       developer.log('comptes populaires', name: 'Search', error: e);
       return const [];
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // Tendances
+  // ---------------------------------------------------------------------
+
+  List<SearchTrend>? _trendsCache;
+  DateTime? _trendsAt;
+  final _recorded = <String>{};
+
+  /// Les recherches les plus populaires du moment (gardées 5 minutes).
+  Future<List<SearchTrend>> trending({int limit = 10}) async {
+    final at = _trendsAt;
+    if (_trendsCache != null &&
+        at != null &&
+        DateTime.now().difference(at) < const Duration(minutes: 5)) {
+      return _trendsCache!;
+    }
+    try {
+      final snap = await _db
+          .collection('searchTrends')
+          .where('hidden', isEqualTo: false)
+          .orderBy('hot', descending: true)
+          .limit(limit)
+          .get();
+      _trendsCache = [
+        for (final doc in snap.docs) ?SearchTrend.fromMap(doc.data()),
+      ];
+      _trendsAt = DateTime.now();
+      return _trendsCache!;
+    } on FirebaseException catch (e) {
+      developer.log('tendances', name: 'Search', error: e);
+      return _trendsCache ?? const [];
+    }
+  }
+
+  /// Tendances qui commencent comme la saisie — de quoi compléter
+  /// pendant la frappe, au-delà des 10 premières tendances.
+  Future<List<SearchTrend>> trendsMatching(String query) async {
+    final tokens = searchQueryTokens(query);
+    if (tokens.isEmpty) return const [];
+    // Le mot le plus long départage le mieux ; tronqué comme à l'index.
+    final word = (tokens.toList()..sort((a, b) => b.length - a.length)).first;
+    final prefix = word.length > 15 ? word.substring(0, 15) : word;
+    if (prefix.length < 2) return const [];
+    try {
+      final snap = await _db
+          .collection('searchTrends')
+          .where('prefixes', arrayContains: prefix)
+          .where('hidden', isEqualTo: false)
+          .orderBy('hot', descending: true)
+          .limit(20)
+          .get();
+      return [for (final doc in snap.docs) ?SearchTrend.fromMap(doc.data())];
+    } on FirebaseException catch (e) {
+      developer.log('tendances (saisie)', name: 'Search', error: e);
+      return const [];
+    }
+  }
+
+  /// Compte une recherche aboutie dans les tendances. Le serveur ne la
+  /// compte qu'une fois par jour et par compte ; ici, une fois par
+  /// session suffit. Sans compte, rien n'est compté.
+  void record(String query) {
+    if (_uid == null) return;
+    final key = searchWords(query).join(' ');
+    if (key.length < 2 || !_recorded.add(key)) return;
+    unawaited(
+      FirebaseFunctions.instance
+          .httpsCallable('recordSearch')
+          .call<Map<String, dynamic>>({'query': query.trim()})
+          .then((_) => _trendsAt = null)
+          .catchError((Object e) {
+            _recorded.remove(key);
+            developer.log('recordSearch', name: 'Search', error: e);
+            return null;
+          }),
+    );
   }
 
   // ---------------------------------------------------------------------

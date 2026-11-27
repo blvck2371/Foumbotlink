@@ -2306,3 +2306,6 @@ const searchIndex = require("./search_index");
 exports.indexUserForSearch = searchIndex.indexUser;
 exports.indexPostForSearch = searchIndex.indexPost;
 exports.indexMarketForSearch = searchIndex.indexMarket;
+
+// --- Tendances de recherche (voir search_trends.js) ---------------------
+exports.recordSearch = require("./search_trends").recordSearch;

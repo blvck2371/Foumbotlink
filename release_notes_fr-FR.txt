@@ -2,6 +2,6 @@ Démarches :
 • Suivez vos dossiers étape par étape : montrez votre QR code au guichet, vous êtes prévenu à chaque étape.
 • Les structures publient leurs démarches : pièces, tarifs, délais et étapes.
 • Cochez vos pièces et recevez un rappel avant la fin d'un délai.
-Recherche : trouvez profils, publications, annonces, lives et démarches.
+Recherche : profils, publications, annonces, lives et démarches, avec les tendances et des suggestions pendant la frappe.
 Fil d'actualité personnalisé et images plus fluides.
 Corrections et améliorations diverses.

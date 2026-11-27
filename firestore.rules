@@ -498,6 +498,18 @@ service cloud.firestore {
         && resource.data.structureUid == request.auth.uid;
     }
 
+    // Tendances de recherche : lues par tous, écrites uniquement par la
+    // fonction `recordSearch` (qui compte une recherche par compte et par
+    // jour). Le détail des comptes (`hits`) n'est lisible par personne.
+    match /searchTrends/{key} {
+      allow read: if true;
+      allow write: if false;
+
+      match /hits/{uid} {
+        allow read, write: if false;
+      }
+    }
+
     match /trackingCodes/{code} {
       allow read: if isVerifiedStructure()
         || (request.auth != null && resource.data.uid == request.auth.uid);

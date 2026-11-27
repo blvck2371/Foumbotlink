@@ -8,6 +8,7 @@ import '../models/feed_item.dart';
 import '../models/live_session.dart';
 import '../models/market_item.dart';
 import '../models/search_text.dart';
+import '../models/search_trend.dart';
 import '../models/user_profile.dart';
 import '../routes/app_routes.dart';
 import '../services/feed_memory.dart';
@@ -37,6 +38,22 @@ class AppSearchController extends GetxController {
   final recent = <String>[].obs;
   final popular = <UserProfile>[].obs;
 
+  /// Recherches les plus populaires du moment, dans la commune.
+  final trends = <SearchTrend>[].obs;
+
+  /// Compléments proposés pendant la frappe (récentes puis tendances).
+  final suggestions = <SearchSuggestion>[].obs;
+
+  /// Le champ a le focus : on tape encore, les suggestions sont utiles.
+  final typing = false.obs;
+
+  /// Tendances correspondant à la saisie, lues du serveur.
+  List<SearchTrend> _matchingTrends = const [];
+
+  /// Recherche validée avant l'arrivée de ses résultats : elle ne sera
+  /// comptée en tendance que si elle trouve quelque chose.
+  String? _pendingRecord;
+
   Timer? _timer;
 
   /// Numéro de la requête en cours : une réponse plus lente qu'une
@@ -59,11 +76,13 @@ class AppSearchController extends GetxController {
   void onInit() {
     super.onInit();
     textController.addListener(_onText);
+    focusNode.addListener(() => typing.value = focusNode.hasFocus);
     unawaited(_loadSuggestions());
   }
 
   Future<void> _loadSuggestions() async {
     recent.assignAll(await _search.recentSearches());
+    unawaited(_search.trending().then(trends.assignAll));
     popular.assignAll(await _search.popularAccounts());
   }
 
@@ -76,8 +95,12 @@ class AppSearchController extends GetxController {
       _request++;
       isSearching.value = false;
       results.value = SearchResults.empty;
+      suggestions.clear();
+      _matchingTrends = const [];
       return;
     }
+    // Tout de suite, avec ce qu'on a déjà ; complété au retour du serveur.
+    _suggest(text);
     isSearching.value = true;
     _timer = Timer(_debounce, () => _run(text));
   }
@@ -86,9 +109,18 @@ class AppSearchController extends GetxController {
     final id = ++_request;
     isSearching.value = true;
     try {
-      final r = await _search.search(text, following: _following);
+      final (r, matching) = await (
+        _search.search(text, following: _following),
+        _search.trendsMatching(text),
+      ).wait;
       if (id != _request) return;
       results.value = r;
+      _matchingTrends = matching;
+      _suggest(text);
+      if (_pendingRecord == text.trim()) {
+        _pendingRecord = null;
+        if (!r.isEmpty) _search.record(text);
+      }
     } finally {
       if (id == _request) isSearching.value = false;
     }
@@ -99,6 +131,13 @@ class AppSearchController extends GetxController {
     final text = (value ?? textController.text).trim();
     if (text.isEmpty) return;
     unawaited(_remember(text));
+    // Comptée en tendance seulement si elle trouve quelque chose.
+    final r = results.value;
+    if (!isSearching.value && r.query.trim() == text && !r.isEmpty) {
+      _search.record(text);
+    } else {
+      _pendingRecord = text;
+    }
     focusNode.unfocus();
   }
 
@@ -130,7 +169,25 @@ class AppSearchController extends GetxController {
 
   /// Ouvrir un résultat enregistre la recherche, comme sur TikTok.
   void _rememberCurrent() {
-    if (hasQuery) unawaited(_remember(query.value.trim()));
+    if (!hasQuery) return;
+    final text = query.value.trim();
+    unawaited(_remember(text));
+    // Un résultat ouvert : la recherche a abouti, elle compte.
+    _search.record(text);
+  }
+
+  void _suggest(String text) {
+    final byQuery = {
+      for (final t in [...trends, ..._matchingTrends]) t.query: t,
+    };
+    suggestions.assignAll(
+      rankSuggestions(
+        query: text,
+        recent: recent,
+        trends: byQuery.values.toList(),
+        limit: 4,
+      ),
+    );
   }
 
   void openUser(UserProfile user) {

@@ -361,6 +361,38 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "searchTrends",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "hidden",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hot",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "searchTrends",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "prefixes",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "hidden",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hot",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
