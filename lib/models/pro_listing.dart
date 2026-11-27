@@ -59,6 +59,7 @@ class ProListing {
     this.quartier = '',
     this.hours = '',
     this.photoUrl,
+    this.photos = const [],
     this.ratingCount = 0,
     this.ratingAvg = 0,
     this.rankScore = rankPrior,
@@ -78,6 +79,9 @@ class ProListing {
   /// Horaires en texte libre : « Lun–Sam, 8 h–18 h ».
   final String hours;
   final String? photoUrl;
+
+  /// Photos de l'activité (réalisations, atelier…), [maxPhotos] au plus.
+  final List<String> photos;
   final int ratingCount;
   final double ratingAvg;
 
@@ -93,6 +97,7 @@ class ProListing {
   /// Doit rester aligné sur `functions/index.js` et sur firestore.rules
   /// (valeur imposée à la création).
   static const rankPrior = 3.5;
+  static const maxPhotos = 3;
   static const rankWeight = 5;
 
   String get categoryLabel =>
@@ -101,6 +106,32 @@ class ProListing {
           : category.label;
 
   bool get hasRating => ratingCount > 0;
+
+  /// Image de la vignette : photo de profil, sinon première photo
+  /// d'activité.
+  String? get thumbnail => (photoUrl != null && photoUrl!.isNotEmpty)
+      ? photoUrl
+      : (photos.isNotEmpty ? photos.first : null);
+
+  ProListing copyWith({
+    List<String>? photos,
+    int? ratingCount,
+    double? ratingAvg,
+  }) => ProListing(
+    id: id,
+    name: name,
+    category: category,
+    trade: trade,
+    description: description,
+    quartier: quartier,
+    hours: hours,
+    photoUrl: photoUrl,
+    photos: photos ?? this.photos,
+    ratingCount: ratingCount ?? this.ratingCount,
+    ratingAvg: ratingAvg ?? this.ratingAvg,
+    rankScore: rankScore,
+    createdAt: createdAt,
+  );
 
   /// « 4,3 » — virgule décimale, une décimale.
   String get ratingLabel => ratingAvg.toStringAsFixed(1).replaceAll('.', ',');
@@ -135,6 +166,7 @@ class ProListing {
       quartier: d['quartier'] as String? ?? '',
       hours: d['hours'] as String? ?? '',
       photoUrl: d['photoUrl'] as String?,
+      photos: (d['photos'] as List?)?.whereType<String>().toList() ?? const [],
       ratingCount: (d['ratingCount'] as num?)?.toInt() ?? 0,
       ratingAvg: (d['ratingAvg'] as num?)?.toDouble() ?? 0,
       rankScore: (d['rankScore'] as num?)?.toDouble() ?? rankPrior,
@@ -152,6 +184,7 @@ class ProListing {
     'quartier': quartier.trim(),
     'hours': hours.trim(),
     'photoUrl': photoUrl,
+    'photos': photos,
     'updatedAt': FieldValue.serverTimestamp(),
   };
 

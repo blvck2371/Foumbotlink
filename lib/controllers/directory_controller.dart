@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -25,6 +27,8 @@ class DirectoryController extends GetxController {
   final category = Rxn<ProCategory>();
   final query = ''.obs;
   final searchCtrl = TextEditingController();
+
+  StreamSubscription<List<ProListing>>? _sub;
 
   String get myUid => _auth.isSignedIn ? _auth.uid : '';
 
@@ -69,19 +73,27 @@ class DirectoryController extends GetxController {
 
   @override
   void onClose() {
+    _sub?.cancel();
     searchCtrl.dispose();
     super.onClose();
   }
 
+  /// Suit l'annuaire en direct : le cache local s'affiche tout de suite,
+  /// puis chaque fiche créée, modifiée ou renotée remonte d'elle-même.
   Future<void> load() async {
     error.value = null;
-    try {
-      listings.assignAll(await _service.fetchAll());
-    } on Object catch (e) {
-      error.value = 'Impossible de charger l’annuaire : $e';
-    } finally {
-      isLoading.value = false;
-    }
+    await _sub?.cancel();
+    _sub = _service.watchAll().listen(
+      (list) {
+        listings.assignAll(list);
+        error.value = null;
+        isLoading.value = false;
+      },
+      onError: (Object e) {
+        error.value = 'Impossible de charger l’annuaire : $e';
+        isLoading.value = false;
+      },
+    );
   }
 
   void setQuery(String value) => query.value = value;
@@ -119,7 +131,7 @@ class DirectoryController extends GetxController {
       reason: 'Pour apparaître dans l’annuaire',
     );
     if (!ok) return;
-    final mine = await _service.fetch(_auth.uid);
+    final mine = myListing ?? await _service.fetch(_auth.uid);
     final saved = await Get.toNamed(AppRoutes.directoryEdit, arguments: mine);
     if (saved is ProListing) {
       upsertLocal(saved);

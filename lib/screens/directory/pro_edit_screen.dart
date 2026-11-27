@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../models/pro_listing.dart';
 import '../../services/auth_service.dart';
@@ -8,7 +9,9 @@ import '../../services/directory_service.dart';
 import '../../services/user_profile_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
+import '../../utils/local_media.dart';
 import '../../widgets/confirm_dialog.dart';
+import '../../widgets/feed_image.dart';
 import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
 import '../../widgets/form_field_box.dart';
@@ -39,6 +42,10 @@ class _ProEditScreenState extends State<ProEditScreen> {
 
   ProListing? _existing;
   ProCategory? _category;
+
+  /// URLs déjà en ligne et fichiers locaux à envoyer, dans l'ordre
+  /// d'affichage. La première photo sert de vignette dans la liste.
+  final _photos = <String>[];
   bool _loading = true;
   bool _saving = false;
 
@@ -60,6 +67,7 @@ class _ProEditScreenState extends State<ProEditScreen> {
       _description.text = e.description;
       _quartier.text = e.quartier;
       _hours.text = e.hours;
+      _photos.addAll(e.photos);
       try {
         final c = await _service.contact(e.id);
         _phone.text = c.phone;
@@ -80,6 +88,21 @@ class _ProEditScreenState extends State<ProEditScreen> {
       c.dispose();
     }
     super.dispose();
+  }
+
+  /// Photos réduites à 1280 px, qualité 70 : assez pour montrer un
+  /// travail, sans coûter son forfait à chaque habitant qui ouvre la fiche.
+  Future<void> _pickPhotos() async {
+    final room = ProListing.maxPhotos - _photos.length;
+    if (room <= 0) return;
+    final picked = await ImagePicker().pickMultiImage(
+      limit: room,
+      maxWidth: 1280,
+      maxHeight: 1280,
+      imageQuality: 70,
+    );
+    if (!mounted || picked.isEmpty) return;
+    setState(() => _photos.addAll(picked.take(room).map((f) => f.path)));
   }
 
   Future<void> _save() async {
@@ -106,11 +129,13 @@ class _ProEditScreenState extends State<ProEditScreen> {
       createdAt: e?.createdAt,
     );
     try {
-      await _service.save(
+      final saved = await _service.save(
         listing,
         ProContact(phone: _phone.text.trim(), whatsapp: _whatsapp.text.trim()),
+        photos: _photos,
+        previousPhotos: e?.photos ?? const [],
       );
-      Get.back(result: listing);
+      Get.back(result: saved);
     } on Object catch (err) {
       if (mounted) setState(() => _saving = false);
       Get.snackbar('Annuaire', 'Enregistrement impossible : $err',
@@ -133,6 +158,79 @@ class _ProEditScreenState extends State<ProEditScreen> {
       Get.snackbar('Annuaire', 'Suppression impossible : $err',
           snackPosition: SnackPosition.BOTTOM);
     }
+  }
+
+  Widget _photoPicker(bool isDark, Color muted) {
+    const size = 100.0;
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        for (var i = 0; i < _photos.length; i++)
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: SizedBox(
+                  width: size,
+                  height: size,
+                  child: LocalMedia.isLocal(_photos[i])
+                      ? Image(
+                          image: LocalMedia.image(_photos[i]),
+                          fit: BoxFit.cover,
+                        )
+                      : FeedNetworkImage(url: _photos[i], isDark: isDark),
+                ),
+              ),
+              Positioned(
+                top: 4,
+                right: 4,
+                child: Material(
+                  color: AppColors.black.withValues(alpha: 0.6),
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () => setState(() => _photos.removeAt(i)),
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(Icons.close, size: 16, color: AppColors.white),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        if (_photos.length < ProListing.maxPhotos)
+          InkWell(
+            onTap: _pickPhotos,
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              width: size,
+              height: size,
+              decoration: BoxDecoration(
+                color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.orange.withValues(alpha: 0.5)),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.add_a_photo_outlined, color: AppColors.orange),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Ajouter',
+                    style: GoogleFonts.manrope(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   @override
@@ -261,6 +359,22 @@ class _ProEditScreenState extends State<ProEditScreen> {
                           ? 'Précisez votre métier'
                           : null,
                     ),
+                    label(
+                      'Photos de votre activité '
+                      '(${_photos.length}/${ProListing.maxPhotos})',
+                    ),
+                    Text(
+                      'Vos réalisations, votre atelier, votre matériel : les '
+                      'habitants choisissent plus volontiers un pro qui montre '
+                      'son travail.',
+                      style: GoogleFonts.manrope(
+                        fontSize: 12.5,
+                        height: 1.4,
+                        color: muted,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _photoPicker(isDark, muted),
                     label('Téléphone *'),
                     field(
                       _phone,

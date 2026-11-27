@@ -140,6 +140,16 @@ async function main() {
   await check("le pro ne peut pas toucher à son score", async () => {
     await assertFails(updateDoc(doc(pro, "directory", PRO), {rankScore: 5}));
   });
+  await check("le pro ajoute 3 photos", async () => {
+    await assertSucceeds(updateDoc(doc(pro, "directory", PRO), {
+      photos: ["https://a/1.jpg", "https://a/2.jpg", "https://a/3.jpg"],
+    }));
+  });
+  await check("une 4e photo est refusée", async () => {
+    await assertFails(updateDoc(doc(pro, "directory", PRO), {
+      photos: ["1", "2", "3", "4"],
+    }));
+  });
   await check("un tiers ne modifie pas la fiche", async () => {
     await assertFails(updateDoc(doc(client, "directory", PRO), {name: "X"}));
   });

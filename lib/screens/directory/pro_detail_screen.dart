@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -13,7 +15,9 @@ import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/confirm_dialog.dart';
 import '../../widgets/foumbot_app_bar.dart';
+import '../../widgets/feed_image.dart';
 import '../../widgets/foumbot_loader.dart';
+import '../../widgets/post_image_viewer.dart';
 import 'directory_widgets.dart';
 
 /// Fiche d'un professionnel : coordonnées, note, avis des habitants.
@@ -34,13 +38,33 @@ class _ProDetailScreenState extends State<ProDetailScreen> {
 
   ProListing? _listing;
   List<ProReview> _reviews = const [];
-  ProReview? _myReview;
   bool _canReview = false;
   bool _loadingReviews = true;
   bool _notFound = false;
+  final _subs = <StreamSubscription<Object?>>[];
+
+  /// Taille du flux d'avis. Tant que tous les avis y tiennent, la note
+  /// affichée est recalculée ici même : elle bouge à l'instant où un avis
+  /// est publié, sans attendre `onProReviewWritten`.
+  static const _reviewsLimit = 50;
 
   String get _myUid => _auth.isSignedIn ? _auth.uid : '';
   bool get _isMine => _listing != null && _listing!.id == _myUid;
+
+  ProReview? get _myReview =>
+      _reviews.firstWhereOrNull((r) => r.reviewerUid == _myUid);
+
+  /// Fiche avec la note recalculée à partir des avis reçus en direct.
+  ProListing? get _display {
+    final pro = _listing;
+    if (pro == null || _loadingReviews) return pro;
+    if (_reviews.length >= _reviewsLimit) return pro;
+    final sum = _reviews.fold<int>(0, (s, r) => s + r.rating);
+    return pro.copyWith(
+      ratingCount: _reviews.length,
+      ratingAvg: _reviews.isEmpty ? 0 : sum / _reviews.length,
+    );
+  }
 
   @override
   void initState() {
@@ -51,92 +75,68 @@ class _ProDetailScreenState extends State<ProDetailScreen> {
     if (id.isEmpty) {
       _notFound = true;
     } else {
-      _load(id);
+      _listen(id);
     }
   }
 
-  Future<void> _load(String id) async {
-    try {
-      final results = await Future.wait([
-        _service.fetch(id),
-        _service.reviews(id),
-        _service.canReview(proUid: id, myUid: _myUid),
-        _service.myReview(proUid: id, myUid: _myUid),
-      ]);
-      if (!mounted) return;
-      final fresh = results[0] as ProListing?;
-      setState(() {
-        if (fresh == null) {
-          _notFound = true;
-        } else {
-          _listing = fresh;
-        }
-        _reviews = results[1] as List<ProReview>;
-        _canReview = results[2] as bool;
-        _myReview = results[3] as ProReview?;
-        _loadingReviews = false;
-      });
-      if (fresh != null) _ctrl.upsertLocal(fresh);
-    } on Object catch (_) {
-      if (mounted) setState(() => _loadingReviews = false);
+  void _listen(String id) {
+    _subs
+      ..add(_service.watch(id).listen((fresh) {
+        if (!mounted) return;
+        setState(() {
+          _listing = fresh ?? _listing;
+          _notFound = fresh == null;
+        });
+      }, onError: (Object _) {}))
+      ..add(_service.watchReviews(id, limit: _reviewsLimit).listen(
+        (list) {
+          if (mounted) {
+            setState(() {
+              _reviews = list;
+              _loadingReviews = false;
+            });
+          }
+        },
+        onError: (Object _) {
+          if (mounted) setState(() => _loadingReviews = false);
+        },
+      ))
+      ..add(_service.watchCanReview(proUid: id, myUid: _myUid).listen((can) {
+        if (mounted) setState(() => _canReview = can);
+      }, onError: (Object _) {}));
+  }
+
+  @override
+  void dispose() {
+    for (final s in _subs) {
+      s.cancel();
     }
+    super.dispose();
   }
 
-  /// Après un contact, le droit de noter peut s'ouvrir : on revérifie.
-  Future<void> _afterContact(Future<void> Function(ProListing) action) async {
-    final pro = _listing;
-    if (pro == null) return;
-    await action(pro);
-    if (_canReview || _myUid.isEmpty) return;
-    final can = await _service.canReview(proUid: pro.id, myUid: _myUid);
-    if (mounted && can) setState(() => _canReview = true);
-  }
-
+  /// Le bouton « Noter » est toujours visible ; sans contact préalable, il
+  /// explique comment débloquer la notation au lieu de rester caché.
   Future<void> _openReview() async {
     final pro = _listing;
     if (pro == null) return;
-    final review = await Get.bottomSheet<ProReview>(
+    if (!_auth.isSignedIn) {
+      await Get.toNamed(AppRoutes.auth);
+      return;
+    }
+    if (!_canReview) {
+      Get.snackbar(
+        'Noter ce professionnel',
+        'Contactez-le d’abord avec Appeler, WhatsApp ou Message : seules '
+            'les personnes qui l’ont contacté peuvent laisser un avis.',
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 5),
+      );
+      return;
+    }
+    await Get.bottomSheet<ProReview>(
       _ReviewSheet(pro: pro, existing: _myReview),
       isScrollControlled: true,
     );
-    if (review == null || !mounted) return;
-
-    // La moyenne officielle est recalculée côté serveur dans la seconde ;
-    // on l'anticipe ici pour que la fiche et le classement bougent tout
-    // de suite.
-    final old = _myReview;
-    var count = pro.ratingCount;
-    var sum = pro.ratingAvg * pro.ratingCount;
-    if (old != null) {
-      sum += review.rating - old.rating;
-    } else {
-      count += 1;
-      sum += review.rating;
-    }
-    final updated = ProListing(
-      id: pro.id,
-      name: pro.name,
-      category: pro.category,
-      trade: pro.trade,
-      description: pro.description,
-      quartier: pro.quartier,
-      hours: pro.hours,
-      photoUrl: pro.photoUrl,
-      ratingCount: count,
-      ratingAvg: count > 0 ? sum / count : 0,
-      rankScore: (ProListing.rankWeight * ProListing.rankPrior + sum) /
-          (ProListing.rankWeight + count),
-      createdAt: pro.createdAt,
-    );
-    setState(() {
-      _listing = updated;
-      _myReview = review;
-      _reviews = [
-        review,
-        ..._reviews.where((r) => r.reviewerUid != review.reviewerUid),
-      ];
-    });
-    _ctrl.upsertLocal(updated);
   }
 
   Future<void> _deleteListing() async {
@@ -177,7 +177,7 @@ class _ProDetailScreenState extends State<ProDetailScreen> {
       final isDark = Get.find<ThemeController>().isDarkMode;
       final ink = isDark ? AppColors.white : AppColors.black;
       final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
-      final pro = _listing;
+      final pro = _display;
 
       return Scaffold(
         backgroundColor: isDark ? AppColors.black : AppColors.white,
@@ -233,6 +233,10 @@ class _ProDetailScreenState extends State<ProDetailScreen> {
                     padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
                     children: [
                       _header(pro, isDark, ink, muted),
+                      if (pro.photos.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        _photos(context, pro, isDark),
+                      ],
                       const SizedBox(height: 18),
                       if (!_isMine) _contactButtons(pro, isDark),
                       if (_isMine) _ownerHint(isDark, muted),
@@ -281,6 +285,32 @@ class _ProDetailScreenState extends State<ProDetailScreen> {
     );
   }
 
+  /// Photos de l'activité, en bande ; un toucher les ouvre en grand.
+  Widget _photos(BuildContext context, ProListing pro, bool isDark) {
+    return SizedBox(
+      height: 150,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: pro.photos.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 10),
+        itemBuilder: (context, i) => GestureDetector(
+          onTap: () => openPostImageViewer(
+            context,
+            imageUrls: pro.photos,
+            initialIndex: i,
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: SizedBox(
+              width: pro.photos.length == 1 ? 260 : 190,
+              child: FeedNetworkImage(url: pro.photos[i], isDark: isDark),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _contactButtons(ProListing pro, bool isDark) {
     Widget button(IconData icon, String label, VoidCallback onTap,
         {bool primary = false}) {
@@ -324,14 +354,14 @@ class _ProDetailScreenState extends State<ProDetailScreen> {
 
     return Row(
       children: [
-        button(Icons.call, 'Appeler', () => _afterContact(_ctrl.call),
+        button(Icons.call, 'Appeler', () => _ctrl.call(pro),
             primary: true),
         const SizedBox(width: 8),
         button(Icons.chat_bubble_outline, 'WhatsApp',
-            () => _afterContact(_ctrl.whatsapp)),
+            () => _ctrl.whatsapp(pro)),
         const SizedBox(width: 8),
         button(Icons.mail_outline, 'Message',
-            () => _afterContact(_ctrl.message)),
+            () => _ctrl.message(pro)),
       ],
     );
   }
@@ -415,7 +445,7 @@ class _ProDetailScreenState extends State<ProDetailScreen> {
                 ),
               ),
             ),
-            if (_canReview)
+            if (!_isMine)
               TextButton.icon(
                 onPressed: _openReview,
                 icon: Icon(
@@ -547,17 +577,18 @@ class _ReviewSheetState extends State<_ReviewSheet> {
       comment: _commentCtrl.text.trim(),
       createdAt: DateTime.now(),
     );
-    try {
-      await Get.find<DirectoryService>().submitReview(
-        proUid: widget.pro.id,
-        review: review,
-      );
-      Get.back(result: review);
-    } on Object catch (e) {
-      if (mounted) setState(() => _submitting = false);
-      Get.snackbar('Avis', 'Publication impossible : $e',
-          snackPosition: SnackPosition.BOTTOM);
-    }
+    // On referme sans attendre le serveur : l'avis est déjà dans le
+    // cache local, et le flux de la fiche l'affiche à l'instant. Un refus
+    // (règles, réseau) remonte ensuite par le message ci-dessous.
+    unawaited(
+      Get.find<DirectoryService>()
+          .submitReview(proUid: widget.pro.id, review: review)
+          .catchError((Object e) {
+        Get.snackbar('Avis', 'Publication impossible : $e',
+            snackPosition: SnackPosition.BOTTOM);
+      }),
+    );
+    Get.back(result: review);
   }
 
   static const _labels = ['', 'Très mauvais', 'Décevant', 'Correct', 'Bien',

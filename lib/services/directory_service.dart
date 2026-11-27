@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 import '../models/pro_listing.dart';
+import '../utils/local_media.dart';
 
 /// Annuaire des professionnels — `directory/{ownerUid}`.
 ///
@@ -11,13 +13,18 @@ import '../models/pro_listing.dart';
 ///   droit de laisser un avis ;
 /// - `reviews/{uid}` : un avis par personne. Les moyennes et le score de
 ///   classement sont recalculés par `onProReviewWritten`.
+///
+/// Les lectures affichées passent par des flux (`snapshots`) : Firestore
+/// sert d'abord son cache local — l'annuaire s'ouvre sans attendre le
+/// réseau — puis pousse chaque changement (nouvel avis, note recalculée,
+/// fiche modifiée) sans rechargement.
 class DirectoryService {
   final _db = FirebaseFirestore.instance;
+  final _storage = FirebaseStorage.instance;
 
-  /// Taille maximale de l'annuaire chargé d'un coup. À l'échelle d'une
-  /// commune, tout tient en une requête : filtres par métier et
-  /// recherche se font ensuite en mémoire, sans index composite ni
-  /// aller-retour réseau à chaque frappe.
+  /// Taille maximale de l'annuaire suivi. À l'échelle d'une commune, tout
+  /// tient en un flux : filtres par métier et recherche se font ensuite
+  /// en mémoire, sans index composite ni aller-retour réseau.
   static const fetchLimit = 500;
 
   CollectionReference<Map<String, dynamic>> get _col =>
@@ -29,23 +36,26 @@ class DirectoryService {
   CollectionReference<Map<String, dynamic>> _reviews(String proUid) =>
       _col.doc(proUid).collection('reviews');
 
-  /// Annuaire complet, du mieux classé au moins bien classé. À score
-  /// égal, le plus d'avis passe devant.
-  Future<List<ProListing>> fetchAll() async {
-    final snap = await _col
-        .orderBy('rankScore', descending: true)
-        .limit(fetchLimit)
-        .get();
-    final list = snap.docs.map(ProListing.fromDoc).toList();
-    list.sort(compareRank);
-    return list;
-  }
+  /// Annuaire complet, du mieux classé au moins bien classé.
+  Stream<List<ProListing>> watchAll() => _col
+      .orderBy('rankScore', descending: true)
+      .limit(fetchLimit)
+      .snapshots()
+      .map((snap) => snap.docs.map(ProListing.fromDoc).toList()
+        ..sort(compareRank));
 
+  /// À score égal, le plus d'avis passe devant.
   static int compareRank(ProListing a, ProListing b) {
     final byScore = b.rankScore.compareTo(a.rankScore);
     if (byScore != 0) return byScore;
     return b.ratingCount.compareTo(a.ratingCount);
   }
+
+  /// Une fiche, `null` si elle n'existe pas (ou plus).
+  Stream<ProListing?> watch(String proUid) => _col
+      .doc(proUid)
+      .snapshots()
+      .map((doc) => doc.exists ? ProListing.fromDoc(doc) : null);
 
   Future<ProListing?> fetch(String proUid) async {
     final doc = await _col.doc(proUid).get();
@@ -57,28 +67,101 @@ class DirectoryService {
     return ProContact.fromMap(doc.data());
   }
 
-  /// Crée ou met à jour la fiche du compte courant. La réputation n'est
-  /// posée qu'à la création : une mise à jour ne touche jamais aux notes.
-  Future<void> save(ProListing listing, ProContact contact) async {
+  /// Avis récents. Un avis qu'on vient de publier y apparaît aussitôt
+  /// (écriture locale en attente), avant même la confirmation serveur.
+  Stream<List<ProReview>> watchReviews(String proUid, {int limit = 50}) =>
+      _reviews(proUid)
+          .orderBy('createdAt', descending: true)
+          .limit(limit)
+          .snapshots(includeMetadataChanges: false)
+          .map((snap) => snap.docs.map(ProReview.fromDoc).toList());
+
+  /// L'utilisateur a-t-il contacté ce professionnel ? Suivi en direct :
+  /// le bouton « Noter » s'active dès l'appel ou le message.
+  Stream<bool> watchCanReview({
+    required String proUid,
+    required String myUid,
+  }) {
+    if (myUid.isEmpty || myUid == proUid) return Stream.value(false);
+    return _col
+        .doc(proUid)
+        .collection('contactedBy')
+        .doc(myUid)
+        .snapshots()
+        .map((doc) => doc.exists)
+        .handleError((Object _) => false);
+  }
+
+  /// Crée ou met à jour la fiche du compte courant.
+  ///
+  /// [photos] mélange URLs déjà en ligne et fichiers locaux à envoyer ;
+  /// l'ordre est conservé. Les photos retirées par rapport à
+  /// [previousPhotos] sont effacées du stockage.
+  Future<ProListing> save(
+    ProListing listing,
+    ProContact contact, {
+    List<String> photos = const [],
+    List<String> previousPhotos = const [],
+  }) async {
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final urls = <String>[];
+    // En série : en parallèle, chaque envoi n'a qu'une fraction du débit
+    // et un envoi à plusieurs photos échoue là où une seule passe.
+    for (var i = 0; i < photos.length && i < ProListing.maxPhotos; i++) {
+      final p = photos[i];
+      if (!LocalMedia.isLocal(p)) {
+        urls.add(p);
+        continue;
+      }
+      final ref = _storage.ref('directory/${listing.id}/${stamp}_$i.jpg');
+      await (await LocalMedia.upload(ref, p, _imageMetadata));
+      urls.add(await ref.getDownloadURL());
+    }
+    final saved = listing.copyWith(photos: urls);
+
     final ref = _col.doc(listing.id);
     final exists = (await ref.get()).exists;
     final batch = _db.batch();
     if (exists) {
-      batch.update(ref, listing.toEditableMap());
+      batch.update(ref, saved.toEditableMap());
     } else {
-      batch.set(ref, listing.toCreateMap());
+      batch.set(ref, saved.toCreateMap());
     }
     batch.set(_contactRef(listing.id), contact.toMap());
     await batch.commit();
+
+    for (final old in previousPhotos) {
+      if (!urls.contains(old)) await _deletePhoto(old);
+    }
+    return saved;
   }
 
-  /// Retire la fiche de l'annuaire. Les avis restent en base (ils
-  /// reviendraient avec une nouvelle fiche) mais ne sont plus visibles.
+  /// Sans type MIME, l'objet arriverait en `application/octet-stream` et
+  /// la règle Storage `contentType.matches('image/.*')` refuserait l'envoi.
+  static final _imageMetadata = SettableMetadata(
+    contentType: 'image/jpeg',
+    cacheControl: 'public, max-age=31536000, immutable',
+  );
+
+  Future<void> _deletePhoto(String url) async {
+    try {
+      await _storage.refFromURL(url).delete();
+    } on Object catch (_) {
+      // Fichier déjà absent : sans conséquence.
+    }
+  }
+
+  /// Retire la fiche de l'annuaire et ses photos. Les avis restent en base
+  /// (ils reviendraient avec une nouvelle fiche) mais ne sont plus visibles.
   Future<void> delete(String proUid) async {
+    final current = await fetch(proUid);
     final batch = _db.batch()
       ..delete(_contactRef(proUid))
       ..delete(_col.doc(proUid));
     await batch.commit();
+    for (final url in current?.photos ?? const <String>[]) {
+      await _deletePhoto(url);
+    }
   }
 
   /// Trace une prise de contact (appel, WhatsApp, message). C'est elle qui
@@ -99,36 +182,9 @@ class DirectoryService {
     }
   }
 
-  Future<bool> canReview({required String proUid, required String myUid}) async {
-    if (myUid.isEmpty || myUid == proUid) return false;
-    try {
-      final doc = await _col
-          .doc(proUid)
-          .collection('contactedBy')
-          .doc(myUid)
-          .get();
-      return doc.exists;
-    } on FirebaseException catch (_) {
-      return false;
-    }
-  }
-
-  Future<List<ProReview>> reviews(String proUid, {int limit = 30}) async {
-    final snap = await _reviews(
-      proUid,
-    ).orderBy('createdAt', descending: true).limit(limit).get();
-    return snap.docs.map(ProReview.fromDoc).toList();
-  }
-
-  Future<ProReview?> myReview({
-    required String proUid,
-    required String myUid,
-  }) async {
-    if (myUid.isEmpty) return null;
-    final doc = await _reviews(proUid).doc(myUid).get();
-    return doc.exists ? ProReview.fromDoc(doc) : null;
-  }
-
+  /// Publie l'avis sans attendre le serveur : le flux des avis l'affiche
+  /// aussitôt depuis le cache local. Une erreur de règles remonte quand
+  /// même au [Future].
   Future<void> submitReview({
     required String proUid,
     required ProReview review,

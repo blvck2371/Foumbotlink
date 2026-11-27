@@ -91,7 +91,7 @@
         ]
       },
       {
-        "source": "**/*.@(html|js|json|wasm)",
+        "source": "**/*.@(html|js|json|wasm|otf|ttf)",
         "headers": [
           {
             "key": "Cache-Control",

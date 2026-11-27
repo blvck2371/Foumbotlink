@@ -291,7 +291,9 @@ service cloud.firestore {
           && data.get('trade', '').size() <= 60
           && data.get('description', '').size() <= 600
           && data.get('quartier', '').size() <= 60
-          && data.get('hours', '').size() <= 60;
+          && data.get('hours', '').size() <= 60
+          && data.get('photos', []) is list
+          && data.get('photos', []).size() <= 3;
       }
 
       allow read: if true;

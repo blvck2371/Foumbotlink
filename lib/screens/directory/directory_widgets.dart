@@ -95,7 +95,7 @@ class ProAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final url = listing.photoUrl;
+    final url = listing.thumbnail;
     if (url != null && url.isNotEmpty) {
       return UserAvatar(name: listing.name, photoUrl: url, radius: radius);
     }
