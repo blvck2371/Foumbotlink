@@ -3,7 +3,18 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 /// Nature du contenu signalé — détermine le chemin Firestore que la
 /// modération doit ouvrir pour trancher. Doit rester aligné sur la liste
 /// acceptée par firestore.rules (`reports`) et sur `onReportCreated`.
-enum ReportTargetType { post, comment, user, marketItem, message, status, live }
+enum ReportTargetType {
+  post,
+  comment,
+  user,
+  marketItem,
+  message,
+  status,
+  live,
+
+  /// Fiche de l'annuaire (`directory/{uid}`).
+  proListing,
+}
 
 /// Motifs proposés à l'utilisateur. L'ordre est celui de la feuille de
 /// signalement ; `autre` est toujours en dernier et exige un commentaire.

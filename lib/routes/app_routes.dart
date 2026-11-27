@@ -38,6 +38,15 @@ abstract class AppRoutes {
   static const settings = '/settings';
   static const moderation = '/moderation';
 
+  /// Annuaire des professionnels, classés par note.
+  static const directory = '/annuaire';
+
+  /// Fiche d'un professionnel (`ProListing` ou son id).
+  static const directoryDetail = '/annuaire/fiche';
+
+  /// Créer ou modifier sa fiche pro.
+  static const directoryEdit = '/annuaire/ma-fiche';
+
   /// Menu Lives : lancer son direct ou entrer dans un live en cours.
   static const lives = '/lives';
 

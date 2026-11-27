@@ -6,6 +6,7 @@ import '../controllers/live_viewer_controller.dart';
 import '../bindings/call_binding.dart';
 import '../bindings/chat_binding.dart';
 import '../bindings/community_binding.dart';
+import '../bindings/directory_binding.dart';
 import '../bindings/dossier_binding.dart';
 import '../bindings/conversations_binding.dart';
 import '../bindings/compose_binding.dart';
@@ -39,6 +40,9 @@ import '../screens/market/market_screen.dart';
 import '../screens/feed/saved_posts_screen.dart';
 import '../screens/notifications/notifications_screen.dart';
 import '../screens/onboarding/onboarding_screen.dart';
+import '../screens/directory/directory_screen.dart';
+import '../screens/directory/pro_detail_screen.dart';
+import '../screens/directory/pro_edit_screen.dart';
 import '../screens/demarches/dossier_detail_screen.dart';
 import '../screens/demarches/dossier_tracking_screen.dart';
 import '../screens/demarches/structure_demarches_screen.dart';
@@ -115,6 +119,25 @@ class AppPages {
       binding: AuthBinding(),
       transition: Transition.downToUp,
       transitionDuration: const Duration(milliseconds: 320),
+    ),
+    GetPage(
+      name: AppRoutes.directory,
+      page: () => const DirectoryScreen(),
+      binding: DirectoryBinding(),
+      transition: Transition.cupertino,
+      transitionDuration: const Duration(milliseconds: 320),
+    ),
+    GetPage(
+      name: AppRoutes.directoryDetail,
+      page: () => const ProDetailScreen(),
+      binding: DirectoryBinding(),
+      transition: Transition.cupertino,
+    ),
+    GetPage(
+      name: AppRoutes.directoryEdit,
+      page: () => const ProEditScreen(),
+      binding: DirectoryBinding(),
+      transition: Transition.cupertino,
     ),
     GetPage(
       name: AppRoutes.market,

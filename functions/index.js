@@ -1281,7 +1281,7 @@ function contentOwner(targetType, targetPath, data) {
   if (targetType === "user") return targetPath.split("/")[1] || null;
   if (!data) return null;
   return data.authorUid || data.senderUid || data.sellerUid ||
-    data.hostUid || null;
+    data.hostUid || data.ownerUid || null;
 }
 
 exports.onReportCreated = onDocumentCreated({
@@ -1396,6 +1396,7 @@ const REPORT_TYPE_LABELS = {
   message: "Message privé",
   status: "Statut",
   live: "Live",
+  proListing: "Fiche annuaire",
 };
 const REPORT_REASON_LABELS = {
   spam: "spam",
@@ -1834,6 +1835,52 @@ exports.onSellerReviewWritten = onDocumentWritten(
         }, {merge: true});
       } catch (err) {
         logger.error(`Recalcul de la réputation de ${uid}`, err);
+      }
+    },
+);
+
+// ---------------------------------------------------------------------
+// Annuaire des professionnels
+//
+// Le classement de l'annuaire doit faire passer devant les professionnels
+// qui ont *à la fois* de bonnes notes et beaucoup d'avis. Une simple
+// moyenne mettrait en tête n'importe qui avec un unique 5/5 ; on utilise
+// donc une moyenne bayésienne : chaque fiche part de PRO_RANK_WEIGHT avis
+// fictifs à PRO_RANK_PRIOR, que les vrais avis viennent progressivement
+// remplacer. Valeurs alignées sur ProListing (lib/models/pro_listing.dart)
+// et sur la règle de création de firestore.rules.
+// ---------------------------------------------------------------------
+const PRO_RANK_PRIOR = 3.5;
+const PRO_RANK_WEIGHT = 5;
+
+exports.onProReviewWritten = onDocumentWritten(
+    "directory/{uid}/reviews/{reviewerUid}",
+    async (event) => {
+      const uid = event.params.uid;
+      try {
+        const listingRef = db.doc(`directory/${uid}`);
+        const snap = await db.collection(`directory/${uid}/reviews`).get();
+        let sum = 0;
+        let count = 0;
+        snap.forEach((doc) => {
+          const rating = Number(doc.data().rating);
+          if (rating >= 1 && rating <= 5) {
+            sum += rating;
+            count += 1;
+          }
+        });
+        const listing = await listingRef.get();
+        // Fiche retirée entre-temps : ne pas la recréer à moitié.
+        if (!listing.exists) return;
+        await listingRef.update({
+          ratingCount: count,
+          ratingSum: sum,
+          ratingAvg: count > 0 ? sum / count : 0,
+          rankScore: (PRO_RANK_WEIGHT * PRO_RANK_PRIOR + sum) /
+            (PRO_RANK_WEIGHT + count),
+        });
+      } catch (err) {
+        logger.error(`Recalcul du classement annuaire de ${uid}`, err);
       }
     },
 );

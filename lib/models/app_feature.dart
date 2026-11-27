@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 /// Modules principaux de Foumbot Link.
 enum AppFeatureId {
   venteAchat,
+  annuaire,
   demarches,
   communaute,
   messages,
@@ -76,6 +77,13 @@ class AppFeature {
       title: 'Vente & Achat',
       subtitle: 'Marché local entre habitants',
       icon: Icons.storefront_outlined,
+      section: AppFeatureSection.community,
+    ),
+    AppFeature(
+      id: AppFeatureId.annuaire,
+      title: 'Annuaire',
+      subtitle: 'Artisans et professionnels notés par les habitants',
+      icon: Icons.contact_phone_outlined,
       section: AppFeatureSection.community,
     ),
     AppFeature(

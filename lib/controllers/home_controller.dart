@@ -1330,6 +1330,12 @@ class HomeController extends GetxController {
       Get.toNamed(AppRoutes.market);
       return;
     }
+    if (feature.id == AppFeatureId.annuaire) {
+      // Consultable sans compte ; les coordonnées et les avis demandent
+      // de se connecter, au moment où on en a besoin.
+      Get.toNamed(AppRoutes.directory);
+      return;
+    }
     if (feature.id == AppFeatureId.communaute) {
       ProfileGate.ensure(reason: 'Pour rejoindre la communauté').then((ok) {
         if (ok) Get.toNamed(AppRoutes.community);

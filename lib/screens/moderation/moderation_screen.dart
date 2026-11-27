@@ -59,6 +59,7 @@ class ModerationEntry {
         'message' => 'Message privé',
         'status' => 'Statut',
         'live' => 'Live',
+        'proListing' => 'Fiche annuaire',
         _ => 'Contenu',
       };
 

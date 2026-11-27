@@ -264,6 +264,96 @@ service cloud.firestore {
     }
 
     // -----------------------------------------------------------------
+    // Annuaire des professionnels — `directory/{ownerUid}`
+    //
+    // Une fiche par compte (l'id *est* l'uid du propriétaire). Lisible
+    // par tous, y compris sans compte ; le numéro, lui, vit dans
+    // `contact/main`, réservé aux comptes connectés (même raison que pour
+    // le marché : un document public suffirait à aspirer les numéros de
+    // la commune).
+    //
+    // Le classement repose sur `rankScore`, une moyenne bayésienne
+    // recalculée par `onProReviewWritten`. Le propriétaire ne touche
+    // jamais aux champs de réputation : à la création ils sont imposés à
+    // leur valeur neutre (3,5 = ProListing.rankPrior), ensuite ils sont
+    // hors de sa portée.
+    // -----------------------------------------------------------------
+    match /directory/{ownerUid} {
+      function reputationKeys() {
+        return ['ratingCount', 'ratingSum', 'ratingAvg', 'rankScore'];
+      }
+
+      function validListing(data) {
+        return data.ownerUid == ownerUid
+          && data.name is string
+          && data.name.size() >= 2 && data.name.size() <= 60
+          && data.category is string && data.category.size() <= 30
+          && data.get('trade', '').size() <= 60
+          && data.get('description', '').size() <= 600
+          && data.get('quartier', '').size() <= 60
+          && data.get('hours', '').size() <= 60;
+      }
+
+      allow read: if true;
+
+      allow create: if request.auth != null
+        && request.auth.uid == ownerUid
+        && validListing(request.resource.data)
+        && request.resource.data.ratingCount == 0
+        && request.resource.data.ratingSum == 0
+        && request.resource.data.ratingAvg == 0
+        && request.resource.data.rankScore == 3.5;
+
+      allow update: if request.auth != null
+        && request.auth.uid == ownerUid
+        && validListing(request.resource.data)
+        && !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(reputationKeys());
+
+      allow delete: if request.auth != null && request.auth.uid == ownerUid;
+
+      match /contact/{docId} {
+        allow read: if request.auth != null;
+        allow write: if request.auth != null
+          && request.auth.uid == ownerUid
+          && docId == 'main';
+      }
+
+      // Trace d'une prise de contact (appel, WhatsApp, message) : c'est
+      // elle qui ouvre le droit de noter. Visible des deux intéressés.
+      match /contactedBy/{clientUid} {
+        allow read: if request.auth != null
+          && (request.auth.uid == ownerUid || request.auth.uid == clientUid);
+        allow create, update: if request.auth != null
+          && request.auth.uid == clientUid
+          && clientUid != ownerUid;
+        allow delete: if false;
+      }
+
+      // Avis — mêmes garde-fous que pour les vendeurs : un avis par
+      // personne, pas d'auto-notation, contact préalable obligatoire.
+      match /reviews/{reviewerUid} {
+        allow read: if true;
+
+        allow create, update: if request.auth != null
+          && request.auth.uid == reviewerUid
+          && reviewerUid != ownerUid
+          && request.resource.data.rating is int
+          && request.resource.data.rating >= 1
+          && request.resource.data.rating <= 5
+          && request.resource.data.comment is string
+          && request.resource.data.comment.size() <= 400
+          && request.resource.data.reviewerName is string
+          && request.resource.data.reviewerName.size() <= 80
+          && exists(/databases/$(database)/documents/directory/$(ownerUid)/contactedBy/$(request.auth.uid))
+          && !blockedBetween(ownerUid, reviewerUid);
+
+        allow delete: if request.auth != null
+          && request.auth.uid == reviewerUid;
+      }
+    }
+
+    // -----------------------------------------------------------------
     // Publications (fil d'actualité)
     // -----------------------------------------------------------------
     match /posts/{postId} {
@@ -994,7 +1084,7 @@ service cloud.firestore {
         && request.resource.data.targetPath.size() < 300
         && request.resource.data.targetType in
              ['post', 'comment', 'user', 'marketItem', 'message', 'status',
-              'live']
+              'live', 'proListing']
         && request.resource.data.reason in
              ['spam', 'harcelement', 'haine', 'violence', 'nuditeSexuel',
               'fausseInformation', 'arnaque', 'autre']

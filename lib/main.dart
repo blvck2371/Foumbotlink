@@ -32,6 +32,7 @@ import 'services/market_service.dart';
 import 'services/saved_search_service.dart';
 import 'services/status_service.dart';
 import 'services/seller_review_service.dart';
+import 'services/directory_service.dart';
 import 'services/moderation_service.dart';
 import 'services/notification_service.dart';
 import 'services/onboarding_service.dart';
@@ -198,6 +199,7 @@ Future<void> main() async {
   Get.put(MarketFavoritesService(), permanent: true);
   Get.put(SavedSearchService(), permanent: true);
   Get.put(SellerReviewService(), permanent: true);
+  Get.put(DirectoryService(), permanent: true);
   Get.put(FollowService(), permanent: true);
   Get.put(ContactMatchService(), permanent: true);
   Get.put(DossierService(), permanent: true);
