@@ -2,9 +2,13 @@
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 
+import '../services/connectivity_service.dart';
 import '../theme/app_colors.dart';
+import '../utils/feed_cache_manager.dart';
 import '../utils/image_url.dart';
 import '../utils/local_media.dart';
 import 'image_shimmer.dart';
@@ -55,10 +59,51 @@ class FeedNetworkImage extends StatefulWidget {
 class _FeedNetworkImageState extends State<FeedNetworkImage> {
   static const _autoRetries = 2;
 
+  /// Sans le moindre octet reçu pendant ce délai, le chargement est
+  /// considéré comme bloqué : on propose de recharger plutôt que de
+  /// laisser le reflet tourner indéfiniment.
+  static const _stallAfter = Duration(seconds: 25);
+
   int _attempt = 0;
   bool _retryScheduled = false;
 
-  String get _src => displayImageUrl(widget.url);
+  /// Échec définitif (après les tentatives automatiques) ou chargement
+  /// bloqué : le bouton « Recharger » est affiché.
+  bool _gaveUp = false;
+  bool _loaded = false;
+  DateTime _lastProgress = DateTime.now();
+  Timer? _watchdog;
+  StreamSubscription<bool>? _online;
+
+  String get _baseSrc => displayImageUrl(widget.url);
+
+  /// Adresse demandée. Sur le web, le navigateur garde l'échec en
+  /// mémoire pour une même adresse : chaque nouvelle tentative en change
+  /// donc la forme (paramètre ignoré par Storage).
+  String get _src {
+    if (_attempt == 0 || !kIsWeb) return _baseSrc;
+    return _baseSrc.contains('?')
+        ? '$_baseSrc&r=$_attempt'
+        : '$_baseSrc?r=$_attempt';
+  }
+
+  /// Clé du téléchargement. Une nouvelle clé à chaque tentative : avec la
+  /// même, la demande se raccrocherait au téléchargement bloqué au lieu
+  /// d'en lancer un neuf — c'est ce qui rendait « Recharger » inopérant
+  /// sur une connexion faible.
+  String get _cacheKey => _attempt == 0 ? _baseSrc : '$_baseSrc#r$_attempt';
+
+  @override
+  void initState() {
+    super.initState();
+    _startWatchdog();
+    if (Get.isRegistered<ConnectivityService>()) {
+      // Le réseau revient : une photo restée en échec se recharge seule.
+      _online = Get.find<ConnectivityService>().online.listen((online) {
+        if (online && _gaveUp && mounted) _retry();
+      });
+    }
+  }
 
   @override
   void didUpdateWidget(covariant FeedNetworkImage oldWidget) {
@@ -66,16 +111,71 @@ class _FeedNetworkImageState extends State<FeedNetworkImage> {
     if (oldWidget.url != widget.url) {
       _attempt = 0;
       _retryScheduled = false;
+      _gaveUp = false;
+      _loaded = false;
+      _startWatchdog();
     }
+  }
+
+  @override
+  void dispose() {
+    _watchdog?.cancel();
+    _online?.cancel();
+    super.dispose();
+  }
+
+  void _startWatchdog() {
+    _watchdog?.cancel();
+    _lastProgress = DateTime.now();
+    // Web : le navigateur ne rapporte pas toujours la progression, un
+    // chargement lent mais vivant serait pris pour un blocage. Il a ses
+    // propres délais, et un échec y passe par le bouton comme ailleurs.
+    if (!_isNetworkUrl(widget.url) || kIsWeb) return;
+    _watchdog = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (!mounted || _loaded) {
+        timer.cancel();
+        return;
+      }
+      if (_gaveUp) return;
+      if (DateTime.now().difference(_lastProgress) < _stallAfter) return;
+      // Bloqué : une tentative neuve d'abord, le bouton ensuite.
+      if (_attempt < _autoRetries) {
+        _retry();
+      } else {
+        setState(() => _gaveUp = true);
+      }
+    });
   }
 
   void _retry() {
     if (!mounted) return;
-    unawaited(CachedNetworkImage.evictFromCache(_src));
+    unawaited(_evict(_cacheKey));
     setState(() {
       _attempt++;
       _retryScheduled = false;
+      _gaveUp = false;
+      _loaded = false;
+      _lastProgress = DateTime.now();
     });
+  }
+
+  /// Retire une tentative ratée des caches, sans jamais faire échouer
+  /// l'appelant.
+  Future<void> _evict(String key) async {
+    try {
+      await CachedNetworkImage.evictFromCache(
+        _src,
+        cacheKey: key,
+        cacheManager: kIsWeb ? null : FeedCacheManager.instance,
+      );
+    } on Object catch (_) {}
+  }
+
+  /// Tap sur « Recharger » : repart de zéro, tentatives automatiques
+  /// comprises.
+  void _manualRetry() {
+    _retry();
+    _startWatchdog();
   }
 
   Widget _onError() {
@@ -91,7 +191,13 @@ class _FeedNetworkImageState extends State<FeedNetworkImage> {
       }
       return ImageShimmer(isDark: widget.isDark);
     }
-    return _ReloadTile(isDark: widget.isDark, onTap: _retry);
+    if (!_gaveUp) {
+      // Hors build : pas de setState pendant la construction.
+      scheduleMicrotask(() {
+        if (mounted && !_gaveUp) setState(() => _gaveUp = true);
+      });
+    }
+    return _ReloadTile(isDark: widget.isDark, onTap: _manualRetry);
   }
 
   @override
@@ -107,9 +213,16 @@ class _FeedNetworkImageState extends State<FeedNetworkImage> {
       );
     }
 
+    // Chargement bloqué : le bouton passe devant le reflet.
+    if (_gaveUp) {
+      return _ReloadTile(isDark: widget.isDark, onTap: _manualRetry);
+    }
+
     return CachedNetworkImage(
       key: ValueKey(_attempt),
       imageUrl: _src,
+      cacheKey: _cacheKey,
+      cacheManager: kIsWeb ? null : FeedCacheManager.instance,
       fit: widget.fit,
       width: double.infinity,
       height: double.infinity,
@@ -122,14 +235,32 @@ class _FeedNetworkImageState extends State<FeedNetworkImage> {
       fadeInDuration: const Duration(milliseconds: 280),
       fadeInCurve: Curves.easeOut,
       fadeOutDuration: const Duration(milliseconds: 180),
-      placeholder: (context, _) => ImageShimmer(isDark: widget.isDark),
+      // Chaque morceau reçu repousse le délai de blocage.
+      progressIndicatorBuilder: (context, _, progress) {
+        _lastProgress = DateTime.now();
+        return ImageShimmer(isDark: widget.isDark);
+      },
+      imageBuilder: (context, provider) {
+        _loaded = true;
+        return Image(
+          image: provider,
+          fit: widget.fit,
+          width: double.infinity,
+          height: double.infinity,
+        );
+      },
       errorWidget: (context, _, error) => _onError(),
     );
   }
 }
 
 /// Dernier recours, après les tentatives automatiques : la surface reste
-/// neutre, avec un petit bouton pour réessayer — pas d'image « cassée ».
+/// neutre, avec un bouton pour réessayer — pas d'image « cassée ».
+///
+/// Toute la surface est touchable (pas seulement l'icône) : sur un petit
+/// écran, viser une icône de 24 px au milieu d'une mosaïque était
+/// laborieux, et le tap tombait souvent sur la carte, qui ouvrait la
+/// publication au lieu de recharger.
 class _ReloadTile extends StatelessWidget {
   const _ReloadTile({required this.isDark, required this.onTap});
 
@@ -139,16 +270,36 @@ class _ReloadTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
-    return ColoredBox(
+    final surface = ColoredBox(
       color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
       child: Center(
         child: onTap == null
             ? Icon(Icons.image_outlined, color: muted.withValues(alpha: 0.5))
-            : IconButton(
-                tooltip: 'Recharger la photo',
-                onPressed: onTap,
-                icon: Icon(Icons.refresh_rounded, color: muted),
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.refresh_rounded, color: muted, size: 28),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Recharger',
+                    style: TextStyle(
+                      color: muted,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
+      ),
+    );
+    if (onTap == null) return surface;
+    return Semantics(
+      button: true,
+      label: 'Recharger la photo',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: surface,
       ),
     );
   }
@@ -165,7 +316,10 @@ abstract final class FeedImagePrefetch {
       if (!_isNetworkUrl(url) || !_done.add(url)) continue;
       unawaited(
         precacheImage(
-          CachedNetworkImageProvider(displayImageUrl(url)),
+          CachedNetworkImageProvider(
+            displayImageUrl(url),
+            cacheManager: kIsWeb ? null : FeedCacheManager.instance,
+          ),
           context,
           onError: (_, _) => _done.remove(url),
         ),
