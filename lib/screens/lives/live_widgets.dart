@@ -292,6 +292,7 @@ class _CommentRow extends StatelessWidget {
     return Align(
       alignment: Alignment.centerLeft,
       child: GestureDetector(
+        onTap: onLongPress,
         onLongPress: onLongPress,
         child: Container(
           padding: const EdgeInsets.fromLTRB(4, 4, 10, 5),
@@ -920,6 +921,289 @@ class LiveCountBadge extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// En haut à gauche d'un live, comme sur TikTok : la photo de l'hôte, son
+/// nom, et les cœurs reçus qui montent en direct ; puis « Suivre » ou
+/// toute autre action ([trailing]).
+class LiveHostCapsule extends StatelessWidget {
+  const LiveHostCapsule({
+    super.key,
+    required this.name,
+    required this.likes,
+    this.photo,
+    this.trailing,
+    this.onTap,
+  });
+
+  final String name;
+  final String? photo;
+  final int likes;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(3, 3, 4, 3),
+        decoration: liveGlass(24),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            UserAvatar(name: name, photoUrl: photo, radius: 18),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.manrope(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.white,
+                    ),
+                  ),
+                  Semantics(
+                    label: '$likes cœurs',
+                    excludeSemantics: true,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.favorite_rounded,
+                          size: 12,
+                          color: Color(0xFFFF5C8A),
+                        ),
+                        const SizedBox(width: 3),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          transitionBuilder: (child, a) =>
+                              ScaleTransition(scale: a, child: child),
+                          child: Text(
+                            LiveRules.compactCount(likes),
+                            key: ValueKey(likes),
+                            style: GoogleFonts.manrope(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.white.withValues(alpha: 0.9),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (trailing != null) ...[const SizedBox(width: 8), trailing!],
+            const SizedBox(width: 2),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// En haut à droite d'un live : les premiers spectateurs en pastilles,
+/// puis leur nombre, en direct.
+class LiveAudience extends StatelessWidget {
+  const LiveAudience({
+    super.key,
+    required this.viewers,
+    required this.count,
+    this.onTap,
+  });
+
+  final List<LiveViewer> viewers;
+  final int count;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = viewers.take(3).toList();
+    return Semantics(
+      label: '$count spectateurs',
+      button: onTap != null,
+      excludeSemantics: true,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (shown.isNotEmpty)
+              SizedBox(
+                width: 26.0 + (shown.length - 1) * 18,
+                height: 30,
+                child: Stack(
+                  children: [
+                    for (var i = 0; i < shown.length; i++)
+                      Positioned(
+                        left: i * 18.0,
+                        top: 2,
+                        child: Container(
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.black,
+                          ),
+                          padding: const EdgeInsets.all(1),
+                          child: UserAvatar(
+                            name: shown[i].name,
+                            photoUrl: shown[i].photo,
+                            radius: 12,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            const SizedBox(width: 4),
+            Container(
+              height: 30,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: liveGlass(15),
+              alignment: Alignment.center,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.person_rounded,
+                    size: 15,
+                    color: AppColors.white,
+                  ),
+                  const SizedBox(width: 3),
+                  Text(
+                    LiveRules.compactCount(count),
+                    style: GoogleFonts.manrope(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Fenêtre posée au-dessus du live (invitation à monter, demande à
+/// rejoindre) : fond assombri, carte au centre.
+class LivePrompt extends StatelessWidget {
+  const LivePrompt({
+    super.key,
+    required this.name,
+    required this.photo,
+    required this.title,
+    required this.message,
+    required this.confirmLabel,
+    required this.onConfirm,
+    required this.cancelLabel,
+    required this.onCancel,
+  });
+
+  final String name;
+  final String? photo;
+  final String title;
+  final String message;
+  final String confirmLabel;
+  final VoidCallback onConfirm;
+  final String cancelLabel;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.55),
+        child: Center(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 28),
+            padding: const EdgeInsets.fromLTRB(20, 24, 20, 18),
+            decoration: BoxDecoration(
+              color: AppColors.blackElevated,
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [liveRed, Color(0xFFFF5C8A)],
+                    ),
+                  ),
+                  child: UserAvatar(name: name, photoUrl: photo, radius: 34),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.white,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.manrope(
+                    fontSize: 13.5,
+                    height: 1.4,
+                    color: AppColors.whiteMuted,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: FilledButton(
+                    onPressed: onConfirm,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: liveRed,
+                      foregroundColor: AppColors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      textStyle: GoogleFonts.manrope(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    child: Text(confirmLabel),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: TextButton(
+                    onPressed: onCancel,
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.white,
+                    ),
+                    child: Text(cancelLabel),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

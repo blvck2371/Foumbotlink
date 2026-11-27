@@ -63,6 +63,15 @@ class LiveFeed {
   /// Spectateurs présents (pour la liste de l'hôte).
   final viewers = <String, LiveViewer>{}.obs;
 
+  /// Cœurs affichés en haut : ceux du serveur, plus les miens qui n'y sont
+  /// pas encore arrivés — le compteur monte dès le toucher.
+  final likes = 0.obs;
+
+  /// Spectateurs présents, compté en direct sur la liste de présence (sans
+  /// attendre le compteur du serveur).
+  int get viewerCount =>
+      viewers.isNotEmpty ? viewers.length : (live.value?.viewers ?? 0);
+
   /// Le panel : invités montés, demandes et invitations en attente.
   final guests = <String, LiveGuest>{}.obs;
 
@@ -110,6 +119,7 @@ class LiveFeed {
           if (others > 0 && !_hearts.isClosed) _hearts.add(min(others, 12));
         }
         live.value = s;
+        likes.value = s.likes + _batcher.outstanding;
       }, onError: (Object _) => _markEnded()),
     );
 
@@ -300,6 +310,7 @@ class LiveFeed {
     if (ended.value || _closed) return;
     if (!_hearts.isClosed) _hearts.add(1);
     _batcher.tap();
+    likes.value++;
     _heartTimer ??= Timer(const Duration(milliseconds: 700), _flushHearts);
   }
 

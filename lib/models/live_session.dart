@@ -303,6 +303,10 @@ class HeartBatcher {
 
   bool get hasPending => _pending > 0;
 
+  /// Mes cœurs pas encore revenus du serveur : ajoutés au compteur affiché
+  /// pour qu'il monte dès le toucher.
+  int get outstanding => _pending + _unconfirmed;
+
   /// Ce qu'il faut écrire maintenant (au plus 30) ; le reste attend le
   /// prochain envoi.
   int take() {

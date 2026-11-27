@@ -8,7 +8,6 @@ import '../../models/feed_item.dart';
 import '../../models/market_item.dart';
 import '../../routes/app_routes.dart';
 import '../../services/auth_service.dart';
-import '../../services/live_service.dart';
 import '../../services/user_profile_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
@@ -26,6 +25,7 @@ import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
 import '../../widgets/weather_badge.dart';
 import '../../widgets/live_ring.dart';
+import '../../widgets/live_strip.dart';
 
 class HomeScreen extends GetView<HomeController> {
   const HomeScreen({super.key});
@@ -54,28 +54,10 @@ class HomeScreen extends GetView<HomeController> {
               onPressed: () => Get.toNamed(AppRoutes.search),
               icon: Icon(Icons.search_rounded, color: ink),
             ),
-            // Lives : le point rouge et le nombre disent tout de suite
-            // si quelqu'un est en direct.
-            IconButton(
-              tooltip: 'Lives',
-              visualDensity: VisualDensity.compact,
-              onPressed: controller.openLives,
-              icon: Obx(() {
-                final count = Get.find<LiveService>().lives.length;
-                return Badge(
-                  isLabelVisible: count > 0,
-                  label: Text(
-                    '$count',
-                    style: GoogleFonts.manrope(
-                      color: AppColors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  backgroundColor: AppColors.live,
-                  child: Icon(Icons.live_tv_outlined, color: ink),
-                );
-              }),
+            // Lives : un bouton « LIVE » comme sur TikTok, rouge avec le
+            // nombre de lives quand quelqu'un est en direct.
+            Center(
+              child: LiveEntryButton(onTap: controller.openLives, ink: ink),
             ),
             IconButton(
               tooltip: 'Notifications',
@@ -233,6 +215,11 @@ class HomeScreen extends GetView<HomeController> {
                         // jusqu'au bord de l'écran. Réservée au fil : l'onglet
                         // « Vente & Achats » montre des annonces, pas l'humeur
                         // du jour.
+                        // Qui est en live maintenant : un toucher pour
+                        // entrer, ou « Lancer » pour passer soi-même à
+                        // l'antenne.
+                        if (!controller.isMarketMode)
+                          SliverToBoxAdapter(child: LiveStrip(isDark: isDark)),
                         if (!controller.isMarketMode)
                           SliverToBoxAdapter(child: StatusBar(isDark: isDark)),
                         if (controller.isMarketMode) ...[

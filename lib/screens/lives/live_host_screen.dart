@@ -265,66 +265,72 @@ class _OnAir extends StatelessWidget {
       children: [
         Obx(() {
           final live = feed.live.value;
-          return Row(
+          return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (live != null) LiveHostChip(live: live),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        LiveBadge(elapsed: controller.elapsed.value),
-                        if (controller.reconnecting.value) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: liveGlass(6),
-                            child: Text(
-                              'Reconnexion…',
-                              style: GoogleFonts.manrope(
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.white,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              ViewersPill(
-                count: live?.viewers ?? 0,
-                onTap: () => _showViewers(),
-              ),
-              const SizedBox(width: 8),
-              SizedBox(
-                height: 34,
-                child: FilledButton(
-                  onPressed: () => _confirmEnd(),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: liveRed,
-                    foregroundColor: AppColors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(17),
-                    ),
-                    textStyle: GoogleFonts.manrope(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
+              Row(
+                children: [
+                  Flexible(
+                    child: LiveHostCapsule(
+                      name: live?.hostName ?? feed.me.name,
+                      photo: feed.me.photo,
+                      likes: feed.likes.value,
                     ),
                   ),
-                  child: const Text('Terminer'),
-                ),
+                  const SizedBox(width: 8),
+                  const Spacer(),
+                  LiveAudience(
+                    viewers: feed.viewers.values.toList(),
+                    count: feed.viewerCount,
+                    onTap: () => showGuestsPanel(controller, feed),
+                  ),
+                  const SizedBox(width: 6),
+                  SizedBox(
+                    height: 30,
+                    child: FilledButton(
+                      onPressed: () => _confirmEnd(),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: liveRed,
+                        foregroundColor: AppColors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                        textStyle: GoogleFonts.manrope(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      child: const Text('Terminer'),
+                    ),
+                  ),
+                ],
               ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  LiveBadge(elapsed: controller.elapsed.value),
+                  if (controller.reconnecting.value) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: liveGlass(6),
+                      child: Text(
+                        'Reconnexion…',
+                        style: GoogleFonts.manrope(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              _RequestBanner(controller: controller, feed: feed),
             ],
           );
         }),
@@ -412,6 +418,13 @@ class _OnAir extends StatelessWidget {
           value: 'delete',
           danger: false,
         ),
+        if (!mine && feed.guests[c.uid] == null)
+          (
+            icon: Icons.group_add_rounded,
+            label: 'Inviter ${c.name} sur le panel',
+            value: 'invite',
+            danger: false,
+          ),
         if (!mine)
           (
             icon: Icons.person_remove_outlined,
@@ -421,7 +434,14 @@ class _OnAir extends StatelessWidget {
           ),
       ],
     );
-    if (choice == 'delete') {
+    if (choice == 'invite') {
+      await controller.invite(c.uid);
+      Get.snackbar(
+        'Invitation envoyée',
+        '${c.name} peut maintenant accepter de monter.',
+        duration: const Duration(seconds: 2),
+      );
+    } else if (choice == 'delete') {
       await feed.deleteComment(c.id);
     } else if (choice == 'expel') {
       await _expel(LiveViewer(uid: c.uid, name: c.name, photo: c.photo));
@@ -437,77 +457,6 @@ class _OnAir extends StatelessWidget {
       confirmLabel: 'Retirer',
     );
     if (ok) await controller.expel(v);
-  }
-
-  void _showViewers() {
-    Get.bottomSheet<void>(
-      SafeArea(
-        child: SizedBox(
-          height: MediaQuery.sizeOf(Get.context!).height * 0.55,
-          child: Obx(() {
-            final list = feed.viewers.values.toList()
-              ..sort((a, b) => a.name.compareTo(b.name));
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
-                  child: Text(
-                    list.isEmpty
-                        ? 'Personne pour l’instant'
-                        : '${list.length} spectateur${list.length > 1 ? 's' : ''}',
-                    style: GoogleFonts.spaceGrotesk(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.white,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: ListView(
-                    children: [
-                      for (final v in list)
-                        ListTile(
-                          leading: UserAvatar(
-                            name: v.name,
-                            photoUrl: v.photo,
-                            radius: 18,
-                          ),
-                          title: Text(
-                            v.name,
-                            style: GoogleFonts.manrope(
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.white,
-                            ),
-                          ),
-                          trailing: TextButton(
-                            onPressed: () {
-                              Get.back<void>();
-                              unawaited(_expel(v));
-                            },
-                            child: Text(
-                              'Retirer',
-                              style: GoogleFonts.manrope(
-                                fontWeight: FontWeight.w800,
-                                color: const Color(0xFFFF6B6B),
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            );
-          }),
-        ),
-      ),
-      backgroundColor: AppColors.blackElevated,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-    );
   }
 }
 
@@ -974,6 +923,7 @@ void showGuestsPanel(LiveHostController controller, LiveFeed feed) {
                     radius: 18,
                   ),
                   title: Text(v.name, style: name()),
+                  onLongPress: () => _expelViewer(controller, v),
                   trailing: switch (guests[v.uid]?.status) {
                     LiveGuestStatus.invited => Text(
                       'Invité',
@@ -1006,4 +956,110 @@ void showGuestsPanel(LiveHostController controller, LiveFeed feed) {
       borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
     ),
   );
+}
+
+/// Comme sur TikTok : quand un spectateur demande à monter, une bannière
+/// apparaît chez l'hôte — Accepter le fait monter aussitôt.
+class _RequestBanner extends StatelessWidget {
+  const _RequestBanner({required this.controller, required this.feed});
+  final LiveHostController controller;
+  final LiveFeed feed;
+
+  @override
+  Widget build(BuildContext context) {
+    final requests =
+        feed.guests.values
+            .where((g) => g.status == LiveGuestStatus.requested)
+            .toList()
+          ..sort((a, b) => a.at.compareTo(b.at));
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      alignment: Alignment.topCenter,
+      child: requests.isEmpty
+          ? const SizedBox(width: double.infinity)
+          : Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                decoration: BoxDecoration(
+                  color: AppColors.blackElevated.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Row(
+                  children: [
+                    UserAvatar(
+                      name: requests.first.name,
+                      photoUrl: requests.first.photo,
+                      radius: 18,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => showGuestsPanel(controller, feed),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              requests.first.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.manrope(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.white,
+                              ),
+                            ),
+                            Text(
+                              requests.length > 1
+                                  ? 'veut rejoindre · +${requests.length - 1} '
+                                        'autre${requests.length > 2 ? 's' : ''}'
+                                  : 'veut rejoindre le live',
+                              style: GoogleFonts.manrope(
+                                fontSize: 12,
+                                color: AppColors.whiteMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Refuser',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => controller.reject(requests.first.uid),
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: AppColors.white,
+                      ),
+                    ),
+                    FilledButton(
+                      onPressed: () => controller.approve(requests.first.uid),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: liveRed,
+                        foregroundColor: AppColors.white,
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text('Accepter'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+Future<void> _expelViewer(LiveHostController controller, LiveViewer v) async {
+  final ok = await confirmAction(
+    title: 'Retirer ${v.name} ?',
+    message:
+        'Ses messages sont effacés et il ne pourra plus revenir dans ce live.',
+    confirmLabel: 'Retirer',
+  );
+  if (ok) await controller.expel(v);
 }
