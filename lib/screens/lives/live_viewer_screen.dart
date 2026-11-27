@@ -162,7 +162,7 @@ class _LivePage extends StatelessWidget {
                   uid: g.uid,
                   name: g.name,
                   photo: g.photo,
-                  track: session.camera.value,
+                  track: session.cameraOn.value ? session.camera.value : null,
                   mirror: session.frontCamera.value,
                   micOff: !session.micOn.value || g.mutedByHost,
                 )
@@ -274,7 +274,19 @@ class _LivePage extends StatelessWidget {
                                 size: 44,
                                 onTap: session.toggleMic,
                               ),
-                              if (session.camera.value != null)
+                              LiveRoundButton(
+                                icon: session.cameraOn.value
+                                    ? Icons.videocam_rounded
+                                    : Icons.videocam_off_rounded,
+                                tooltip: session.cameraOn.value
+                                    ? 'Éteindre ma caméra'
+                                    : 'Allumer ma caméra',
+                                color: session.cameraOn.value ? null : liveRed,
+                                size: 44,
+                                onTap: session.toggleCamera,
+                              ),
+                              if (session.cameraOn.value &&
+                                  session.camera.value != null)
                                 LiveRoundButton(
                                   icon: Icons.cameraswitch_outlined,
                                   tooltip: 'Changer de caméra',
@@ -298,12 +310,15 @@ class _LivePage extends StatelessWidget {
                                 onTap: feed.tapHeart,
                               ),
                             ],
-                            LiveRoundButton(
-                              icon: Icons.more_horiz_rounded,
-                              tooltip: 'Plus',
-                              size: 44,
-                              onTap: () => _liveActions(live),
-                            ),
+                            // Sur le panel, la barre garde la place pour
+                            // micro et caméra.
+                            if (!onStage)
+                              LiveRoundButton(
+                                icon: Icons.more_horiz_rounded,
+                                tooltip: 'Plus',
+                                size: 44,
+                                onTap: () => _liveActions(live),
+                              ),
                           ],
                         ),
                       ],
@@ -326,6 +341,7 @@ class _LivePage extends StatelessWidget {
                 onConfirm: session.acceptInvite,
                 cancelLabel: 'Refuser',
                 onCancel: session.declineInvite,
+                extra: LiveCameraChoice(cameraOn: session.cameraOn),
               ),
           ],
         ),
@@ -977,6 +993,10 @@ void showJoinStageSheet(LiveWatchSession session) {
                     ),
                 ],
               ),
+              if (!waiting) ...[
+                const SizedBox(height: 18),
+                LiveCameraChoice(cameraOn: session.cameraOn),
+              ],
               const SizedBox(height: 20),
               SizedBox(
                 height: 50,

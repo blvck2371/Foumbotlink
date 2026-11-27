@@ -372,11 +372,28 @@ class _OnAir extends StatelessWidget {
                 onTap: controller.toggleMic,
               ),
             ),
-            LiveRoundButton(
-              icon: Icons.cameraswitch_outlined,
-              tooltip: 'Changer de caméra',
-              size: 44,
-              onTap: controller.switchCamera,
+            Obx(
+              () => LiveRoundButton(
+                icon: controller.cameraOn.value
+                    ? Icons.videocam_rounded
+                    : Icons.videocam_off_rounded,
+                tooltip: controller.cameraOn.value
+                    ? 'Éteindre la caméra'
+                    : 'Allumer la caméra',
+                color: controller.cameraOn.value ? null : liveRed,
+                size: 44,
+                onTap: controller.toggleCamera,
+              ),
+            ),
+            Obx(
+              () => controller.cameraOn.value
+                  ? LiveRoundButton(
+                      icon: Icons.cameraswitch_outlined,
+                      tooltip: 'Changer de caméra',
+                      size: 44,
+                      onTap: controller.switchCamera,
+                    )
+                  : const SizedBox.shrink(),
             ),
             Obx(() {
               final requests = feed.guests.values
@@ -670,7 +687,7 @@ class _HostStage extends StatelessWidget {
           uid: feed.me.uid,
           name: live?.hostName ?? feed.me.name,
           photo: feed.me.photo,
-          track: controller.camera.value,
+          track: controller.cameraOn.value ? controller.camera.value : null,
           mirror: controller.frontCamera.value,
           micOff: !controller.micOn.value,
           isHost: true,
@@ -691,7 +708,31 @@ class _HostStage extends StatelessWidget {
           if (g != null) unawaited(guestActions(controller, g));
         },
         onTapSeat: () => showGuestsPanel(controller, feed),
-        fallback: const Center(child: FoumbotLoader()),
+        // Caméra éteinte : sa photo, et les spectateurs l'entendent.
+        fallback: ColoredBox(
+          color: const Color(0xFF161616),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                UserAvatar(
+                  name: feed.me.name,
+                  photoUrl: feed.me.photo,
+                  radius: 48,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Caméra éteinte — on vous entend toujours',
+                  style: GoogleFonts.manrope(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.whiteMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     });
   }

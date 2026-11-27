@@ -1110,7 +1110,11 @@ class LivePrompt extends StatelessWidget {
     required this.onConfirm,
     required this.cancelLabel,
     required this.onCancel,
+    this.extra,
   });
+
+  /// Sous le message (choix de la caméra…).
+  final Widget? extra;
 
   final String name;
   final String? photo;
@@ -1167,6 +1171,7 @@ class LivePrompt extends StatelessWidget {
                     color: AppColors.whiteMuted,
                   ),
                 ),
+                if (extra != null) ...[const SizedBox(height: 14), extra!],
                 const SizedBox(height: 18),
                 SizedBox(
                   width: double.infinity,
@@ -1200,6 +1205,54 @@ class LivePrompt extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// « Monter avec ma caméra » : on peut rejoindre le panel au micro seul,
+/// et allumer la caméra plus tard.
+class LiveCameraChoice extends StatelessWidget {
+  const LiveCameraChoice({super.key, required this.cameraOn});
+  final RxBool cameraOn;
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(
+      () => Material(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(14),
+        child: SwitchListTile(
+          value: cameraOn.value,
+          onChanged: (v) => cameraOn.value = v,
+          activeThumbColor: AppColors.white,
+          activeTrackColor: liveRed,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          secondary: Icon(
+            cameraOn.value
+                ? Icons.videocam_rounded
+                : Icons.videocam_off_rounded,
+            color: AppColors.white,
+          ),
+          title: Text(
+            cameraOn.value ? 'Avec ma caméra' : 'Micro seulement',
+            style: GoogleFonts.manrope(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: AppColors.white,
+            ),
+          ),
+          subtitle: Text(
+            'Vous pourrez l’allumer ou l’éteindre pendant le live.',
+            style: GoogleFonts.manrope(
+              fontSize: 12,
+              color: AppColors.whiteMuted,
             ),
           ),
         ),

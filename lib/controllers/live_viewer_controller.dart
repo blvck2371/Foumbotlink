@@ -46,6 +46,10 @@ class LiveWatchSession {
   /// Mon micro tel que je le veux ; coupé de fait si l'hôte l'a coupé.
   final micOn = true.obs;
 
+  /// Ma caméra : choisie avant de monter (on peut monter en micro seul),
+  /// puis allumée ou éteinte à volonté sur le panel.
+  final cameraOn = true.obs;
+
   /// Je publie sur le panel (salle reconnectée avec un jeton d'émission).
   final publishing = false.obs;
 
@@ -197,15 +201,10 @@ class LiveWatchSession {
       if (_disposed) return;
       if (!ticket.isGuest) return; // plus sur le panel entre-temps
       LocalVideoTrack? cam;
-      try {
-        cam = await LocalVideoTrack.createCameraTrack(
-          const CameraCaptureOptions(
-            cameraPosition: CameraPosition.front,
-            params: VideoParametersPresets.h540_169,
-          ),
-        );
-      } catch (_) {
-        // Sans caméra, on monte quand même avec le micro.
+      if (cameraOn.value) {
+        cam = await _createCamera();
+        // Sans caméra (refusée, occupée), on monte quand même au micro.
+        if (cam == null) cameraOn.value = false;
       }
       if (_disposed) {
         await cam?.stop();
@@ -244,6 +243,57 @@ class LiveWatchSession {
     await _stopCamera();
     if (byHost && wasPublishing && !_disposed) {
       Get.snackbar('Panel', 'Vous êtes redevenu spectateur.');
+    }
+  }
+
+  Future<LocalVideoTrack?> _createCamera() async {
+    try {
+      return await LocalVideoTrack.createCameraTrack(
+        const CameraCaptureOptions(
+          cameraPosition: CameraPosition.front,
+          params: VideoParametersPresets.h540_169,
+        ),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Allumer ou éteindre sa caméra sur le panel. Éteinte, elle est
+  /// vraiment coupée (voyant éteint) et les autres voient sa photo.
+  Future<void> toggleCamera() async {
+    if (!publishing.value) {
+      cameraOn.value = !cameraOn.value;
+      return;
+    }
+    final cam = camera.value;
+    if (cameraOn.value) {
+      cameraOn.value = false;
+      try {
+        await cam?.mute();
+      } catch (_) {}
+      return;
+    }
+    cameraOn.value = true;
+    try {
+      if (cam != null) {
+        await cam.unmute();
+        return;
+      }
+      final created = await _createCamera();
+      if (created == null || _disposed) {
+        cameraOn.value = false;
+        Get.snackbar(
+          'Caméra indisponible',
+          'Autorisez la caméra pour l’allumer pendant le live.',
+        );
+        return;
+      }
+      frontCamera.value = true;
+      camera.value = created;
+      await _room?.localParticipant?.publishVideoTrack(created);
+    } catch (_) {
+      cameraOn.value = false;
     }
   }
 

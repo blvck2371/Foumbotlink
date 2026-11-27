@@ -69,6 +69,10 @@ class LiveHostController extends GetxController {
   final camera = Rxn<LocalVideoTrack>();
   final frontCamera = true.obs;
   final micOn = true.obs;
+
+  /// Caméra allumée pendant le direct ; éteinte, les spectateurs voient la
+  /// photo de l'hôte et entendent toujours sa voix.
+  final cameraOn = true.obs;
   final reconnecting = false.obs;
   final elapsed = Duration.zero.obs;
   final feed = Rxn<LiveFeed>();
@@ -137,6 +141,18 @@ class LiveHostController extends GetxController {
       );
       frontCamera.value = toFront;
     } catch (_) {}
+  }
+
+  Future<void> toggleCamera() async {
+    final track = camera.value;
+    if (track == null) return;
+    final next = !cameraOn.value;
+    cameraOn.value = next;
+    try {
+      next ? await track.unmute() : await track.mute();
+    } catch (_) {
+      cameraOn.value = !next;
+    }
   }
 
   Future<void> toggleMic() async {
