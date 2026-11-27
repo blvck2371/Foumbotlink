@@ -109,10 +109,7 @@ class FeedItem {
     this.editedAt,
     this.commentsDisabled = false,
     this.hidden = false,
-    this.videoUrl,
-    this.videoThumbUrl,
-    this.videoDurationMs,
-    this.videoAspectRatio,
+    this.videos = const [],
     this.mentions = const [],
     this.hashtags = const [],
     List<String>? imageUrls,
@@ -153,17 +150,17 @@ class FeedItem {
   final List<String> imageUrls;
   final List<FeedComment> comments;
 
-  /// Vidéo de la publication (une au plus), compressée avant l'envoi
-  /// quand elle dépasse `ComposeController.compressAboveBytes`.
-  final String? videoUrl;
+  /// Vidéos de la publication, dans l'ordre (réduites avant l'envoi
+  /// au-delà de 8 Mo).
+  final List<PostVideoItem> videos;
 
-  /// Image d'aperçu de la vidéo — absente sur le web, où le navigateur ne
-  /// sait pas l'extraire ; la carte affiche alors une tuile sombre.
-  final String? videoThumbUrl;
-  final int? videoDurationMs;
+  PostVideoItem? get _firstVideo => videos.isEmpty ? null : videos.first;
 
-  /// Largeur / hauteur, pour réserver la bonne place avant la lecture.
-  final double? videoAspectRatio;
+  /// Première vidéo — sert de vignette (grille du profil, recherche).
+  String? get videoUrl => _firstVideo?.url;
+  String? get videoThumbUrl => _firstVideo?.thumbUrl;
+  int? get videoDurationMs => _firstVideo?.durationMs;
+  double? get videoAspectRatio => _firstVideo?.aspectRatio;
 
   /// À qui renvoie chaque « @Nom » du message.
   final List<PostMention> mentions;
@@ -173,15 +170,10 @@ class FeedItem {
 
   bool get hasImages => imageUrls.isNotEmpty;
 
-  bool get hasVideo => videoUrl != null && videoUrl!.isNotEmpty;
+  bool get hasVideo => videos.isNotEmpty;
 
-  /// « 1:05 », ou vide si la durée est inconnue.
-  String get videoDurationLabel {
-    final ms = videoDurationMs;
-    if (ms == null || ms <= 0) return '';
-    final s = (ms / 1000).round();
-    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
-  }
+  /// « 1:05 » pour la première vidéo, ou vide si la durée est inconnue.
+  String get videoDurationLabel => _firstVideo?.durationLabel ?? '';
 
   /// Le titre est facultatif (voir `ComposeController.canSubmit`) : une
   /// publication peut n'être qu'un message, ou que des photos. Les écrans
@@ -219,7 +211,7 @@ class FeedItem {
   String get summaryLine {
     if (hasTitle) return title.trim();
     if (hasBody) return body.trim();
-    if (hasVideo) return 'Vidéo';
+    if (hasVideo) return videos.length > 1 ? '${videos.length} vidéos' : 'Vidéo';
     return imageUrls.length > 1 ? '${imageUrls.length} photos' : 'Photo';
   }
 
@@ -236,11 +228,7 @@ class FeedItem {
     bool? hidden,
     List<String>? imageUrls,
     List<FeedComment>? comments,
-    String? videoUrl,
-    String? videoThumbUrl,
-    int? videoDurationMs,
-    double? videoAspectRatio,
-    bool clearVideo = false,
+    List<PostVideoItem>? videos,
     List<PostMention>? mentions,
     List<String>? hashtags,
   }) {
@@ -267,14 +255,92 @@ class FeedItem {
       hidden: hidden ?? this.hidden,
       imageUrls: imageUrls ?? this.imageUrls,
       comments: comments ?? List<FeedComment>.from(this.comments),
-      videoUrl: clearVideo ? null : (videoUrl ?? this.videoUrl),
-      videoThumbUrl: clearVideo ? null : (videoThumbUrl ?? this.videoThumbUrl),
-      videoDurationMs:
-          clearVideo ? null : (videoDurationMs ?? this.videoDurationMs),
-      videoAspectRatio:
-          clearVideo ? null : (videoAspectRatio ?? this.videoAspectRatio),
+      videos: videos ?? this.videos,
       mentions: mentions ?? this.mentions,
       hashtags: hashtags ?? this.hashtags,
     );
+  }
+}
+
+/// Une vidéo d'une publication.
+class PostVideoItem {
+  const PostVideoItem({
+    required this.url,
+    this.thumbUrl,
+    this.durationMs,
+    this.aspectRatio,
+  });
+
+  final String url;
+
+  /// Image d'aperçu — absente sur le web, où le navigateur ne sait pas
+  /// l'extraire ; la carte affiche alors une tuile sombre.
+  final String? thumbUrl;
+  final int? durationMs;
+
+  /// Largeur / hauteur, pour réserver la bonne place avant la lecture.
+  final double? aspectRatio;
+
+  /// « 1:05 », ou vide si la durée est inconnue.
+  String get durationLabel {
+    final ms = durationMs;
+    if (ms == null || ms <= 0) return '';
+    final s = (ms / 1000).round();
+    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+  }
+
+  factory PostVideoItem.fromMap(Map<String, dynamic> m) => PostVideoItem(
+    url: m['url'] as String? ?? '',
+    thumbUrl: m['thumbUrl'] as String?,
+    durationMs: (m['durationMs'] as num?)?.toInt(),
+    aspectRatio: (m['aspectRatio'] as num?)?.toDouble(),
+  );
+
+  Map<String, dynamic> toMap() => {
+    'url': url,
+    'thumbUrl': thumbUrl,
+    'durationMs': durationMs,
+    'aspectRatio': aspectRatio,
+  };
+
+  /// Lit les vidéos d'un document : la liste `videos`, ou à défaut
+  /// l'ancien format à une seule vidéo (`videoUrl`, …) des publications
+  /// faites avant les vidéos multiples.
+  static List<PostVideoItem> listFromDoc(Map<String, dynamic> d) {
+    final raw = d['videos'];
+    if (raw is List && raw.isNotEmpty) {
+      return [
+        for (final v in raw)
+          if (v is Map)
+            PostVideoItem.fromMap(Map<String, dynamic>.from(v)),
+      ].where((v) => v.url.isNotEmpty).toList();
+    }
+    final url = d['videoUrl'];
+    if (url is String && url.isNotEmpty) {
+      return [
+        PostVideoItem(
+          url: url,
+          thumbUrl: d['videoThumbUrl'] as String?,
+          durationMs: (d['videoDurationMs'] as num?)?.toInt(),
+          aspectRatio: (d['videoAspectRatio'] as num?)?.toDouble(),
+        ),
+      ];
+    }
+    return const [];
+  }
+
+  /// Champs écrits dans le document : la liste, plus la première vidéo
+  /// dans l'ancien format — une version de l'app installée avant les
+  /// vidéos multiples affiche ainsi au moins celle-là.
+  static Map<String, dynamic> docFields(List<PostVideoItem> videos) {
+    if (videos.isEmpty) return const {'videos': <Object>[]};
+    final first = videos.first;
+    return {
+      'videos': [for (final v in videos) v.toMap()],
+      'videoUrl': first.url,
+      'videoThumbUrl': first.thumbUrl,
+      'videoDurationMs': first.durationMs,
+      'videoAspectRatio': first.aspectRatio,
+    };
   }
 }

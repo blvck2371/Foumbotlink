@@ -423,13 +423,10 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                       ),
                     if (post.hasVideo) ...[
                       const SizedBox(height: 14),
-                      PostVideo(
-                        url: post.videoUrl!,
-                        thumbUrl: post.videoThumbUrl,
-                        aspectRatio: post.videoAspectRatio,
-                        durationLabel: post.videoDurationLabel,
+                      PostVideos(
+                        videos: post.videos,
                         isDark: isDark,
-                        heroTag: 'post_video_${post.id}',
+                        heroPrefix: 'post_video_${post.id}',
                         borderRadius: 16,
                       ),
                     ],

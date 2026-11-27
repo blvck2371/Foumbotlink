@@ -828,13 +828,10 @@ class _FeedCard extends StatelessWidget {
                 ),
               if (item.hasVideo) ...[
                 const SizedBox(height: 10),
-                PostVideo(
-                  url: item.videoUrl!,
-                  thumbUrl: item.videoThumbUrl,
-                  aspectRatio: item.videoAspectRatio,
-                  durationLabel: item.videoDurationLabel,
+                PostVideos(
+                  videos: item.videos,
                   isDark: isDark,
-                  heroTag: 'feed_video_${item.id}',
+                  heroPrefix: 'feed_video_${item.id}',
                 ),
               ],
               if (item.hasImages) ...[

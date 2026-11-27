@@ -965,7 +965,10 @@ exports.onPostCreated = onDocumentCreated("posts/{postId}", async (event) => {
   const photoLabel = imageCount > 1 ?
     `${imageCount} photos` :
     "Une photo";
-  const mediaLabel = post.videoUrl ? "Une vidéo" :
+  const videoCount = Array.isArray(post.videos) ? post.videos.length :
+    (post.videoUrl ? 1 : 0);
+  const videoLabel = videoCount > 1 ? `${videoCount} vidéos` : "Une vidéo";
+  const mediaLabel = videoCount ? videoLabel :
     (imageCount ? photoLabel : "");
 
   const toNotify = followers.docs.filter((doc) => !mentioned.has(doc.id));

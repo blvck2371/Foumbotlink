@@ -87,7 +87,8 @@ const SOURCES = {
     d.repostOfAuthorName,
     // Une publication vidéo répond à « vidéo » : c'est ainsi qu'on
     // retrouve les vidéos par la recherche, même sans légende.
-    d.videoUrl ? "video videos" : "",
+    d.videoUrl || (Array.isArray(d.videos) && d.videos.length) ?
+      "video videos" : "",
   ],
   market: (d) => [d.title, d.description, d.location, d.sellerName],
 };

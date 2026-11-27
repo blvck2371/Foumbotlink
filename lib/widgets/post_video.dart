@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:video_player/video_player.dart';
 
+import '../models/feed_item.dart';
 import '../theme/app_colors.dart';
 import 'chat_video_viewer.dart';
 import 'feed_image.dart';
@@ -265,6 +266,108 @@ class _Badge extends StatelessWidget {
           fontWeight: FontWeight.w700,
         ),
       ),
+    );
+  }
+}
+
+/// Les vidéos d'une publication : une seule s'affiche telle quelle ;
+/// plusieurs défilent d'un glissement, avec un compteur « 2/3 ».
+///
+/// Quitter une vidéo en glissant la libère (la page sort de l'écran) :
+/// jamais deux lecteurs ouverts pour une même publication.
+class PostVideos extends StatefulWidget {
+  const PostVideos({
+    super.key,
+    required this.videos,
+    required this.isDark,
+    required this.heroPrefix,
+    this.borderRadius = 12,
+  });
+
+  final List<PostVideoItem> videos;
+  final bool isDark;
+  final String heroPrefix;
+  final double borderRadius;
+
+  @override
+  State<PostVideos> createState() => _PostVideosState();
+}
+
+class _PostVideosState extends State<PostVideos> {
+  final _page = PageController();
+  int _index = 0;
+
+  @override
+  void dispose() {
+    _page.dispose();
+    super.dispose();
+  }
+
+  Widget _video(int i) {
+    final v = widget.videos[i];
+    return PostVideo(
+      url: v.url,
+      thumbUrl: v.thumbUrl,
+      aspectRatio: v.aspectRatio,
+      durationLabel: v.durationLabel,
+      isDark: widget.isDark,
+      heroTag: '${widget.heroPrefix}_$i',
+      borderRadius: widget.borderRadius,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final videos = widget.videos;
+    if (videos.isEmpty) return const SizedBox.shrink();
+    if (videos.length == 1) return _video(0);
+
+    // Hauteur commune : celle de la première vidéo, bornée comme dans
+    // PostVideo. Les autres s'y inscrivent sur fond noir.
+    final ratio = (videos.first.aspectRatio ?? 16 / 9).clamp(4 / 5, 16 / 9);
+    return Column(
+      children: [
+        AspectRatio(
+          aspectRatio: ratio,
+          child: PageView.builder(
+            controller: _page,
+            itemCount: videos.length,
+            onPageChanged: (i) => setState(() => _index = i),
+            itemBuilder: (_, i) => Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: _video(i),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            for (var i = 0; i < videos.length; i++)
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                width: i == _index ? 18 : 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  color: i == _index
+                      ? AppColors.orange
+                      : AppColors.gray.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            const SizedBox(width: 8),
+            Text(
+              '${_index + 1}/${videos.length}',
+              style: GoogleFonts.manrope(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: widget.isDark ? AppColors.whiteMuted : AppColors.gray,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

@@ -47,18 +47,24 @@ class ComposeController extends GetxController {
   /// Plafond d'une vidéo après compression — aligné sur storage.rules.
   static const maxVideoBytes = 60 * 1024 * 1024;
 
-  /// Vidéo choisie dans cette session (fichier local), pas encore envoyée.
-  final videoPath = RxnString();
-  final videoThumbPath = RxnString();
-  int? _videoDurationMs;
-  double? _videoAspectRatio;
-  int _videoBytes = 0;
+  /// Vidéos par publication. Chacune peut peser jusqu'à
+  /// [maxVideoBytes] après réduction : au-delà de trois, l'envoi sur une
+  /// connexion mobile devient trop long pour réussir.
+  static const maxVideos = 3;
 
-  /// En édition : la vidéo déjà publiée est conservée.
-  final keepExistingVideo = false.obs;
+  /// Vidéos choisies dans cette session (fichiers locaux), pas encore
+  /// envoyées.
+  final newVideos = <LocalVideo>[].obs;
+
+  /// En édition : vidéos déjà publiées que l'auteur garde.
+  final existingVideos = <PostVideoItem>[].obs;
 
   final videoStage = VideoStage.none.obs;
   final videoProgress = 0.0.obs;
+
+  /// Vidéo en cours de réduction ou d'envoi (0 = première), et leur nombre.
+  final videoIndex = 0.obs;
+  int _videoCount = 0;
 
   /// @mentions choisies dans les suggestions.
   final mentions = <PostMention>[];
@@ -69,16 +75,20 @@ class ComposeController extends GetxController {
   Timer? _mentionTimer;
   int _mentionRequest = 0;
 
-  bool get hasVideo =>
-      videoPath.value != null ||
-      (keepExistingVideo.value && (editing?.hasVideo ?? false));
+  int get totalVideos => existingVideos.length + newVideos.length;
 
-  /// Libellé du bouton pendant l'envoi d'une vidéo.
+  bool get hasVideo => totalVideos > 0;
+
+  /// Libellé du bouton pendant l'envoi des vidéos : « Envoi de la vidéo
+  /// 2/3… 40 % ».
   String get progressLabel {
     final pct = (videoProgress.value * 100).round();
+    final which = _videoCount > 1
+        ? ' ${videoIndex.value + 1}/$_videoCount'
+        : '';
     return switch (videoStage.value) {
-      VideoStage.compressing => 'Réduction de la vidéo… $pct %',
-      VideoStage.uploading => 'Envoi de la vidéo… $pct %',
+      VideoStage.compressing => 'Réduction de la vidéo$which… $pct %',
+      VideoStage.uploading => 'Envoi de la vidéo$which… $pct %',
       VideoStage.none => '',
     };
   }
@@ -118,7 +128,7 @@ class ComposeController extends GetxController {
       titleCtrl.text = args.title;
       bodyCtrl.text = args.body;
       existingImageUrls.assignAll(args.imageUrls);
-      keepExistingVideo.value = args.hasVideo;
+      existingVideos.assignAll(args.videos);
       mentions.addAll(args.mentions);
     }
 
@@ -199,10 +209,13 @@ class ComposeController extends GetxController {
   /// surplus est écarté avec un message plutôt qu'en silence.
   Future<void> pickMedia() async {
     final roomImages = _maxImages - totalImages;
-    final roomVideo = hasVideo ? 0 : 1;
+    final roomVideo = maxVideos - totalVideos;
     final room = roomImages + roomVideo;
     if (room <= 0) {
-      _notify('Médias', 'Maximum $_maxImages photos et 1 vidéo par publication.');
+      _notify(
+        'Médias',
+        'Maximum $_maxImages photos et $maxVideos vidéos par publication.',
+      );
       return;
     }
     final List<XFile> picked;
@@ -224,10 +237,10 @@ class ComposeController extends GetxController {
     var skippedVideos = 0;
     for (final file in picked) {
       if (isVideoFile(file)) {
-        if (hasVideo) {
+        if (totalVideos >= maxVideos) {
           skippedVideos++;
         } else {
-          await _setVideo(file.path);
+          await _addVideo(file.path);
         }
       } else if (totalImages < _maxImages) {
         images.add(file.path);
@@ -238,7 +251,8 @@ class ComposeController extends GetxController {
     if (skippedImages + skippedVideos > 0) {
       _notify(
         'Certains médias n’ont pas été ajoutés',
-        'Une publication porte au plus $_maxImages photos et 1 vidéo.',
+        'Une publication porte au plus $_maxImages photos et $maxVideos '
+            'vidéos.',
       );
     }
   }
@@ -256,7 +270,7 @@ class ComposeController extends GetxController {
     caseSensitive: false,
   ).hasMatch(path);
 
-  Future<void> _setVideo(String path) async {
+  Future<void> _addVideo(String path) async {
     try {
       final bytes = await LocalMedia.length(path);
       // Sur le web, pas d'encodeur : ce qui dépasse le plafond ne pourra
@@ -270,68 +284,59 @@ class ComposeController extends GetxController {
         );
         return;
       }
-      await _probe(path);
-      videoPath.value = path;
-      _videoBytes = bytes;
-      keepExistingVideo.value = false;
-      videoThumbPath.value = await _thumbnail(path);
+      final (durationMs, aspectRatio) = await _probe(path);
+      newVideos.add(
+        LocalVideo(
+          path: path,
+          bytes: bytes,
+          durationMs: durationMs,
+          aspectRatio: aspectRatio,
+          thumbPath: await _thumbnail(path, durationMs),
+        ),
+      );
     } catch (e) {
       developer.log('Vidéo', name: 'ComposeController', error: e);
       _notify('Vidéo indisponible', 'Impossible d’ouvrir cette vidéo.');
     }
   }
 
-  /// Source à lire pour l'aperçu de la vidéo : fichier choisi, ou vidéo
-  /// déjà publiée en édition.
-  String? get videoPreviewSource =>
-      videoPath.value ??
-      (keepExistingVideo.value ? editing?.videoUrl : null);
-
-  String get videoDurationLabel {
-    final ms = videoPath.value != null
-        ? _videoDurationMs
-        : editing?.videoDurationMs;
-    if (ms == null || ms <= 0) return '';
-    final s = (ms / 1000).round();
-    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
-  }
-
   /// Médias ajoutables encore : le bouton « + » disparaît une fois pleins.
-  bool get canAddMedia => totalImages < _maxImages || !hasVideo;
+  bool get canAddMedia => totalImages < _maxImages || totalVideos < maxVideos;
 
   static const maxImages = _maxImages;
 
-  void removeVideo() {
-    videoPath.value = null;
-    videoThumbPath.value = null;
-    _videoDurationMs = null;
-    _videoAspectRatio = null;
-    keepExistingVideo.value = false;
-  }
+  void removeNewVideo(int index) => newVideos.removeAt(index);
 
-  /// Une vidéo de plus de 8 Mo sera réduite : on le dit avant d'envoyer.
-  bool get videoWillBeReduced =>
-      !kIsWeb &&
-      videoPath.value != null &&
-      VideoCompressionPolicy.shouldCompress(
-        _videoBytes,
-        threshold: VideoCompressionPolicy.feedCompressAboveBytes,
-      );
+  void removeExistingVideo(int index) => existingVideos.removeAt(index);
 
-  String get videoSizeLabel => _videoBytes > 0 ? '${_mb(_videoBytes)} Mo' : '';
+  /// Les vidéos de plus de 8 Mo seront réduites : on le dit avant
+  /// d'envoyer.
+  int get videosToReduce => kIsWeb
+      ? 0
+      : newVideos
+            .where(
+              (v) => VideoCompressionPolicy.shouldCompress(
+                v.bytes,
+                threshold: VideoCompressionPolicy.feedCompressAboveBytes,
+              ),
+            )
+            .length;
 
-  Future<void> _probe(String path) async {
+  /// Durée et format de la vidéo, lus sur le fichier local.
+  Future<(int?, double?)> _probe(String path) async {
     final probe = LocalMedia.video(path);
     try {
       await probe.initialize();
       final v = probe.value;
-      _videoDurationMs =
-          v.duration > Duration.zero ? v.duration.inMilliseconds : null;
-      _videoAspectRatio = v.size.width > 0 && v.size.height > 0
-          ? v.size.width / v.size.height
-          : null;
+      return (
+        v.duration > Duration.zero ? v.duration.inMilliseconds : null,
+        v.size.width > 0 && v.size.height > 0
+            ? v.size.width / v.size.height
+            : null,
+      );
     } on Object catch (e) {
       developer.log('Lecture de la vidéo', name: 'ComposeController', error: e);
+      return (null, null);
     } finally {
       await probe.dispose();
     }
@@ -339,7 +344,7 @@ class ComposeController extends GetxController {
 
   /// Image d'aperçu prise à 1 s (la première image d'une vidéo filmée au
   /// téléphone est souvent noire). Pas de vignette sur le web.
-  Future<String?> _thumbnail(String path) async {
+  Future<String?> _thumbnail(String path, int? durationMs) async {
     if (kIsWeb) return null;
     try {
       final dir = await getTemporaryDirectory();
@@ -347,7 +352,7 @@ class ComposeController extends GetxController {
         video: path,
         thumbnailPath: dir.path,
         imageFormat: ImageFormat.JPEG,
-        timeMs: (_videoDurationMs ?? 2000) < 1000 ? 0 : 1000,
+        timeMs: (durationMs ?? 2000) < 1000 ? 0 : 1000,
         maxWidth: 720,
         quality: 75,
       );
@@ -358,35 +363,41 @@ class ComposeController extends GetxController {
     }
   }
 
-  /// Compresse si besoin (au-delà de 8 Mo), vérifie le plafond, et rend
-  /// la vidéo prête à partir. Le fichier temporaire est à jeter après.
-  Future<(PostVideoDraft, PreparedVideo)?> _prepareVideo() async {
-    final path = videoPath.value;
-    if (path == null) return null;
-    videoStage.value = VideoStage.compressing;
-    videoProgress.value = 0;
-    final prepared = await VideoCompressionService.prepare(
-      path,
-      compressAboveBytes: VideoCompressionPolicy.feedCompressAboveBytes,
-      onProgress: (p) => videoProgress.value = p,
-    );
-    if (prepared.bytes >= maxVideoBytes) {
-      await prepared.discard();
-      throw _VideoTooLarge(prepared.bytes);
+  /// Réduit au besoin (au-delà de 8 Mo) chaque nouvelle vidéo, l'une
+  /// après l'autre, et vérifie le plafond. Les fichiers temporaires sont
+  /// ajoutés à [temp] pour être jetés après l'envoi, réussi ou non.
+  Future<List<PostVideoDraft>> _prepareVideos(List<PreparedVideo> temp) async {
+    final drafts = <PostVideoDraft>[];
+    _videoCount = newVideos.length;
+    for (var i = 0; i < newVideos.length; i++) {
+      final v = newVideos[i];
+      videoIndex.value = i;
+      videoStage.value = VideoStage.compressing;
+      videoProgress.value = 0;
+      final prepared = await VideoCompressionService.prepare(
+        v.path,
+        compressAboveBytes: VideoCompressionPolicy.feedCompressAboveBytes,
+        onProgress: (p) => videoProgress.value = p,
+      );
+      temp.add(prepared);
+      if (prepared.bytes >= maxVideoBytes) {
+        throw _VideoTooLarge(prepared.bytes, i, newVideos.length);
+      }
+      drafts.add(
+        PostVideoDraft(
+          path: prepared.path,
+          thumbPath: v.thumbPath,
+          durationMs: v.durationMs,
+          aspectRatio: v.aspectRatio,
+        ),
+      );
     }
-    return (
-      PostVideoDraft(
-        path: prepared.path,
-        thumbPath: videoThumbPath.value,
-        durationMs: _videoDurationMs,
-        aspectRatio: _videoAspectRatio,
-      ),
-      prepared,
-    );
+    return drafts;
   }
 
-  void _onUploadProgress(double p) {
+  void _onUploadProgress(int index, double p) {
     videoStage.value = VideoStage.uploading;
+    videoIndex.value = index;
     videoProgress.value = p;
   }
 
@@ -413,14 +424,14 @@ class ComposeController extends GetxController {
       return titleCtrl.text.trim().isNotEmpty ||
           bodyCtrl.text.trim().isNotEmpty ||
           images.isNotEmpty ||
-          videoPath.value != null;
+          newVideos.isNotEmpty;
     }
     return titleCtrl.text.trim() != post.title ||
         bodyCtrl.text.trim() != post.body ||
         postKind.value != post.type ||
         images.isNotEmpty ||
-        videoPath.value != null ||
-        keepExistingVideo.value != post.hasVideo ||
+        newVideos.isNotEmpty ||
+        existingVideos.length != post.videos.length ||
         existingImageUrls.length != post.imageUrls.length;
   }
 
@@ -435,12 +446,10 @@ class ComposeController extends GetxController {
   Future<FeedItem?> submit() async {
     if (isPublishing.value) return null;
     isPublishing.value = true;
-    PreparedVideo? prepared;
+    final temp = <PreparedVideo>[];
     try {
-      final ready = await _prepareVideo();
-      prepared = ready?.$2;
-      final video = ready?.$1;
-      if (video != null) _onUploadProgress(0);
+      final videos = await _prepareVideos(temp);
+      if (videos.isNotEmpty) _onUploadProgress(0, 0);
       final post = editing;
       if (post != null) {
         return await _feed.updatePost(
@@ -453,8 +462,8 @@ class ComposeController extends GetxController {
           body: bodyCtrl.text,
           keptImageUrls: List<String>.from(existingImageUrls),
           newLocalImagePaths: List<String>.from(images),
-          keepVideo: keepExistingVideo.value,
-          newVideo: video,
+          keptVideos: List<PostVideoItem>.from(existingVideos),
+          newVideos: videos,
           mentions: mentions,
           onVideoProgress: _onUploadProgress,
         );
@@ -479,14 +488,15 @@ class ComposeController extends GetxController {
         authorVerified: profile.verified,
         authorPhotoUrl: profile.photoUrl,
         localImagePaths: images,
-        video: video,
+        videos: videos,
         mentions: mentions,
         onVideoProgress: _onUploadProgress,
       );
     } on _VideoTooLarge catch (e) {
       _notify(
         'Vidéo trop longue',
-        'Même réduite, elle fait ${_mb(e.bytes)} Mo (maximum '
+        '${e.total > 1 ? 'La vidéo ${e.index + 1}' : 'La vidéo'} fait '
+            'encore ${_mb(e.bytes)} Mo une fois réduite (maximum '
             '${_mb(maxVideoBytes)} Mo). Coupez-la avant de la publier.',
       );
       return null;
@@ -502,7 +512,9 @@ class ComposeController extends GetxController {
       );
       return null;
     } finally {
-      await prepared?.discard();
+      for (final t in temp) {
+        await t.discard();
+      }
       videoStage.value = VideoStage.none;
       isPublishing.value = false;
     }
@@ -523,6 +535,30 @@ class ComposeController extends GetxController {
 }
 
 class _VideoTooLarge implements Exception {
-  const _VideoTooLarge(this.bytes);
+  const _VideoTooLarge(this.bytes, this.index, this.total);
   final int bytes;
+  final int index;
+  final int total;
+}
+
+/// Vidéo choisie dans la galerie, pas encore envoyée.
+class LocalVideo {
+  const LocalVideo({
+    required this.path,
+    required this.bytes,
+    this.thumbPath,
+    this.durationMs,
+    this.aspectRatio,
+  });
+
+  final String path;
+  final int bytes;
+  final String? thumbPath;
+  final int? durationMs;
+  final double? aspectRatio;
+
+  String get durationLabel => PostVideoItem(
+    url: path,
+    durationMs: durationMs,
+  ).durationLabel;
 }

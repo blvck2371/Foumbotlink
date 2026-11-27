@@ -225,13 +225,10 @@ class _SavedCard extends StatelessWidget {
                 ),
               if (post.hasVideo) ...[
                 const SizedBox(height: 10),
-                PostVideo(
-                  url: post.videoUrl!,
-                  thumbUrl: post.videoThumbUrl,
-                  aspectRatio: post.videoAspectRatio,
-                  durationLabel: post.videoDurationLabel,
+                PostVideos(
+                  videos: post.videos,
                   isDark: isDark,
-                  heroTag: 'saved_video_${post.id}',
+                  heroPrefix: 'saved_video_${post.id}',
                 ),
               ],
               if (!post.hasTitle && !post.hasBody && post.hasImages)

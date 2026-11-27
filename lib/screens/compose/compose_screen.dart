@@ -392,11 +392,8 @@ class _MediaPicker extends StatelessWidget {
 
     return Obx(() {
       final busy = controller.isPublishing.value;
-      final videoSource = controller.videoPreviewSource;
-      final localThumb = controller.videoThumbPath.value;
-      final remoteThumb = controller.videoPath.value == null
-          ? controller.editing?.videoThumbUrl
-          : null;
+      final keptVideos = controller.existingVideos.toList();
+      final addedVideos = controller.newVideos.toList();
       // En édition, deux sources de photos cohabitent : celles déjà en
       // ligne et celles ajoutées dans cette session. `FeedNetworkImage`
       // affiche indifféremment une URL ou un chemin local.
@@ -405,41 +402,28 @@ class _MediaPicker extends StatelessWidget {
       final photos = [...existing, ...added];
 
       final tiles = <Widget>[
-        if (videoSource != null)
-          _MediaTile(
+        for (var i = 0; i < keptVideos.length; i++)
+          _VideoTile(
             isDark: isDark,
-            onRemove: busy ? null : controller.removeVideo,
+            remoteThumb: keptVideos[i].thumbUrl,
+            label: keptVideos[i].durationLabel,
+            onRemove: busy ? null : () => controller.removeExistingVideo(i),
             onTap: () => openChatVideoViewer(
               context,
-              source: videoSource,
-              heroTag: 'compose_video',
+              source: keptVideos[i].url,
+              heroTag: 'compose_video_kept_$i',
             ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                const ColoredBox(color: AppColors.black),
-                if (localThumb != null)
-                  Image(image: LocalMedia.image(localThumb), fit: BoxFit.cover)
-                else if (remoteThumb != null)
-                  FeedNetworkImage(url: remoteThumb, isDark: true),
-                const Center(
-                  child: Icon(
-                    Icons.play_circle_fill,
-                    color: Colors.white,
-                    size: 34,
-                    shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
-                  ),
-                ),
-                Positioned(
-                  left: 6,
-                  bottom: 6,
-                  child: _TileBadge(
-                    controller.videoDurationLabel.isEmpty
-                        ? 'Vidéo'
-                        : controller.videoDurationLabel,
-                  ),
-                ),
-              ],
+          ),
+        for (var i = 0; i < addedVideos.length; i++)
+          _VideoTile(
+            isDark: isDark,
+            localThumb: addedVideos[i].thumbPath,
+            label: addedVideos[i].durationLabel,
+            onRemove: busy ? null : () => controller.removeNewVideo(i),
+            onTap: () => openChatVideoViewer(
+              context,
+              source: addedVideos[i].path,
+              heroTag: 'compose_video_new_$i',
             ),
           ),
         for (var i = 0; i < photos.length; i++)
@@ -493,7 +477,8 @@ class _MediaPicker extends StatelessWidget {
           ),
       ];
 
-      final count = photos.length + (videoSource != null ? 1 : 0);
+      final count = photos.length + keptVideos.length + addedVideos.length;
+      final toReduce = controller.videosToReduce;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -509,19 +494,21 @@ class _MediaPicker extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             count == 0
-                ? 'Jusqu’à ${ComposeController.maxImages} photos et 1 vidéo, '
-                    'choisies ensemble dans la galerie.'
+                ? 'Jusqu’à ${ComposeController.maxImages} photos et '
+                    '${ComposeController.maxVideos} vidéos, choisies ensemble '
+                    'dans la galerie.'
                 : 'Touchez un média pour le voir en grand avant de publier.',
             style: GoogleFonts.manrope(fontSize: 12, color: muted),
           ),
-          if (controller.videoPath.value != null) ...[
+          if (toReduce > 0) ...[
             const SizedBox(height: 4),
             Text(
-              controller.videoWillBeReduced
-                  ? 'Vidéo de ${controller.videoSizeLabel} : sa qualité sera '
-                      'réduite pour un envoi plus rapide.'
-                  : 'Vidéo de ${controller.videoSizeLabel}, envoyée telle '
-                      'quelle.',
+              toReduce == 1 && addedVideos.length == 1
+                  ? 'Vidéo de plus de 8 Mo : sa qualité sera réduite pour un '
+                      'envoi plus rapide.'
+                  : '$toReduce vidéo${toReduce > 1 ? 's' : ''} de plus de '
+                      '8 Mo : leur qualité sera réduite pour un envoi plus '
+                      'rapide.',
               style: GoogleFonts.manrope(fontSize: 12, color: muted),
             ),
           ],
@@ -624,6 +611,56 @@ class _TileBadge extends StatelessWidget {
           fontSize: 11,
           fontWeight: FontWeight.w700,
         ),
+      ),
+    );
+  }
+}
+
+class _VideoTile extends StatelessWidget {
+  const _VideoTile({
+    required this.isDark,
+    required this.label,
+    required this.onTap,
+    required this.onRemove,
+    this.localThumb,
+    this.remoteThumb,
+  });
+
+  final bool isDark;
+  final String label;
+  final String? localThumb;
+  final String? remoteThumb;
+  final VoidCallback onTap;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return _MediaTile(
+      isDark: isDark,
+      onRemove: onRemove,
+      onTap: onTap,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          const ColoredBox(color: AppColors.black),
+          if (localThumb != null)
+            Image(image: LocalMedia.image(localThumb!), fit: BoxFit.cover)
+          else if (remoteThumb != null)
+            FeedNetworkImage(url: remoteThumb!, isDark: true),
+          const Center(
+            child: Icon(
+              Icons.play_circle_fill,
+              color: Colors.white,
+              size: 34,
+              shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
+            ),
+          ),
+          Positioned(
+            left: 6,
+            bottom: 6,
+            child: _TileBadge(label.isEmpty ? 'Vidéo' : label),
+          ),
+        ],
       ),
     );
   }
