@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:livekit_client/livekit_client.dart';
 
 import '../../controllers/live_feed.dart';
 import '../../models/live_session.dart';
@@ -264,7 +265,8 @@ class LiveCommentsList extends StatelessWidget {
                       ? null
                       : () => onLongPress!(comment),
                 ),
-                LiveJoinItem(:final name) => _JoinRow(name: name),
+                LiveJoinItem(:final name) => _JoinRow(text: '$name a rejoint'),
+                LiveNoticeItem(:final text) => _JoinRow(text: text),
               },
             );
           },
@@ -348,8 +350,8 @@ class _CommentRow extends StatelessWidget {
 }
 
 class _JoinRow extends StatelessWidget {
-  const _JoinRow({required this.name});
-  final String name;
+  const _JoinRow({required this.text});
+  final String text;
 
   @override
   Widget build(BuildContext context) {
@@ -359,7 +361,7 @@ class _JoinRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: liveGlass(14),
         child: Text(
-          '$name a rejoint',
+          text,
           style: GoogleFonts.manrope(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
@@ -651,4 +653,273 @@ Future<T?> showLiveSheet<T>({
       borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
     ),
   );
+}
+
+/// Une place du panel telle qu'affichée : l'hôte, un invité, ou soi-même.
+class LiveStageTile {
+  const LiveStageTile({
+    required this.uid,
+    required this.name,
+    this.photo,
+    this.track,
+    this.mirror = false,
+    this.micOff = false,
+    this.isHost = false,
+  });
+
+  final String uid;
+  final String name;
+  final String? photo;
+  final VideoTrack? track;
+
+  /// Sa propre caméra avant : affichée en miroir, comme un selfie.
+  final bool mirror;
+  final bool micOff;
+  final bool isHost;
+}
+
+/// Le plateau d'un live : l'hôte seul en plein écran, ou, dès qu'un invité
+/// monte, une grille comme le multi-invités de TikTok — deux côte à côte,
+/// puis 2 × 2. Les places libres s'affichent ; un spectateur peut toucher
+/// l'une d'elles pour demander à monter ([onTapSeat]).
+class LiveStageGrid extends StatelessWidget {
+  const LiveStageGrid({
+    super.key,
+    required this.tiles,
+    this.onTapTile,
+    this.onTapSeat,
+    this.fallback,
+  });
+
+  /// L'hôte d'abord, puis les invités.
+  final List<LiveStageTile> tiles;
+  final void Function(LiveStageTile tile)? onTapTile;
+  final VoidCallback? onTapSeat;
+
+  /// Ce qui remplace l'image de l'hôte seul quand elle manque encore.
+  final Widget? fallback;
+
+  @override
+  Widget build(BuildContext context) {
+    if (tiles.length <= 1) {
+      final t = tiles.isEmpty ? null : tiles.first;
+      final track = t?.track;
+      if (track == null) {
+        return fallback ?? const ColoredBox(color: Colors.black);
+      }
+      return VideoTrackRenderer(
+        track,
+        fit: VideoViewFit.cover,
+        mirrorMode: t!.mirror
+            ? VideoViewMirrorMode.mirror
+            : VideoViewMirrorMode.off,
+      );
+    }
+    final cells = tiles.length == 2 ? 2 : 4;
+    final top = MediaQuery.paddingOf(context).top + 96;
+    return ColoredBox(
+      color: const Color(0xFF141414),
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final w = box.maxWidth / 2;
+          final h = min(w * 4 / 3, (box.maxHeight - top - 120) / (cells / 2));
+          Widget cell(int i) => SizedBox(
+            width: w,
+            height: h,
+            child: Padding(
+              padding: const EdgeInsets.all(1),
+              child: i < tiles.length
+                  ? _StageCell(
+                      tile: tiles[i],
+                      onTap: onTapTile == null
+                          ? null
+                          : () => onTapTile!(tiles[i]),
+                    )
+                  : _EmptySeat(onTap: onTapSeat),
+            ),
+          );
+          return Column(
+            children: [
+              SizedBox(height: top),
+              Row(children: [cell(0), cell(1)]),
+              if (cells == 4) Row(children: [cell(2), cell(3)]),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _StageCell extends StatelessWidget {
+  const _StageCell({required this.tile, this.onTap});
+  final LiveStageTile tile;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final track = tile.track;
+    return Semantics(
+      label:
+          '${tile.name}${tile.isHost ? ', hôte' : ''}'
+          '${tile.micOff ? ', micro coupé' : ''}',
+      button: onTap != null,
+      excludeSemantics: true,
+      child: GestureDetector(
+        onTap: onTap,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (track != null)
+                VideoTrackRenderer(
+                  track,
+                  fit: VideoViewFit.cover,
+                  mirrorMode: tile.mirror
+                      ? VideoViewMirrorMode.mirror
+                      : VideoViewMirrorMode.off,
+                )
+              else
+                DecoratedBox(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Color(0xFF3A1C0A), Color(0xFF161616)],
+                    ),
+                  ),
+                  child: Center(
+                    child: UserAvatar(
+                      name: tile.name,
+                      photoUrl: tile.photo,
+                      radius: 30,
+                    ),
+                  ),
+                ),
+              Positioned(
+                left: 6,
+                right: 6,
+                bottom: 6,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 3,
+                    ),
+                    decoration: liveGlass(10),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (tile.micOff) ...[
+                          const Icon(
+                            Icons.mic_off_rounded,
+                            size: 13,
+                            color: Color(0xFFFF8A80),
+                          ),
+                          const SizedBox(width: 3),
+                        ],
+                        Flexible(
+                          child: Text(
+                            tile.isHost ? '${tile.name} · Hôte' : tile.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.manrope(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w800,
+                              color: tile.isHost
+                                  ? AppColors.orangeSoft
+                                  : AppColors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptySeat extends StatelessWidget {
+  const _EmptySeat({this.onTap});
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E1E1E),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              onTap == null ? Icons.event_seat_outlined : Icons.add_rounded,
+              size: 28,
+              color: AppColors.white.withValues(alpha: 0.5),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              onTap == null ? 'Place libre' : 'Rejoindre',
+              style: GoogleFonts.manrope(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: AppColors.white.withValues(alpha: 0.6),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Une pastille de nombre sur un bouton rond (demandes en attente…).
+class LiveCountBadge extends StatelessWidget {
+  const LiveCountBadge({super.key, required this.count, required this.child});
+  final int count;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (count <= 0) return child;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        child,
+        Positioned(
+          right: -2,
+          top: -2,
+          child: Container(
+            constraints: const BoxConstraints(minWidth: 18),
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(
+              color: liveRed,
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: Colors.black, width: 1.5),
+            ),
+            child: Text(
+              '$count',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.manrope(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+                color: AppColors.white,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }

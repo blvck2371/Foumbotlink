@@ -79,7 +79,9 @@ class _Stage extends StatelessWidget {
       return Stack(
         fit: StackFit.expand,
         children: [
-          if (track != null)
+          if (onAir)
+            _HostStage(controller: controller, feed: feed)
+          else if (track != null)
             VideoTrackRenderer(
               track,
               fit: VideoViewFit.cover,
@@ -370,6 +372,20 @@ class _OnAir extends StatelessWidget {
               size: 44,
               onTap: controller.switchCamera,
             ),
+            Obx(() {
+              final requests = feed.guests.values
+                  .where((g) => g.status == LiveGuestStatus.requested)
+                  .length;
+              return LiveCountBadge(
+                count: requests,
+                child: LiveRoundButton(
+                  icon: Icons.group_add_outlined,
+                  tooltip: 'Invités du live',
+                  size: 44,
+                  onTap: () => showGuestsPanel(controller, feed),
+                ),
+              );
+            }),
           ],
         ),
       ],
@@ -685,4 +701,309 @@ class _Failure extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Le plateau de l'hôte : sa caméra, puis ses invités. Toucher un invité
+/// ouvre ce que l'hôte peut faire de lui.
+class _HostStage extends StatelessWidget {
+  const _HostStage({required this.controller, required this.feed});
+  final LiveHostController controller;
+  final LiveFeed feed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      final live = feed.live.value;
+      final videos = controller.media.videos;
+      final micOff = controller.media.micOff;
+      final tiles = <LiveStageTile>[
+        LiveStageTile(
+          uid: feed.me.uid,
+          name: live?.hostName ?? feed.me.name,
+          photo: feed.me.photo,
+          track: controller.camera.value,
+          mirror: controller.frontCamera.value,
+          micOff: !controller.micOn.value,
+          isHost: true,
+        ),
+        for (final g in feed.stage)
+          LiveStageTile(
+            uid: g.uid,
+            name: g.name,
+            photo: g.photo,
+            track: videos[g.uid],
+            micOff: g.mutedByHost || micOff.contains(g.uid),
+          ),
+      ];
+      return LiveStageGrid(
+        tiles: tiles,
+        onTapTile: (t) {
+          final g = feed.guests[t.uid];
+          if (g != null) unawaited(guestActions(controller, g));
+        },
+        onTapSeat: () => showGuestsPanel(controller, feed),
+        fallback: const Center(child: FoumbotLoader()),
+      );
+    });
+  }
+}
+
+/// Ce que l'hôte peut faire d'un invité du panel : couper ou rendre son
+/// micro, le faire descendre, ou le retirer du live.
+Future<void> guestActions(LiveHostController controller, LiveGuest g) async {
+  final choice = await showLiveSheet<String>(
+    title: g.name,
+    options: [
+      (
+        icon: g.mutedByHost ? Icons.mic_none_rounded : Icons.mic_off_rounded,
+        label: g.mutedByHost ? 'Rendre le micro' : 'Couper le micro',
+        value: 'mic',
+        danger: false,
+      ),
+      (
+        icon: Icons.south_rounded,
+        label: 'Faire descendre du panel',
+        value: 'down',
+        danger: false,
+      ),
+      (
+        icon: Icons.person_remove_outlined,
+        label: 'Retirer ${g.name} du live',
+        value: 'expel',
+        danger: true,
+      ),
+    ],
+  );
+  switch (choice) {
+    case 'mic':
+      await controller.toggleGuestMic(g);
+    case 'down':
+      await controller.removeFromStage(g.uid);
+    case 'expel':
+      final ok = await confirmAction(
+        title: 'Retirer ${g.name} ?',
+        message:
+            'Ses messages sont effacés et il ne pourra plus revenir dans ce '
+            'live.',
+        confirmLabel: 'Retirer',
+      );
+      if (ok) {
+        await controller.expel(
+          LiveViewer(uid: g.uid, name: g.name, photo: g.photo),
+        );
+      }
+  }
+}
+
+/// Le panneau « Invités » de l'hôte : les demandes à accepter, ceux qui
+/// sont sur le panel, et les spectateurs à inviter.
+void showGuestsPanel(LiveHostController controller, LiveFeed feed) {
+  TextStyle section() => GoogleFonts.manrope(
+    fontSize: 12.5,
+    fontWeight: FontWeight.w800,
+    letterSpacing: 0.4,
+    color: AppColors.whiteMuted,
+  );
+  TextStyle name() =>
+      GoogleFonts.manrope(fontWeight: FontWeight.w700, color: AppColors.white);
+  Widget small(String label, VoidCallback onTap, {bool primary = false}) =>
+      Padding(
+        padding: const EdgeInsets.only(left: 6),
+        child: primary
+            ? FilledButton(
+                onPressed: onTap,
+                style: FilledButton.styleFrom(
+                  backgroundColor: liveRed,
+                  foregroundColor: AppColors.white,
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                ),
+                child: Text(label),
+              )
+            : TextButton(
+                onPressed: onTap,
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.white,
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: Text(label),
+              ),
+      );
+
+  Get.bottomSheet<void>(
+    SafeArea(
+      child: SizedBox(
+        height: MediaQuery.sizeOf(Get.context!).height * 0.6,
+        child: Obx(() {
+          final guests = feed.guests;
+          final requests =
+              guests.values
+                  .where((g) => g.status == LiveGuestStatus.requested)
+                  .toList()
+                ..sort((a, b) => a.at.compareTo(b.at));
+          final stage = feed.stage;
+          final full = stage.length >= LiveRules.maxGuests;
+          final viewers =
+              feed.viewers.values
+                  .where((v) => guests[v.uid]?.onStage != true)
+                  .toList()
+                ..sort((a, b) => a.name.compareTo(b.name));
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(8, 18, 8, 12),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                child: Text(
+                  'Invités du live',
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.white,
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: Text(
+                  '${stage.length}/${LiveRules.maxGuests} places occupées sur '
+                  'le panel',
+                  style: GoogleFonts.manrope(
+                    fontSize: 13,
+                    color: AppColors.whiteMuted,
+                  ),
+                ),
+              ),
+              if (requests.isNotEmpty) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                  child: Text('DEMANDES', style: section()),
+                ),
+                for (final g in requests)
+                  ListTile(
+                    leading: UserAvatar(
+                      name: g.name,
+                      photoUrl: g.photo,
+                      radius: 18,
+                    ),
+                    title: Text(g.name, style: name()),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        small('Refuser', () => controller.reject(g.uid)),
+                        small(
+                          'Accepter',
+                          () => full
+                              ? Get.snackbar(
+                                  'Panel complet',
+                                  'Faites d’abord descendre un invité.',
+                                )
+                              : controller.approve(g.uid),
+                          primary: true,
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                child: Text('SUR LE PANEL', style: section()),
+              ),
+              if (stage.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                  child: Text(
+                    'Personne pour l’instant. Invitez un spectateur ci-dessous.',
+                    style: GoogleFonts.manrope(
+                      fontSize: 13,
+                      color: AppColors.whiteMuted,
+                    ),
+                  ),
+                ),
+              for (final g in stage)
+                ListTile(
+                  leading: UserAvatar(
+                    name: g.name,
+                    photoUrl: g.photo,
+                    radius: 18,
+                  ),
+                  title: Text(g.name, style: name()),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: g.mutedByHost
+                            ? 'Rendre le micro'
+                            : 'Couper le micro',
+                        onPressed: () => controller.toggleGuestMic(g),
+                        icon: Icon(
+                          g.mutedByHost
+                              ? Icons.mic_off_rounded
+                              : Icons.mic_none_rounded,
+                          color: g.mutedByHost
+                              ? const Color(0xFFFF6B6B)
+                              : AppColors.white,
+                        ),
+                      ),
+                      small(
+                        'Faire descendre',
+                        () => controller.removeFromStage(g.uid),
+                      ),
+                    ],
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                child: Text('SPECTATEURS', style: section()),
+              ),
+              if (viewers.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                  child: Text(
+                    'Aucun spectateur pour l’instant.',
+                    style: GoogleFonts.manrope(
+                      fontSize: 13,
+                      color: AppColors.whiteMuted,
+                    ),
+                  ),
+                ),
+              for (final v in viewers)
+                ListTile(
+                  leading: UserAvatar(
+                    name: v.name,
+                    photoUrl: v.photo,
+                    radius: 18,
+                  ),
+                  title: Text(v.name, style: name()),
+                  trailing: switch (guests[v.uid]?.status) {
+                    LiveGuestStatus.invited => Text(
+                      'Invité',
+                      style: GoogleFonts.manrope(
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.orangeSoft,
+                      ),
+                    ),
+                    LiveGuestStatus.requested => const SizedBox.shrink(),
+                    _ => small(
+                      'Inviter',
+                      () => full
+                          ? Get.snackbar(
+                              'Panel complet',
+                              'Faites d’abord descendre un invité.',
+                            )
+                          : controller.invite(v.uid),
+                      primary: true,
+                    ),
+                  },
+                ),
+            ],
+          );
+        }),
+      ),
+    ),
+    backgroundColor: AppColors.blackElevated,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+    ),
+  );
 }

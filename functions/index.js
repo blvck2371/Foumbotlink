@@ -1246,6 +1246,7 @@ exports.startLive = lives.startLive;
 exports.joinLive = lives.joinLive;
 exports.endLive = lives.endLive;
 exports.expelFromLive = lives.expelFromLive;
+exports.liveStage = lives.liveStage;
 exports.onLiveViewerWritten = lives.onLiveViewerWritten;
 exports.cleanupLives = lives.cleanupLives;
 exports.onLiveSessionCreated = lives.onLiveSessionCreated;

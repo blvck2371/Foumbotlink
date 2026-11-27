@@ -32,7 +32,7 @@ const index = require("../index.js");
 const {setLiveKitFactory} = require("../lives.js");
 
 const {
-  startLive, joinLive, endLive, expelFromLive, onLiveSessionCreated,
+  startLive, joinLive, endLive, expelFromLive, liveStage, onLiveSessionCreated,
   onReportCreated, moderate,
 } = index;
 const lives = index._lives;
@@ -44,6 +44,9 @@ const CAROLE = "carole";
 const DAN = "dan";
 const EVE = "eve";
 const ADMIN = "admin";
+const FRED = "fred";
+const GINA = "gina";
+const HUGO = "hugo";
 
 let failures = 0;
 
@@ -103,6 +106,12 @@ setLiveKitFactory(() => ({
   removeParticipant: async (room, identity) => {
     liveKitCalls.push(["removeParticipant", room, identity]);
   },
+  setCanPublish: async (room, identity, canPublish) => {
+    liveKitCalls.push(["setCanPublish", room, identity, canPublish]);
+  },
+  muteMic: async (room, identity, muted) => {
+    liveKitCalls.push(["muteMic", room, identity, muted]);
+  },
 }));
 
 /**
@@ -133,7 +142,8 @@ async function main() {
   const val = async (p) => (await rtdb.ref(p).get()).val();
 
   for (const [uid, name] of [[AWA, "Awa"], [BOB, "Bob"], [DAN, "Dan"],
-    [EVE, "Ève"], [ADMIN, "Modération"]]) {
+    [EVE, "Ève"], [ADMIN, "Modération"], [FRED, "Fred"], [GINA, "Gina"],
+    [HUGO, "Hugo"]]) {
     await db.doc(`users/${uid}`).set({displayName: name});
   }
   await db.doc(`users/${AWA}/blocked/${DAN}`).set({displayName: "Dan"});
@@ -298,6 +308,122 @@ async function main() {
             as(AWA).ref(`liveComments/${liveId}/${again.key}`).remove());
       });
 
+  console.log("Lives — panel d'invités");
+
+  await check("plusieurs lives en même temps, de comptes différents",
+      async () => {
+        const other = await call(startLive, FRED, {title: "Chez Fred"});
+        expect(other.liveId !== liveId, "deux lives distincts");
+        expect(await val(`lives/${liveId}/hostUid`) === AWA, "Awa toujours là");
+        expect(await val(`lives/${other.liveId}/hostUid`) === FRED, "Fred aussi");
+        await call(endLive, FRED, {liveId: other.liveId});
+      });
+
+  const stage = (uid, action, target) =>
+    call(liveStage, uid, {liveId, action, uid: target});
+  const guest = (uid) => val(`liveGuests/${liveId}/${uid}`);
+
+  await check("le panel se lit dans le live, ne s'écrit que par le serveur",
+      async () => {
+        await assertSucceeds(as(BOB).ref(`liveGuests/${liveId}`).get());
+        await assertFails(as(GINA).ref(`liveGuests/${liveId}`).get());
+        await assertFails(as(BOB).ref(`liveGuests/${liveId}/${BOB}`).set({
+          status: "onStage", name: "Bob", at: TS,
+        }));
+      });
+
+  await check("seule Awa invite ; hors du live, pas d'invitation", async () => {
+    await expectHttpsError(stage(EVE, "invite", BOB), "permission-denied");
+    await expectHttpsError(stage(AWA, "invite", GINA), "failed-precondition");
+    await expectHttpsError(stage(AWA, "invite", AWA), "invalid-argument");
+    await expectHttpsError(stage(AWA, "danse", BOB), "invalid-argument");
+    await expectHttpsError(stage(AWA, "request"), "invalid-argument");
+  });
+
+  await check("Awa invite Bob, qui accepte : jeton d'émission", async () => {
+    const r = await stage(AWA, "invite", BOB);
+    expect(r.status === "invited", r.status);
+    const g = await guest(BOB);
+    expect(g.status === "invited" && g.name === "Bob", JSON.stringify(g));
+    const before = await call(joinLive, BOB, {liveId});
+    expect(before.role === "viewer", "pas encore sur le panel");
+    expect((await stage(BOB, "accept")).status === "onStage", "monté");
+    const res = await call(joinLive, BOB, {liveId});
+    expect(res.role === "guest" && res.token.endsWith(":emet"), res.token);
+  });
+
+  await check("Ève demande à monter ; Awa refuse, puis accepte", async () => {
+    await expectHttpsError(stage(EVE, "accept"), "failed-precondition");
+    expect((await stage(EVE, "request")).status === "requested", "demande");
+    await stage(AWA, "reject", EVE);
+    expect(await guest(EVE) === null, "demande refusée");
+    await stage(EVE, "request");
+    expect((await stage(AWA, "approve", EVE)).status === "onStage", "monte");
+    // Double appui : sans effet, toujours sur le panel.
+    expect((await stage(AWA, "approve", EVE)).status === "onStage", "idem");
+  });
+
+  await check("une demande croisée avec une invitation fait monter", async () => {
+    await call(joinLive, FRED, {liveId});
+    await stage(FRED, "request");
+    expect((await stage(AWA, "invite", FRED)).status === "onStage", "Fred");
+  });
+
+  await check("trois invités au plus sur le panel", async () => {
+    await call(joinLive, HUGO, {liveId});
+    await stage(AWA, "invite", HUGO);
+    await expectHttpsError(stage(HUGO, "accept"), "resource-exhausted");
+    expect((await guest(HUGO)).status === "invited", "toujours invité");
+  });
+
+  await check("Awa coupe puis rend le micro d'un invité", async () => {
+    await expectHttpsError(stage(BOB, "mute", EVE), "permission-denied");
+    await stage(AWA, "mute", BOB);
+    expect((await guest(BOB)).mutedByHost === true, "coupé");
+    expect(liveKitCalls.some(([op, , who, m]) =>
+      op === "muteMic" && who === BOB && m === true), "coupé dans LiveKit");
+    await stage(AWA, "unmute", BOB);
+    expect((await guest(BOB)).mutedByHost === false, "rendu");
+    await expectHttpsError(stage(AWA, "mute", HUGO), "failed-precondition");
+  });
+
+  await check("Awa fait descendre Fred : droit d'émettre repris", async () => {
+    await stage(AWA, "remove", FRED);
+    expect(await guest(FRED) === null, "descendu");
+    expect(liveKitCalls.some(([op, , who, can]) =>
+      op === "setCanPublish" && who === FRED && can === false), "LiveKit");
+    expect((await call(joinLive, FRED, {liveId})).role === "viewer", "viewer");
+    expect((await stage(HUGO, "accept")).status === "onStage", "place libre");
+  });
+
+  await check("Hugo quitte le panel de lui-même ; parti, il en sort",
+      async () => {
+        await stage(HUGO, "leave");
+        expect(await guest(HUGO) === null, "a quitté");
+        await stage(AWA, "invite", FRED);
+        await stage(FRED, "accept");
+        // Fred perd le réseau : sa présence disparaît, le panel suit.
+        await rtdb.ref(`liveViewers/${liveId}/${FRED}`).set({name: "Fred", at: 1});
+        await rtdb.ref(`liveViewers/${liveId}/${FRED}`).remove();
+        await index.onLiveViewerWritten.run({
+          params: {liveId, uid: FRED},
+          data: {
+            before: {exists: () => true},
+            after: {exists: () => false},
+          },
+        });
+        expect(await guest(FRED) === null, "sorti du panel");
+      });
+
+  await check("Ève, retirée du live, quitte aussi le panel", async () => {
+    await call(expelFromLive, AWA, {liveId, uid: EVE});
+    expect(await guest(EVE) === null, "plus d'Ève sur le panel");
+    // On remet Ève pour la suite du scénario.
+    await rtdb.ref(`liveBans/${liveId}/${EVE}`).remove();
+    await call(joinLive, EVE, {liveId});
+    await stage(BOB, "leave");
+  });
+
   console.log("Lives — exclusion et fin");
 
   await check("seule Awa peut retirer Bob, qui perd tout accès", async () => {
@@ -327,6 +453,7 @@ async function main() {
     expect(await val(`lives/${liveId}`) === null, "nœud effacé");
     expect(await val(`liveComments/${liveId}`) === null, "commentaires effacés");
     expect(await val(`liveMembers/${liveId}`) === null, "membres effacés");
+    expect(await val(`liveGuests/${liveId}`) === null, "panel effacé");
     const s = (await db.doc(`liveSessions/${liveId}`).get()).data();
     expect(s.status === "ended" && s.endReason === "host", s.endReason);
     expect(s.likes === 3 && s.peakViewers === 2, `bilan ${s.likes}/${s.peakViewers}`);

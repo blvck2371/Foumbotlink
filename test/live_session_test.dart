@@ -163,4 +163,42 @@ void main() {
       expect(b.othersIn(2), 2);
     });
   });
+
+  group('LiveGuest', () {
+    test('lit les trois états, écarte le reste', () {
+      final all = LiveGuest.mapFrom({
+        'a': {'status': 'invited', 'name': 'Awa', 'at': 1},
+        'b': {'status': 'requested', 'name': '', 'at': 2},
+        'c': {
+          'status': 'onStage',
+          'name': 'Carole',
+          'at': 3,
+          'mutedByHost': true,
+          'photo': 'https://x/y.jpg',
+        },
+        'd': {'status': 'roi', 'name': 'Dan'},
+        'e': 'n’importe quoi',
+      });
+      expect(all.keys, unorderedEquals(['a', 'b', 'c']));
+      expect(all['a']!.status, LiveGuestStatus.invited);
+      expect(all['b']!.name, 'Habitant');
+      expect(all['c']!.onStage, isTrue);
+      expect(all['c']!.mutedByHost, isTrue);
+      expect(all['a']!.mutedByHost, isFalse);
+    });
+
+    test('le panel : ceux qui sont montés, dans l’ordre d’arrivée', () {
+      final all = LiveGuest.mapFrom({
+        'late': {'status': 'onStage', 'name': 'Tard', 'at': 20},
+        'early': {'status': 'onStage', 'name': 'Tôt', 'at': 10},
+        'ask': {'status': 'requested', 'name': 'Demande', 'at': 5},
+      });
+      expect(LiveGuest.stageOf(all).map((g) => g.uid), ['early', 'late']);
+    });
+
+    test('rien à lire, panel vide', () {
+      expect(LiveGuest.mapFrom(null), isEmpty);
+      expect(LiveGuest.stageOf(const {}), isEmpty);
+    });
+  });
 }

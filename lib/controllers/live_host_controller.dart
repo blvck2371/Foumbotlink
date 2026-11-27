@@ -11,6 +11,7 @@ import '../services/auth_service.dart';
 import '../services/live_service.dart';
 import '../services/user_profile_service.dart';
 import 'live_feed.dart';
+import 'live_stage.dart';
 
 enum LiveHostPhase {
   /// Autorisations et caméra en cours d'ouverture.
@@ -71,6 +72,9 @@ class LiveHostController extends GetxController {
   final elapsed = Duration.zero.obs;
   final feed = Rxn<LiveFeed>();
   final summary = Rxn<LiveSummary>();
+
+  /// Image et micro des invités sur le panel.
+  final media = LiveStageMedia();
 
   Room? _room;
   EventsListener<RoomEvent>? _listener;
@@ -154,7 +158,16 @@ class LiveHostController extends GetxController {
         return;
       }
       _liveId = ticket.liveId;
-      await _connect(ticket, track);
+      try {
+        await _connect(ticket, track);
+      } catch (e) {
+        // Premier contact avec le serveur média raté (réseau mobile qui
+        // hésite) : un second essai avant d'abandonner le live.
+        debugPrint('Live : connexion LiveKit échouée ($e), nouvel essai');
+        await _disposeRoom();
+        if (isClosed) return;
+        await _connect(ticket, track);
+      }
       if (isClosed) return;
 
       final f = LiveFeed(liveId: ticket.liveId, me: _me(), isHost: true);
@@ -179,7 +192,8 @@ class LiveHostController extends GetxController {
       await _abortStart();
       error.value = e.message;
       phase.value = LiveHostPhase.ready;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Live : démarrage impossible ($e)');
       await _abortStart();
       error.value =
           'Le direct n’a pas pu démarrer. Vérifiez votre connexion et '
@@ -200,7 +214,7 @@ class LiveHostController extends GetxController {
       ),
     );
     _room = room;
-    _listener = room.createListener()
+    _listener = media.attach(room)
       ..on<RoomReconnectingEvent>((_) => reconnecting.value = true)
       ..on<RoomReconnectedEvent>((_) => reconnecting.value = false)
       ..on<RoomDisconnectedEvent>((_) {
@@ -221,7 +235,7 @@ class LiveHostController extends GetxController {
     reconnecting.value = true;
     try {
       await _disposeRoom();
-      final ticket = await _service.join(id);
+      final ticket = await _service.join(id, fresh: true);
       await _connect(ticket, track);
       reconnecting.value = false;
     } catch (_) {
@@ -289,6 +303,31 @@ class LiveHostController extends GetxController {
     }
   }
 
+  // -----------------------------------------------------------------------
+  // Le panel : inviter, accepter, couper le micro, faire descendre
+  // -----------------------------------------------------------------------
+
+  /// Une action sur le panel ; le refus du serveur s'affiche tel quel.
+  Future<void> stage(String action, String uid) async {
+    final id = _liveId;
+    if (id == null) return;
+    try {
+      await _service.stage(id, action, uid: uid);
+    } on LiveException catch (e) {
+      Get.snackbar('Impossible', e.message);
+    }
+  }
+
+  Future<void> invite(String uid) => stage('invite', uid);
+  Future<void> approve(String uid) => stage('approve', uid);
+  Future<void> reject(String uid) => stage('reject', uid);
+
+  /// Faire descendre un invité : il redevient spectateur.
+  Future<void> removeFromStage(String uid) => stage('remove', uid);
+
+  Future<void> toggleGuestMic(LiveGuest g) =>
+      stage(g.mutedByHost ? 'unmute' : 'mute', g.uid);
+
   LiveMe _me() {
     final auth = Get.find<AuthService>();
     final profile = Get.find<UserProfileService>().profile.value;
@@ -306,6 +345,7 @@ class LiveHostController extends GetxController {
     _room = null;
     await _listener?.dispose();
     _listener = null;
+    media.clear();
     if (room != null) {
       try {
         await room.disconnect();

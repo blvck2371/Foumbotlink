@@ -53,6 +53,12 @@
       }
     },
 
+    "liveGuests": {
+      "$liveId": {
+        ".read": "auth != null && root.child('liveMembers').child($liveId).child(auth.uid).exists()"
+      }
+    },
+
     "liveMembers": {
       "$liveId": {
         "$uid": {

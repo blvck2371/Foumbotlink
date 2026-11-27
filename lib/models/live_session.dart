@@ -81,6 +81,84 @@ class LiveSession {
 
 int _int(Object? v) => v is num ? v.toInt() : 0;
 
+/// Où en est quelqu'un avec le panel d'un live (`liveGuests/{liveId}/{uid}`).
+enum LiveGuestStatus {
+  /// L'hôte l'a invité : à lui d'accepter.
+  invited,
+
+  /// Il a demandé à monter : à l'hôte d'accepter.
+  requested,
+
+  /// Sur le panel : il émet image et son, comme l'hôte.
+  onStage,
+}
+
+/// Une place sur le panel (ou une demande, ou une invitation). Tenu par
+/// le serveur seul (fonction `liveStage`).
+class LiveGuest {
+  const LiveGuest({
+    required this.uid,
+    required this.name,
+    required this.status,
+    required this.at,
+    this.photo,
+    this.mutedByHost = false,
+  });
+
+  final String uid;
+  final String name;
+  final String? photo;
+  final LiveGuestStatus status;
+  final DateTime at;
+
+  /// L'hôte lui a coupé le micro : il ne peut pas le rallumer lui-même.
+  final bool mutedByHost;
+
+  bool get onStage => status == LiveGuestStatus.onStage;
+
+  static LiveGuest? fromMap(String uid, Object? raw) {
+    if (raw is! Map) return null;
+    final status = switch (raw['status']) {
+      'invited' => LiveGuestStatus.invited,
+      'requested' => LiveGuestStatus.requested,
+      'onStage' => LiveGuestStatus.onStage,
+      _ => null,
+    };
+    if (status == null) return null;
+    final name = raw['name'];
+    final photo = raw['photo'];
+    final at = raw['at'];
+    return LiveGuest(
+      uid: uid,
+      name: name is String && name.trim().isNotEmpty ? name : 'Habitant',
+      photo: photo is String && photo.startsWith('http') ? photo : null,
+      status: status,
+      at: at is num
+          ? DateTime.fromMillisecondsSinceEpoch(at.toInt())
+          : DateTime.now(),
+      mutedByHost: raw['mutedByHost'] == true,
+    );
+  }
+
+  /// Le contenu de `liveGuests/{liveId}`, entrées invalides écartées.
+  static Map<String, LiveGuest> mapFrom(Object? raw) {
+    if (raw is! Map) return const {};
+    final out = <String, LiveGuest>{};
+    for (final e in raw.entries) {
+      final g = e.key is String
+          ? LiveGuest.fromMap(e.key as String, e.value)
+          : null;
+      if (g != null) out[g.uid] = g;
+    }
+    return out;
+  }
+
+  /// Invités sur le panel, dans l'ordre où ils sont montés.
+  static List<LiveGuest> stageOf(Map<String, LiveGuest> all) =>
+      all.values.where((g) => g.onStage).toList()
+        ..sort((a, b) => a.at.compareTo(b.at));
+}
+
 /// Un commentaire de `liveComments/{liveId}/{id}`.
 class LiveComment {
   const LiveComment({
@@ -143,11 +221,25 @@ class LiveJoinItem extends LiveFeedItem {
   String get key => 'j_${uid}_${at.millisecondsSinceEpoch}';
 }
 
+/// Une annonce du live : « Bob demande à rejoindre », « Bob monte sur le
+/// panel ».
+class LiveNoticeItem extends LiveFeedItem {
+  const LiveNoticeItem({required this.text, required this.at});
+  final String text;
+  final DateTime at;
+  @override
+  String get key => 'n_${at.microsecondsSinceEpoch}_${text.hashCode}';
+}
+
 /// Règles partagées par l'écran et les tests — alignées sur
 /// database.rules.json et functions/lives.js.
 abstract final class LiveRules {
   static const maxTitle = 80;
   static const maxComment = 200;
+
+  /// Invités sur le panel en plus de l'hôte (aligné sur `MAX_GUESTS` de
+  /// functions/lives.js).
+  static const maxGuests = 3;
 
   /// Cœurs envoyés d'un coup au plus : la règle RTDB refuse une hausse de
   /// plus de 30.

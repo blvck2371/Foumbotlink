@@ -57,6 +57,13 @@ const MAX_LIVE_MS = 4 * 60 * 60 * 1000;
  */
 const HOST_GRACE_MS = 90 * 1000;
 
+/**
+ * Invités sur le panel en même temps que l'hôte, comme le multi-invités
+ * de TikTok : quatre images à l'écran au plus (grille 2 × 2), ce qu'un
+ * téléphone d'entrée de gamme décode encore.
+ */
+const MAX_GUESTS = 3;
+
 /** Durée de validité d'un jeton LiveKit. */
 const TOKEN_TTL = "6h";
 
@@ -73,7 +80,8 @@ const LIVE_REPORT_END_THRESHOLD = 3;
 /**
  * Accès LiveKit. Remplaçable par les tests, qui n'ont ni réseau ni clés.
  *
- * @return {object} `{url, token(), deleteRoom(), removeParticipant()}`.
+ * @return {object} `{url, token(), deleteRoom(), removeParticipant(),
+ *   setCanPublish(), muteMic()}`.
  */
 let liveKitFactory = () => {
   const {AccessToken, RoomServiceClient} = require("livekit-server-sdk");
@@ -101,6 +109,29 @@ let liveKitFactory = () => {
     deleteRoom: (room) => rooms.deleteRoom(room),
     removeParticipant: (room, identity) =>
       rooms.removeParticipant(room, identity),
+    // Invité qui descend du panel : ses pistes sont dépubliées par le
+    // serveur média lui-même, même si son app ne coopère pas.
+    setCanPublish: (room, identity, canPublish) =>
+      rooms.updateParticipant(room, identity, {
+        permission: {
+          canPublish,
+          canSubscribe: true,
+          canPublishData: canPublish,
+          hidden: !canPublish,
+        },
+      }),
+    // « Couper le micro » d'un invité : coupé côté serveur média, l'app
+    // de l'invité grise ensuite son bouton tant que l'hôte n'a pas rendu
+    // la parole.
+    async muteMic(room, identity, muted) {
+      const p = await rooms.getParticipant(room, identity);
+      for (const t of p.tracks || []) {
+        // TrackType.AUDIO = 0
+        if (t.type === 0) {
+          await rooms.mutePublishedTrack(room, identity, t.sid, muted);
+        }
+      }
+    },
   };
 };
 
@@ -181,6 +212,7 @@ module.exports = function lives({db, notifyUser}) {
       [`liveComments/${liveId}`]: null,
       [`liveMembers/${liveId}`]: null,
       [`liveBans/${liveId}`]: null,
+      [`liveGuests/${liveId}`]: null,
     });
 
     const sessionRef = db.doc(`liveSessions/${liveId}`);
@@ -310,12 +342,20 @@ module.exports = function lives({db, notifyUser}) {
     if (!isHost) {
       await rtdb().ref(`liveMembers/${liveId}/${uid}`).set("viewer");
     }
+    // Un invité monté sur le panel reçoit un jeton d'émission ; tous les
+    // autres regardent seulement.
+    const guest = isHost ? null :
+      (await rtdb().ref(`liveGuests/${liveId}/${uid}`).get()).val();
+    const onStage = Boolean(guest && guest.status === "onStage");
 
     const lk = liveKit();
     const token = await lk.token({
-      identity: uid, name, room: liveId, publish: isHost,
+      identity: uid, name, room: liveId, publish: isHost || onStage,
     });
-    return {liveId, url: lk.url, token, role: isHost ? "host" : "viewer"};
+    return {
+      liveId, url: lk.url, token,
+      role: isHost ? "host" : onStage ? "guest" : "viewer",
+    };
   });
 
   const endLive = onCall({secrets: LIVEKIT_SECRETS}, async (request) => {
@@ -354,6 +394,7 @@ module.exports = function lives({db, notifyUser}) {
       [`liveBans/${liveId}/${target}`]: true,
       [`liveMembers/${liveId}/${target}`]: null,
       [`liveViewers/${liveId}/${target}`]: null,
+      [`liveGuests/${liveId}/${target}`]: null,
     };
     // Ses commentaires partent avec lui.
     const comments = await rtdb().ref(`liveComments/${liveId}`)
@@ -371,6 +412,189 @@ module.exports = function lives({db, notifyUser}) {
     return {expelled: true};
   });
 
+
+  /** Actions de l'hôte sur le panel, et celles d'un spectateur sur lui-même. */
+  const HOST_STAGE_ACTIONS = new Set([
+    "invite", "approve", "reject", "remove", "mute", "unmute",
+  ]);
+  const SELF_STAGE_ACTIONS = new Set(["request", "accept", "leave"]);
+
+  /**
+   * Fait passer un spectateur à l'état voulu sur le panel, dans une
+   * transaction sur tout `liveGuests/{liveId}` : deux « accepter » au même
+   * instant ne font pas monter un quatrième invité.
+   *
+   * @param {string} liveId Live.
+   * @param {string} uid Spectateur.
+   * @param {function(?object, number): ?object} next Reçoit sa fiche
+   *   actuelle (ou null) et le nombre d'invités déjà sur le panel ;
+   *   renvoie la nouvelle fiche, null pour l'effacer, ou `undefined`
+   *   pour ne rien changer.
+   * @return {Promise<{before: ?object, after: ?object}>} Fiches.
+   */
+  async function stageTransaction(liveId, uid, next) {
+    let before = null;
+    let full = false;
+    const ref = rtdb().ref(`liveGuests/${liveId}`);
+    const result = await ref.transaction((all) => {
+      const guests = all || {};
+      before = guests[uid] || null;
+      full = false;
+      const onStage = Object.entries(guests).filter(([id, g]) =>
+        id !== uid && g && g.status === "onStage").length;
+      const after = next(before, onStage);
+      // Rien à changer : on réécrit la valeur lue plutôt que d'abandonner,
+      // car le premier passage peut voir un cache local vide ; le serveur
+      // refuse alors l'écriture et relance avec la vraie valeur.
+      if (after === undefined) return all;
+      if (after && after.status === "onStage" && onStage >= MAX_GUESTS) {
+        full = true;
+        return all;
+      }
+      const copy = {...guests};
+      if (after) copy[uid] = after;
+      else delete copy[uid];
+      return Object.keys(copy).length ? copy : null;
+    }, undefined, false);
+    if (full) {
+      throw new HttpsError("resource-exhausted",
+          `Le panel est complet (${MAX_GUESTS} invités au plus).`);
+    }
+    const value = result.snapshot.val() || {};
+    return {before, after: value[uid] || null};
+  }
+
+  /**
+   * Le panel façon TikTok. L'hôte invite un spectateur, accepte ou refuse
+   * une demande, coupe ou rend le micro d'un invité, le fait descendre ;
+   * un spectateur demande à monter, accepte une invitation, ou quitte le
+   * panel. Seul le serveur écrit `liveGuests` : c'est lui qui donne le
+   * droit d'émettre (jeton de `joinLive`) et qui le reprend (LiveKit).
+   */
+  const liveStage = onCall({secrets: LIVEKIT_SECRETS}, async (request) => {
+    const uid = requireUid(request);
+    const data = request.data || {};
+    const liveId = requireLiveId(data.liveId);
+    const action = data.action;
+    const live = (await rtdb().ref(`lives/${liveId}`).get()).val();
+    if (!live) throw new HttpsError("not-found", "Ce live est terminé.");
+
+    let target;
+    if (HOST_STAGE_ACTIONS.has(action)) {
+      if (live.hostUid !== uid && !(await isAdmin(uid))) {
+        throw new HttpsError("permission-denied",
+            "Seul l'hôte gère les invités du live.");
+      }
+      target = data.uid;
+      if (typeof target !== "string" || !target || target.includes("/") ||
+          target === live.hostUid) {
+        throw new HttpsError("invalid-argument", "Invité inconnu.");
+      }
+    } else if (SELF_STAGE_ACTIONS.has(action)) {
+      if (uid === live.hostUid) {
+        throw new HttpsError("invalid-argument",
+            "L'hôte est déjà sur le panel.");
+      }
+      target = uid;
+    } else {
+      throw new HttpsError("invalid-argument", "Action inconnue.");
+    }
+
+    const [member, banned] = await Promise.all([
+      rtdb().ref(`liveMembers/${liveId}/${target}`).get(),
+      rtdb().ref(`liveBans/${liveId}/${target}`).get(),
+    ]);
+    const present = member.exists() && !banned.exists();
+    const now = Date.now();
+
+    /** Fiche neuve, avec le nom et la photo du profil. */
+    const card = async (status) => {
+      const {name, photo} = await liveProfile(target);
+      const c = {status, name, at: now};
+      if (photo) c.photo = photo;
+      return c;
+    };
+
+    let res;
+    switch (action) {
+      case "invite": {
+        if (!present) {
+          throw new HttpsError("failed-precondition",
+              "Cette personne ne regarde plus le live.");
+        }
+        const invited = await card("invited");
+        // Une demande en attente vaut accord : l'invité monte tout de suite.
+        res = await stageTransaction(liveId, target, (g) =>
+          g && g.status === "onStage" ? undefined :
+          g && g.status === "requested" ?
+            {...g, status: "onStage", at: now} : invited);
+        break;
+      }
+      case "request": {
+        if (!present) {
+          throw new HttpsError("permission-denied",
+              "Entrez dans le live pour demander à le rejoindre.");
+        }
+        const requested = await card("requested");
+        res = await stageTransaction(liveId, target, (g) =>
+          g && g.status === "onStage" ? undefined :
+          g && g.status === "invited" ?
+            {...g, status: "onStage", at: now} : requested);
+        break;
+      }
+      case "approve":
+      case "accept": {
+        const from = action === "approve" ? "requested" : "invited";
+        if (!present) {
+          throw new HttpsError("failed-precondition",
+              "Cette personne ne regarde plus le live.");
+        }
+        res = await stageTransaction(liveId, target, (g) =>
+          g && g.status === from ? {...g, status: "onStage", at: now} :
+          undefined);
+        if (!res.after || res.after.status !== "onStage") {
+          throw new HttpsError("failed-precondition",
+              action === "approve" ? "Cette demande n'est plus d'actualité." :
+              "Cette invitation n'est plus valable.");
+        }
+        break;
+      }
+      case "reject":
+      case "remove":
+      case "leave":
+        res = await stageTransaction(liveId, target, () => null);
+        break;
+      case "mute":
+      case "unmute":
+        res = await stageTransaction(liveId, target, (g) =>
+          g && g.status === "onStage" ?
+            {...g, mutedByHost: action === "mute"} : undefined);
+        if (!res.after || res.after.status !== "onStage") {
+          throw new HttpsError("failed-precondition",
+              "Cette personne n'est plus sur le panel.");
+        }
+        if (action === "mute") {
+          try {
+            await liveKit().muteMic(liveId, target, true);
+          } catch (err) {
+            logger.info(`Live ${liveId} : micro de ${target}`, err.message);
+          }
+        }
+        break;
+    }
+
+    // Descendu du panel : le droit d'émettre lui est repris tout de suite.
+    if (res.before && res.before.status === "onStage" &&
+        !(res.after && res.after.status === "onStage")) {
+      try {
+        await liveKit().setCanPublish(liveId, target, false);
+      } catch (err) {
+        logger.info(`Live ${liveId} : ${target} hors salle`, err.message);
+      }
+    }
+    return {status: (res.after && res.after.status) || null};
+  });
+
   // -------------------------------------------------------------------
   // Déclencheurs et ménage
   // -------------------------------------------------------------------
@@ -380,11 +604,28 @@ module.exports = function lives({db, notifyUser}) {
     ref: "/liveViewers/{liveId}/{uid}",
     instance: RTDB_INSTANCE,
     region: RTDB_REGION,
+    secrets: LIVEKIT_SECRETS,
   }, async (event) => {
     const before = event.data.before.exists();
     const after = event.data.after.exists();
     if (before === after) return;
-    await applyViewerDelta(event.params.liveId, after ? 1 : -1);
+    const {liveId, uid} = event.params;
+    await applyViewerDelta(liveId, after ? 1 : -1);
+    // Parti (ou réseau perdu) : il quitte aussi le panel, et sa demande ou
+    // son invitation tombent.
+    if (!after) {
+      const guest = rtdb().ref(`liveGuests/${liveId}/${uid}`);
+      const g = (await guest.get()).val();
+      if (!g) return;
+      await guest.remove();
+      if (g.status === "onStage") {
+        try {
+          await liveKit().setCanPublish(liveId, uid, false);
+        } catch (err) {
+          logger.info(`Live ${liveId} : ${uid} déjà sorti`, err.message);
+        }
+      }
+    }
   });
 
   /**
@@ -476,6 +717,7 @@ module.exports = function lives({db, notifyUser}) {
     joinLive,
     endLive,
     expelFromLive,
+    liveStage,
     onLiveViewerWritten,
     cleanupLives,
     onLiveSessionCreated,
@@ -486,6 +728,7 @@ module.exports = function lives({db, notifyUser}) {
     cleanupLivesOnce,
     LIVEKIT_SECRETS,
     LIVE_REPORT_END_THRESHOLD,
+    MAX_GUESTS,
   };
 };
 
@@ -493,7 +736,7 @@ module.exports = function lives({db, notifyUser}) {
  * Tests uniquement : remplace l'accès LiveKit.
  *
  * @param {Function} factory Renvoie `{url, token, deleteRoom,
- *   removeParticipant}`.
+ *   removeParticipant, setCanPublish, muteMic}`.
  */
 module.exports.setLiveKitFactory = (factory) => {
   liveKitFactory = factory;

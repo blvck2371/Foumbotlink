@@ -58,6 +58,15 @@ class LiveFeed {
   /// Spectateurs présents (pour la liste de l'hôte).
   final viewers = <String, LiveViewer>{}.obs;
 
+  /// Le panel : invités montés, demandes et invitations en attente.
+  final guests = <String, LiveGuest>{}.obs;
+
+  /// Invités sur le panel, dans l'ordre où ils sont montés.
+  List<LiveGuest> get stage => LiveGuest.stageOf(guests);
+
+  /// Ma place sur le panel, s'il y en a une.
+  LiveGuest? get myGuest => guests[me.uid];
+
   final _hearts = StreamController<int>.broadcast();
 
   /// Rafales de cœurs à animer : les miens au toucher, ceux des autres à
@@ -144,6 +153,41 @@ class LiveFeed {
           viewers.remove(e.snapshot.key);
         }, onError: (Object _) {}),
       );
+
+    // Le panel : tout le nœud d'un coup (quatre places et quelques
+    // demandes au plus). Les montées et les demandes s'annoncent dans le
+    // fil, comme les arrivées.
+    var firstGuests = true;
+    _subs.add(
+      _service.guestsRef(liveId).onValue.listen((e) {
+        final next = Map<String, LiveGuest>.of(
+          LiveGuest.mapFrom(e.snapshot.value),
+        )..removeWhere((uid, _) => _hides(uid));
+        if (!firstGuests) {
+          for (final g in next.values) {
+            final before = guests[g.uid]?.status;
+            if (before == g.status) continue;
+            if (g.onStage) {
+              _push(
+                LiveNoticeItem(
+                  text: '${g.name} est monté sur le panel',
+                  at: DateTime.now(),
+                ),
+              );
+            } else if (g.status == LiveGuestStatus.requested && isHost) {
+              _push(
+                LiveNoticeItem(
+                  text: '${g.name} demande à rejoindre le live',
+                  at: DateTime.now(),
+                ),
+              );
+            }
+          }
+        }
+        firstGuests = false;
+        guests.assignAll(next);
+      }, onError: (Object _) => guests.clear()),
+    );
 
     // Présence, réarmée à chaque reconnexion : un `onDisconnect` ne sert
     // qu'une fois.

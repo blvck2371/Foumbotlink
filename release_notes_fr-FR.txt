@@ -1,7 +1,6 @@
+Lives : invitez des spectateurs sur le panel, acceptez leurs demandes, coupez leur micro ou faites-les descendre.
 Démarches :
-• Suivez vos dossiers étape par étape : montrez votre QR code au guichet, vous êtes prévenu à chaque étape.
+• Suivez vos dossiers étape par étape avec votre QR code au guichet.
 • Les structures publient leurs démarches : pièces, tarifs, délais et étapes.
-• Cochez vos pièces et recevez un rappel avant la fin d'un délai.
-Recherche : profils, publications, annonces, lives et démarches, avec les tendances et des suggestions pendant la frappe.
-Fil d'actualité personnalisé et images plus fluides.
+Recherche : profils, publications, annonces, lives et démarches, avec tendances et suggestions.
 Corrections et améliorations diverses.
