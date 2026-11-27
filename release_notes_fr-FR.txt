@@ -1,9 +1,7 @@
-Nouveau : les appels !
-• Appels vocaux et vidéo, en tête-à-tête ou en groupe.
-• Les appels manqués et leur durée s'affichent dans la discussion.
-Lives :
-• Touchez « Lives » et vous entrez directement dans un direct.
-• Un anneau orange « LIVE » apparaît sur la photo de qui est en direct : touchez-la pour le rejoindre.
-Profil :
-• Modifiez votre nom et votre photo, et demandez la certification de votre compte.
+Démarches :
+• Suivez vos dossiers étape par étape : montrez votre QR code au guichet, vous êtes prévenu à chaque étape.
+• Les structures publient leurs démarches : pièces, tarifs, délais et étapes.
+• Cochez vos pièces et recevez un rappel avant la fin d'un délai.
+Recherche : trouvez profils, publications, annonces, lives et démarches.
+Fil d'actualité personnalisé et images plus fluides.
 Corrections et améliorations diverses.
