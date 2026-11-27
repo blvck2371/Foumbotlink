@@ -1,8 +1,7 @@
 Fil : publiez photos et vidéos ensemble, mentionnez avec @ et ajoutez des #hashtags.
 Annuaire : trouvez un artisan ou un pro, les mieux notés en premier.
 Lives : invitez des spectateurs sur le panel et gérez leurs micros.
-Démarches :
-• Suivez vos dossiers étape par étape avec votre QR code au guichet.
-• Les structures publient leurs démarches : pièces, tarifs, délais et étapes.
+Marché : publiez une location, au prix par heure, jour ou mois.
+Démarches : suivez vos dossiers avec votre QR code au guichet.
 Recherche : profils, publications, vidéos, annonces, lives et démarches.
 Corrections et améliorations diverses.

@@ -40,10 +40,66 @@ enum MarketCategory {
 
 enum MarketListingType {
   vente,
-  achat;
+  achat,
+
+  /// Mise en location : maison, chambre, véhicule, matériel, salle… Le
+  /// prix s'entend par [RentalUnit] (heure, jour ou mois).
+  location;
+
+  /// Libellé d'une annonce de ce type.
+  String get label => switch (this) {
+    MarketListingType.vente => 'Vente',
+    MarketListingType.achat => 'Recherche',
+    MarketListingType.location => 'Location',
+  };
+
+  /// Libellé d'un filtre ou d'une alerte (pluriel).
+  String get pluralLabel => switch (this) {
+    MarketListingType.vente => 'Ventes',
+    MarketListingType.achat => 'Recherches',
+    MarketListingType.location => 'Locations',
+  };
 
   static MarketListingType parse(String? name) => MarketListingType.values
       .firstWhere((t) => t.name == name, orElse: () => MarketListingType.vente);
+}
+
+/// Unité de temps d'une location : le prix est « par heure », « par
+/// jour » ou « par mois », et la durée minimale se compte dans la même
+/// unité.
+enum RentalUnit {
+  heure,
+  jour,
+  mois;
+
+  /// « heure », pour « 2 000 FCFA / heure ».
+  String get label => switch (this) {
+    RentalUnit.heure => 'heure',
+    RentalUnit.jour => 'jour',
+    RentalUnit.mois => 'mois',
+  };
+
+  /// « Par heure », pour le sélecteur du formulaire.
+  String get perLabel => switch (this) {
+    RentalUnit.heure => 'Par heure',
+    RentalUnit.jour => 'Par jour',
+    RentalUnit.mois => 'Par mois',
+  };
+
+  /// « 3 heures », « 1 jour », « 6 mois » (« mois » est invariable).
+  String count(int n) => switch (this) {
+    RentalUnit.heure => n > 1 ? '$n heures' : '$n heure',
+    RentalUnit.jour => n > 1 ? '$n jours' : '$n jour',
+    RentalUnit.mois => '$n mois',
+  };
+
+  static RentalUnit? parse(String? name) {
+    if (name == null) return null;
+    for (final u in RentalUnit.values) {
+      if (u.name == name) return u;
+    }
+    return null;
+  }
 }
 
 enum ItemCondition {
@@ -166,6 +222,8 @@ class MarketItem {
     this.negotiable = false,
     this.priceOnRequest = false,
     this.condition,
+    this.rentalUnit,
+    this.rentalMinDuration,
     this.sold = false,
     this.soldAt,
     this.hasPhone = false,
@@ -190,6 +248,14 @@ class MarketItem {
   final bool negotiable;
   final bool priceOnRequest;
   final ItemCondition? condition;
+
+  /// Location seulement : unité du prix (par heure, jour ou mois).
+  final RentalUnit? rentalUnit;
+
+  /// Location seulement : durée minimale, dans [rentalUnit] — `null` si
+  /// le loueur n'en impose pas.
+  final int? rentalMinDuration;
+
   final String sellerUid;
   final String sellerName;
   final String location;
@@ -263,20 +329,55 @@ class MarketItem {
 
   int get daysLeft => expiresAt.difference(DateTime.now()).inDays;
 
+  bool get isRental => listingType == MarketListingType.location;
+
+  /// Unité effective d'une location (le jour si elle manque).
+  RentalUnit get rentalUnitOrDefault => rentalUnit ?? RentalUnit.jour;
+
+  /// « 25 000 FCFA », ou pour une location « 25 000 FCFA / mois ».
   String get priceLabel {
     if (priceOnRequest) return 'Prix à discuter';
     if (price == 0) return 'Gratuit';
-    return '${formatAmount(price)} FCFA';
+    final amount = '${formatAmount(price)} FCFA';
+    return isRental ? '$amount / ${rentalUnitOrDefault.label}' : amount;
   }
 
-  String get typeLabel =>
-      listingType == MarketListingType.vente ? 'Vente' : 'Recherche';
+  /// « 3 mois minimum », ou vide.
+  String get rentalDurationLabel {
+    final n = rentalMinDuration;
+    if (!isRental || n == null || n <= 0) return '';
+    return '${rentalUnitOrDefault.count(n)} minimum';
+  }
+
+  String get typeLabel => listingType.label;
+
+  /// Bandeau d'une annonce close : une location n'est pas « vendue ».
+  String get closedLabel => switch (listingType) {
+    MarketListingType.vente => 'Vendu',
+    MarketListingType.achat => 'Trouvé',
+    MarketListingType.location => 'Loué',
+  };
+
+  /// Action inverse : « Remettre en vente », « … en location ».
+  String get reopenLabel => switch (listingType) {
+    MarketListingType.vente => 'Remettre en vente',
+    MarketListingType.achat => 'Relancer la recherche',
+    MarketListingType.location => 'Remettre en location',
+  };
+
+  /// Message sous une annonce close.
+  String get closedMessage => switch (listingType) {
+    MarketListingType.vente => 'Cet article a été vendu',
+    MarketListingType.achat => 'Cette recherche a abouti',
+    MarketListingType.location => 'Ce bien est déjà loué',
+  };
 
   /// Texte prêt à partager (bouton « Partager » du détail).
   String get shareText {
     final lines = <String>[
       title,
       priceLabel,
+      if (rentalDurationLabel.isNotEmpty) rentalDurationLabel,
       if (location.isNotEmpty) '📍 $location',
       '',
       'Vu sur Foumbot Link',
@@ -294,6 +395,9 @@ class MarketItem {
     bool? priceOnRequest,
     ItemCondition? condition,
     bool clearCondition = false,
+    RentalUnit? rentalUnit,
+    int? rentalMinDuration,
+    bool clearRental = false,
     String? location,
     DateTime? bumpedAt,
     DateTime? expiresAt,
@@ -316,6 +420,10 @@ class MarketItem {
     negotiable: negotiable ?? this.negotiable,
     priceOnRequest: priceOnRequest ?? this.priceOnRequest,
     condition: clearCondition ? null : (condition ?? this.condition),
+    rentalUnit: clearRental ? null : (rentalUnit ?? this.rentalUnit),
+    rentalMinDuration: clearRental
+        ? null
+        : (rentalMinDuration ?? this.rentalMinDuration),
     sellerUid: sellerUid,
     sellerName: sellerName,
     location: location ?? this.location,

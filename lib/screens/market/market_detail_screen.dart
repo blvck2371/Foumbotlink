@@ -13,6 +13,7 @@ import '../../services/auth_service.dart';
 import '../../services/market_service.dart';
 import '../../services/seller_review_service.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/market_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/feed_image.dart';
 import '../../widgets/foumbot_app_bar.dart';
@@ -244,8 +245,7 @@ class _MarketDetailScreenState extends State<MarketDetailScreen> {
         );
       }
 
-      final isVente = item.listingType == MarketListingType.vente;
-      final accent = isVente ? AppColors.orange : AppColors.blue;
+      final accent = marketTypeColor(item.listingType);
       final mine = _marketCtrl.isMine(item);
       final phone = _marketCtrl.revealedPhones[item.id];
 
@@ -299,8 +299,8 @@ class _MarketDetailScreenState extends State<MarketDetailScreen> {
                         value: 'sold',
                         child: Text(
                           item.sold
-                              ? 'Remettre en vente'
-                              : 'Marquer comme vendu',
+                              ? item.reopenLabel
+                              : 'Marquer comme ${item.closedLabel.toLowerCase()}',
                         ),
                       ),
                       const PopupMenuItem(
@@ -356,10 +356,12 @@ class _MarketDetailScreenState extends State<MarketDetailScreen> {
                         else
                           _TextOnlyHeader(item: item, isDark: isDark),
                         if (item.sold)
-                          const Positioned(
+                          Positioned(
                             top: 14,
                             left: 14,
-                            child: _StateTag(label: 'VENDU'),
+                            child: _StateTag(
+                              label: item.closedLabel.toUpperCase(),
+                            ),
                           )
                         else if (item.isExpired)
                           const Positioned(
@@ -408,9 +410,10 @@ class _MarketDetailScreenState extends State<MarketDetailScreen> {
                             ),
                           ),
                           const SizedBox(height: 14),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.baseline,
-                            textBaseline: TextBaseline.alphabetic,
+                          Wrap(
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 0,
+                            runSpacing: 6,
                             children: [
                               Text(
                                 item.priceLabel,
@@ -445,6 +448,27 @@ class _MarketDetailScreenState extends State<MarketDetailScreen> {
                               ],
                             ],
                           ),
+                          if (item.rentalDurationLabel.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.schedule_rounded,
+                                  size: 16,
+                                  color: muted,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Location de ${item.rentalDurationLabel}',
+                                  style: GoogleFonts.manrope(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: muted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                           if (item.hasDescription) ...[
                             const SizedBox(height: 22),
                             Text(
@@ -1192,8 +1216,7 @@ class _TextOnlyHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isVente = item.listingType == MarketListingType.vente;
-    final accent = isVente ? AppColors.orange : AppColors.blue;
+    final accent = marketTypeColor(item.listingType);
 
     return Container(
       margin: const EdgeInsets.fromLTRB(20, 8, 20, 0),
@@ -1503,7 +1526,9 @@ class _ActionBar extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                   label: Text(
-                    item.sold ? 'Remettre en vente' : 'Marquer vendu',
+                    item.sold
+                        ? item.reopenLabel
+                        : 'Marquer ${item.closedLabel.toLowerCase()}',
                   ),
                 ),
               ),
@@ -1520,7 +1545,7 @@ class _ActionBar extends StatelessWidget {
           Icon(Icons.info_outline, size: 18, color: muted),
           const SizedBox(width: 8),
           Text(
-            item.sold ? 'Cet article a été vendu' : 'Cette annonce a expiré',
+            item.sold ? item.closedMessage : 'Cette annonce a expiré',
             style: GoogleFonts.manrope(
               fontSize: 14,
               fontWeight: FontWeight.w700,

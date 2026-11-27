@@ -71,7 +71,7 @@ class SavedSearch {
       if (query.trim().isNotEmpty) '« ${query.trim()} »',
       if (category != null) category!.label,
       if (listingType != null)
-        listingType == MarketListingType.vente ? 'Ventes' : 'Recherches',
+        listingType!.pluralLabel,
       if (place != null && place!.isNotEmpty) place!,
       if (maxPrice != null) 'jusqu’à $maxPrice FCFA',
     ];

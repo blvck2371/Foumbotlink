@@ -152,11 +152,7 @@ class MarketService {
           .toList();
     } on FirebaseException catch (e) {
       // Section d'appoint : son échec ne doit pas abîmer la fiche.
-      developer.log(
-        'otherListingsBySeller',
-        name: 'MarketService',
-        error: e,
-      );
+      developer.log('otherListingsBySeller', name: 'MarketService', error: e);
       return const [];
     }
   }
@@ -190,9 +186,7 @@ class MarketService {
               .map(_itemFromDoc)
               .where(
                 (e) =>
-                    e.id != to.id &&
-                    e.sellerUid != to.sellerUid &&
-                    e.isPublic,
+                    e.id != to.id && e.sellerUid != to.sellerUid && e.isPublic,
               )
               .map((e) => (item: e, score: marketSimilarityScore(to, e)))
               .where((e) => e.score > 0)
@@ -240,6 +234,8 @@ class MarketService {
       negotiable: d['negotiable'] as bool? ?? false,
       priceOnRequest: d['priceOnRequest'] as bool? ?? false,
       condition: ItemCondition.parse(d['condition'] as String?),
+      rentalUnit: RentalUnit.parse(d['rentalUnit'] as String?),
+      rentalMinDuration: (d['rentalMinDuration'] as num?)?.toInt(),
       sellerUid: d['sellerUid'] as String? ?? '',
       sellerName: d['sellerName'] as String? ?? '',
       location: d['location'] as String? ?? '',
@@ -361,6 +357,8 @@ class MarketService {
     bool negotiable = false,
     bool priceOnRequest = false,
     ItemCondition? condition,
+    RentalUnit? rentalUnit,
+    int? rentalMinDuration,
     List<String> localImagePaths = const [],
   }) async {
     final docRef = _marketRef.doc();
@@ -385,6 +383,7 @@ class MarketService {
       'negotiable': negotiable,
       'priceOnRequest': priceOnRequest,
       'condition': condition?.name,
+      ..._rentalFields(listingType, rentalUnit, rentalMinDuration),
       'sellerUid': sellerUid,
       'sellerName': sellerName.trim(),
       'hasPhone': phone.isNotEmpty,
@@ -417,6 +416,12 @@ class MarketService {
       negotiable: negotiable,
       priceOnRequest: priceOnRequest,
       condition: condition,
+      rentalUnit: listingType == MarketListingType.location
+          ? (rentalUnit ?? RentalUnit.jour)
+          : null,
+      rentalMinDuration: listingType == MarketListingType.location
+          ? rentalMinDuration
+          : null,
       sellerUid: sellerUid,
       sellerName: sellerName.trim(),
       hasPhone: phone.isNotEmpty,
@@ -446,6 +451,8 @@ class MarketService {
     required bool negotiable,
     required bool priceOnRequest,
     ItemCondition? condition,
+    RentalUnit? rentalUnit,
+    int? rentalMinDuration,
     required List<String> images,
   }) async {
     final kept = images.where(_isRemoteImage).toList();
@@ -477,6 +484,7 @@ class MarketService {
       'negotiable': negotiable,
       'priceOnRequest': priceOnRequest,
       'condition': condition?.name,
+      ..._rentalFields(listingType, rentalUnit, rentalMinDuration),
       'location': location.trim(),
       'hasPhone': phone.isNotEmpty,
       'imageUrls': imageUrls,
@@ -504,24 +512,53 @@ class MarketService {
       await _deleteImage(url);
     }
 
-    return original.copyWith(
-      listingType: listingType,
-      category: category,
-      title: title.trim(),
-      description: description.trim(),
-      keywords: marketKeywords(title, description),
-      price: price,
-      negotiable: negotiable,
-      priceOnRequest: priceOnRequest,
-      condition: condition,
-      clearCondition: condition == null,
-      location: location.trim(),
-      hasPhone: phone.isNotEmpty,
-      imageUrls: imageUrls,
-    );
+    return original
+        .copyWith(
+          listingType: listingType,
+          category: category,
+          title: title.trim(),
+          description: description.trim(),
+          keywords: marketKeywords(title, description),
+          price: price,
+          negotiable: negotiable,
+          priceOnRequest: priceOnRequest,
+          condition: condition,
+          clearCondition: condition == null,
+          // Repartir de zéro : une durée minimale effacée doit disparaître.
+          clearRental: true,
+          location: location.trim(),
+          hasPhone: phone.isNotEmpty,
+          imageUrls: imageUrls,
+        )
+        .copyWith(
+          rentalUnit: listingType == MarketListingType.location
+              ? (rentalUnit ?? RentalUnit.jour)
+              : null,
+          rentalMinDuration:
+              listingType == MarketListingType.location &&
+                  (rentalMinDuration ?? 0) > 0
+              ? rentalMinDuration
+              : null,
+        );
   }
 
   static bool _isRemoteImage(String entry) => entry.startsWith('http');
+
+  /// Unité et durée minimale d'une location ; `null` pour une vente ou
+  /// une recherche (une annonce repassée en vente ne garde pas « / mois »).
+  static Map<String, dynamic> _rentalFields(
+    MarketListingType type,
+    RentalUnit? unit,
+    int? minDuration,
+  ) {
+    final rental = type == MarketListingType.location;
+    return {
+      'rentalUnit': rental ? (unit ?? RentalUnit.jour).name : null,
+      'rentalMinDuration': rental && minDuration != null && minDuration > 0
+          ? minDuration
+          : null,
+    };
+  }
 
   // -----------------------------------------------------------------------
   // Gestion de son annonce (propriétaire uniquement — voir firestore.rules)

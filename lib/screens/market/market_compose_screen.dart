@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../controllers/market_compose_controller.dart';
 import '../../models/market_item.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/market_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/foumbot_loader.dart';
 import '../../widgets/feed_image.dart';
@@ -60,34 +61,38 @@ class MarketComposeScreen extends GetView<MarketComposeController> {
                       _SectionLabel('Type d’annonce', ink: ink),
                       const SizedBox(height: 10),
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: _TypeOption(
-                              title: 'Vente',
-                              subtitle: 'Je vends / propose',
-                              icon: Icons.sell_outlined,
-                              selected: controller.listingType.value ==
-                                  MarketListingType.vente,
-                              color: AppColors.orange,
-                              isDark: isDark,
-                              onTap: () => controller
-                                  .selectListingType(MarketListingType.vente),
+                          for (final (i, (type, subtitle, icon)) in const [
+                            (
+                              MarketListingType.vente,
+                              'Je vends',
+                              Icons.sell_outlined,
                             ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: _TypeOption(
-                              title: 'Recherche',
-                              subtitle: 'Je cherche',
-                              icon: Icons.search,
-                              selected: controller.listingType.value ==
-                                  MarketListingType.achat,
-                              color: AppColors.blue,
-                              isDark: isDark,
-                              onTap: () => controller
-                                  .selectListingType(MarketListingType.achat),
+                            (
+                              MarketListingType.location,
+                              'Je mets en location',
+                              Icons.key_outlined,
                             ),
-                          ),
+                            (
+                              MarketListingType.achat,
+                              'Je cherche',
+                              Icons.search,
+                            ),
+                          ].indexed) ...[
+                            if (i > 0) const SizedBox(width: 8),
+                            Expanded(
+                              child: _TypeOption(
+                                title: type.label,
+                                subtitle: subtitle,
+                                icon: icon,
+                                selected: controller.listingType.value == type,
+                                color: marketTypeColor(type),
+                                isDark: isDark,
+                                onTap: () => controller.selectListingType(type),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
 
@@ -145,12 +150,27 @@ class MarketComposeScreen extends GetView<MarketComposeController> {
 
                       // --- Prix ---
                       const SizedBox(height: 22),
-                      _SectionLabel('Prix', ink: ink),
+                      _SectionLabel(
+                        controller.isRental ? 'Prix de la location' : 'Prix',
+                        ink: ink,
+                      ),
                       const SizedBox(height: 8),
                       Obx(() {
                         final priceDisabled = controller.priceOnRequest.value;
+                        final rental = controller.isRental;
+                        final unit = controller.rentalUnit.value;
                         return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            if (rental) ...[
+                              _RentalUnitSelector(
+                                selected: unit,
+                                onSelect: controller.selectRentalUnit,
+                                isDark: isDark,
+                                ink: ink,
+                              ),
+                              const SizedBox(height: 10),
+                            ],
                             AnimatedOpacity(
                               opacity: priceDisabled ? 0.4 : 1.0,
                               duration: const Duration(milliseconds: 200),
@@ -171,12 +191,13 @@ class MarketComposeScreen extends GetView<MarketComposeController> {
                                         decoration: InputDecoration.collapsed(
                                           hintText: '0',
                                           hintStyle: GoogleFonts.spaceGrotesk(
-                                              color: muted),
+                                            color: muted,
+                                          ),
                                         ),
                                       ),
                                     ),
                                     Text(
-                                      'FCFA',
+                                      rental ? 'FCFA / ${unit.label}' : 'FCFA',
                                       style: GoogleFonts.manrope(
                                         fontWeight: FontWeight.w700,
                                         color: muted,
@@ -205,6 +226,61 @@ class MarketComposeScreen extends GetView<MarketComposeController> {
                                   ),
                               ],
                             ),
+                            if (rental) ...[
+                              const SizedBox(height: 18),
+                              _SectionLabel(
+                                'Durée minimale (facultatif)',
+                                ink: ink,
+                              ),
+                              const SizedBox(height: 8),
+                              FormFieldBox(
+                                isDark: isDark,
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: TextField(
+                                        controller: controller.rentalMinCtrl,
+                                        keyboardType: TextInputType.number,
+                                        style: GoogleFonts.spaceGrotesk(
+                                          color: ink,
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 18,
+                                        ),
+                                        decoration: InputDecoration.collapsed(
+                                          hintText:
+                                              'Ex. ${switch (unit) {
+                                                RentalUnit.heure => '2',
+                                                RentalUnit.jour => '3',
+                                                RentalUnit.mois => '6',
+                                              }}',
+                                          hintStyle: GoogleFonts.spaceGrotesk(
+                                            color: muted,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    Text(
+                                      unit == RentalUnit.mois
+                                          ? 'mois'
+                                          : '${unit.label}s',
+                                      style: GoogleFonts.manrope(
+                                        fontWeight: FontWeight.w700,
+                                        color: muted,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Laissez vide si on peut louer pour une seule '
+                                '${unit.label}.',
+                                style: GoogleFonts.manrope(
+                                  fontSize: 12,
+                                  color: muted,
+                                ),
+                              ),
+                            ],
                           ],
                         );
                       }),
@@ -380,9 +456,7 @@ class _TypeOption extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: selected ? color : Colors.transparent,
-            ),
+            border: Border.all(color: selected ? color : Colors.transparent),
           ),
           child: Column(
             children: [
@@ -438,18 +512,21 @@ class _CategorySelector extends StatelessWidget {
             GestureDetector(
               onTap: () => controller.selectCategory(cat),
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: selected == cat
                       ? AppColors.orange.withValues(alpha: isDark ? 0.18 : 0.1)
                       : (isDark
-                          ? AppColors.blackElevated
-                          : AppColors.whiteSoft),
+                            ? AppColors.blackElevated
+                            : AppColors.whiteSoft),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color:
-                        selected == cat ? AppColors.orange : Colors.transparent,
+                    color: selected == cat
+                        ? AppColors.orange
+                        : Colors.transparent,
                   ),
                 ),
                 child: Text(
@@ -494,14 +571,17 @@ class _ConditionSelector extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   decoration: BoxDecoration(
                     color: selected == c
-                        ? AppColors.orange.withValues(alpha: isDark ? 0.18 : 0.1)
+                        ? AppColors.orange.withValues(
+                            alpha: isDark ? 0.18 : 0.1,
+                          )
                         : (isDark
-                            ? AppColors.blackElevated
-                            : AppColors.whiteSoft),
+                              ? AppColors.blackElevated
+                              : AppColors.whiteSoft),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color:
-                          selected == c ? AppColors.orange : Colors.transparent,
+                      color: selected == c
+                          ? AppColors.orange
+                          : Colors.transparent,
                     ),
                   ),
                   child: Center(
@@ -622,8 +702,11 @@ class _ImagesPicker extends StatelessWidget {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.add_photo_alternate_outlined,
-                              size: 28, color: muted),
+                          Icon(
+                            Icons.add_photo_alternate_outlined,
+                            size: 28,
+                            color: muted,
+                          ),
                           const SizedBox(height: 6),
                           Text(
                             'Ajouter',
@@ -643,7 +726,9 @@ class _ImagesPicker extends StatelessWidget {
                   index: i,
                   isDark: isDark,
                   onRemove: () => controller.removeImage(i),
-                  onMoveLeft: i > 0 ? () => controller.moveImage(i, i - 1) : null,
+                  onMoveLeft: i > 0
+                      ? () => controller.moveImage(i, i - 1)
+                      : null,
                 );
               },
             ),
@@ -724,8 +809,11 @@ class _ImageThumb extends StatelessWidget {
                   color: Colors.black54,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.chevron_left,
-                    size: 16, color: Colors.white),
+                child: const Icon(
+                  Icons.chevron_left,
+                  size: 16,
+                  color: Colors.white,
+                ),
               ),
             ),
           ),
@@ -863,6 +951,47 @@ class _PlaceChip extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Par heure / Par jour / Par mois.
+class _RentalUnitSelector extends StatelessWidget {
+  const _RentalUnitSelector({
+    required this.selected,
+    required this.onSelect,
+    required this.isDark,
+    required this.ink,
+  });
+
+  final RentalUnit selected;
+  final ValueChanged<RentalUnit> onSelect;
+  final bool isDark;
+  final Color ink;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final unit in RentalUnit.values)
+          ChoiceChip(
+            label: Text(unit.perLabel),
+            selected: unit == selected,
+            onSelected: (_) => onSelect(unit),
+            showCheckmark: false,
+            labelStyle: GoogleFonts.manrope(
+              fontWeight: FontWeight.w700,
+              color: unit == selected ? AppColors.white : ink,
+            ),
+            selectedColor: AppColors.success,
+            backgroundColor: isDark
+                ? AppColors.blackElevated
+                : AppColors.whiteSoft,
+            side: BorderSide.none,
+          ),
+      ],
     );
   }
 }

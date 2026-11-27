@@ -153,8 +153,9 @@ class _MarketFiltersSheetState extends State<_MarketFiltersSheet> {
                           label: sort.label,
                           selected: _draft.sort == sort,
                           isDark: isDark,
-                          onTap: () =>
-                              setState(() => _draft = _draft.copyWith(sort: sort)),
+                          onTap: () => setState(
+                            () => _draft = _draft.copyWith(sort: sort),
+                          ),
                         ),
                     ],
                   ),
@@ -170,14 +171,13 @@ class _MarketFiltersSheetState extends State<_MarketFiltersSheet> {
                         selected: _draft.listingType == null,
                         isDark: isDark,
                         onTap: () => setState(
-                          () => _draft = _draft.copyWith(clearListingType: true),
+                          () =>
+                              _draft = _draft.copyWith(clearListingType: true),
                         ),
                       ),
                       for (final type in MarketListingType.values)
                         _Choice(
-                          label: type == MarketListingType.vente
-                              ? 'Ventes'
-                              : 'Recherches',
+                          label: type.pluralLabel,
                           selected: _draft.listingType == type,
                           isDark: isDark,
                           onTap: () => setState(
@@ -232,8 +232,9 @@ class _MarketFiltersSheetState extends State<_MarketFiltersSheet> {
                           label: p,
                           selected: _draft.place == p,
                           isDark: isDark,
-                          onTap: () =>
-                              setState(() => _draft = _draft.copyWith(place: p)),
+                          onTap: () => setState(
+                            () => _draft = _draft.copyWith(place: p),
+                          ),
                         ),
                     ],
                   ),
@@ -332,14 +333,14 @@ class _Label extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Text(
-        text,
-        style: GoogleFonts.manrope(
-          fontSize: 13,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.3,
-          color: ink,
-        ),
-      );
+    text,
+    style: GoogleFonts.manrope(
+      fontSize: 13,
+      fontWeight: FontWeight.w800,
+      letterSpacing: 0.3,
+      color: ink,
+    ),
+  );
 }
 
 class _Choice extends StatelessWidget {

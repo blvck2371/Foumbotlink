@@ -598,8 +598,9 @@ class MarketController extends GetxController {
       }
       _toast(
         nowSold
-            ? 'Annonce marquée vendue — elle n’apparaît plus dans le marché'
-            : 'Annonce remise en vente pour ${kListingLifetime.inDays} jours',
+            ? 'Annonce marquée « ${updated.closedLabel.toLowerCase()} » — '
+                  'elle n’apparaît plus dans le marché'
+            : 'Annonce remise en ligne pour ${kListingLifetime.inDays} jours',
       );
       return updated;
     } on Object catch (e) {

@@ -23,11 +23,19 @@ class MarketComposeController extends GetxController {
   final phoneCtrl = TextEditingController();
   final customPlaceCtrl = TextEditingController();
 
+  /// Location : durée minimale, dans l'unité choisie (facultative).
+  final rentalMinCtrl = TextEditingController();
+
   final listingType = MarketListingType.vente.obs;
   final category = MarketCategory.divers.obs;
   final negotiable = false.obs;
   final priceOnRequest = false.obs;
   final condition = Rxn<ItemCondition>();
+
+  /// Location : le prix s'entend par heure, par jour ou par mois.
+  final rentalUnit = RentalUnit.jour.obs;
+
+  bool get isRental => listingType.value == MarketListingType.location;
 
   /// Lieu choisi dans la liste, ou [MarketPlaces.autre] quand la personne
   /// préfère saisir le sien.
@@ -91,6 +99,10 @@ class MarketComposeController extends GetxController {
     negotiable.value = item.negotiable;
     priceOnRequest.value = item.priceOnRequest;
     condition.value = item.condition;
+    rentalUnit.value = item.rentalUnitOrDefault;
+    rentalMinCtrl.text = (item.rentalMinDuration ?? 0) > 0
+        ? item.rentalMinDuration.toString()
+        : '';
     images.assignAll(item.imageUrls);
 
     if (MarketPlaces.values.contains(item.location)) {
@@ -135,11 +147,19 @@ class MarketComposeController extends GetxController {
     priceCtrl.dispose();
     phoneCtrl.dispose();
     customPlaceCtrl.dispose();
+    rentalMinCtrl.dispose();
     super.onClose();
   }
 
   void selectListingType(MarketListingType type) => listingType.value = type;
   void selectCategory(MarketCategory cat) => category.value = cat;
+  void selectRentalUnit(RentalUnit unit) => rentalUnit.value = unit;
+
+  int? get _rentalMin {
+    final n = int.tryParse(rentalMinCtrl.text.replaceAll(RegExp(r'\D'), ''));
+    return n != null && n > 0 ? n : null;
+  }
+
   void toggleNegotiable() => negotiable.value = !negotiable.value;
 
   void selectPlace(String? value) {
@@ -223,6 +243,8 @@ class MarketComposeController extends GetxController {
           negotiable: negotiable.value,
           priceOnRequest: priceOnRequest.value,
           condition: showCondition ? condition.value : null,
+          rentalUnit: isRental ? rentalUnit.value : null,
+          rentalMinDuration: isRental ? _rentalMin : null,
           images: List.of(images),
         );
       }
@@ -238,6 +260,8 @@ class MarketComposeController extends GetxController {
         negotiable: negotiable.value,
         priceOnRequest: priceOnRequest.value,
         condition: showCondition ? condition.value : null,
+        rentalUnit: isRental ? rentalUnit.value : null,
+        rentalMinDuration: isRental ? _rentalMin : null,
         sellerUid: auth.uid,
         sellerName: profile.displayName,
         sellerPhone: phoneCtrl.text,

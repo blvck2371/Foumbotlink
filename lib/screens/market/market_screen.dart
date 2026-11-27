@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../controllers/market_controller.dart';
 import '../../models/market_item.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/market_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/feed_image.dart';
 import '../../widgets/foumbot_app_bar.dart';
@@ -58,7 +59,9 @@ class MarketScreen extends GetView<MarketController> {
               tooltip: 'Mes annonces',
               onPressed: controller.toggleOnlyMine,
               icon: Icon(
-                view == MarketView.mesAnnonces ? Icons.sell : Icons.sell_outlined,
+                view == MarketView.mesAnnonces
+                    ? Icons.sell
+                    : Icons.sell_outlined,
                 color: AppColors.orange,
               ),
             ),
@@ -94,7 +97,11 @@ class MarketScreen extends GetView<MarketController> {
                       AppColors.blackSoft,
                       AppColors.blackElevated,
                     ]
-                  : const [AppColors.white, AppColors.whiteSoft, AppColors.white],
+                  : const [
+                      AppColors.white,
+                      AppColors.whiteSoft,
+                      AppColors.white,
+                    ],
             ),
           ),
           child: RefreshIndicator(
@@ -184,11 +191,11 @@ class MarketScreen extends GetView<MarketController> {
                     sliver: SliverGrid.builder(
                       gridDelegate:
                           const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                        mainAxisExtent: 272,
-                      ),
+                            crossAxisCount: 2,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                            mainAxisExtent: 272,
+                          ),
                       itemCount: items.length,
                       itemBuilder: (context, i) {
                         final item = items[i];
@@ -211,12 +218,12 @@ class MarketScreen extends GetView<MarketController> {
                       child: controller.isLoadingMore.value
                           ? const FoumbotLoader()
                           : (!controller.hasMore.value && items.isNotEmpty)
-                              ? _EndOfGrid(
-                                  isDark: isDark,
-                                  muted: muted,
-                                  onReshuffle: controller.reshuffle,
-                                )
-                              : const SizedBox(height: 12),
+                          ? _EndOfGrid(
+                              isDark: isDark,
+                              muted: muted,
+                              onReshuffle: controller.reshuffle,
+                            )
+                          : const SizedBox(height: 12),
                     ),
                   ),
                 ),
@@ -292,20 +299,20 @@ class _EmptyState extends StatelessWidget {
     final controller = Get.find<MarketController>();
     final (icon, title, subtitle) = switch (view) {
       MarketView.favoris => (
-          Icons.favorite_border,
-          'Aucun favori pour l’instant.',
-          'Touchez le cœur d’une annonce pour la retrouver ici.',
-        ),
+        Icons.favorite_border,
+        'Aucun favori pour l’instant.',
+        'Touchez le cœur d’une annonce pour la retrouver ici.',
+      ),
       MarketView.mesAnnonces => (
-          Icons.sell_outlined,
-          'Vous n’avez pas encore publié.',
-          'Appuyez sur « Publier » pour proposer un article.',
-        ),
+        Icons.sell_outlined,
+        'Vous n’avez pas encore publié.',
+        'Appuyez sur « Publier » pour proposer un article.',
+      ),
       MarketView.grille => (
-          Icons.storefront_outlined,
-          'Aucune annonce trouvée.',
-          'Essayez d’élargir vos filtres.',
-        ),
+        Icons.storefront_outlined,
+        'Aucune annonce trouvée.',
+        'Essayez d’élargir vos filtres.',
+      ),
     };
 
     return Center(
@@ -393,12 +400,14 @@ class _SearchBar extends StatelessWidget {
               ),
             ),
           ),
-          Obx(() => controller.filters.value.query.isNotEmpty
-              ? GestureDetector(
-                  onTap: controller.clearSearch,
-                  child: Icon(Icons.close, size: 18, color: muted),
-                )
-              : const SizedBox.shrink()),
+          Obx(
+            () => controller.filters.value.query.isNotEmpty
+                ? GestureDetector(
+                    onTap: controller.clearSearch,
+                    child: Icon(Icons.close, size: 18, color: muted),
+                  )
+                : const SizedBox.shrink(),
+          ),
         ],
       ),
     );
@@ -489,8 +498,9 @@ class _Action extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color:
-                  highlighted ? AppColors.orange : ink.withValues(alpha: 0.25),
+              color: highlighted
+                  ? AppColors.orange
+                  : ink.withValues(alpha: 0.25),
             ),
           ),
           child: Row(
@@ -634,11 +644,12 @@ class _MarketGridCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final ink = isDark ? AppColors.white : AppColors.black;
     final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
-    final isVente = item.listingType == MarketListingType.vente;
-    final accent = isVente ? AppColors.orange : AppColors.blue;
+    final accent = marketTypeColor(item.listingType);
     final surface = isDark ? AppColors.blackElevated : AppColors.white;
     final overlay = showOwnerState
-        ? (item.sold ? 'VENDU' : (item.isExpired ? 'EXPIRÉE' : null))
+        ? (item.sold
+              ? item.closedLabel.toUpperCase()
+              : (item.isExpired ? 'EXPIRÉE' : null))
         : null;
 
     return Material(
@@ -661,7 +672,10 @@ class _MarketGridCard extends StatelessWidget {
                   fit: StackFit.expand,
                   children: [
                     if (item.hasImages)
-                      FeedNetworkImage(url: item.imageUrls.first, isDark: isDark)
+                      FeedNetworkImage(
+                        url: item.imageUrls.first,
+                        isDark: isDark,
+                      )
                     else
                       ColoredBox(
                         color: accent.withValues(alpha: 0.08),
@@ -699,7 +713,9 @@ class _MarketGridCard extends StatelessWidget {
                           child: Center(
                             child: Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 5),
+                                horizontal: 12,
+                                vertical: 5,
+                              ),
                               decoration: BoxDecoration(
                                 color: Colors.black.withValues(alpha: 0.8),
                                 borderRadius: BorderRadius.circular(8),
@@ -755,8 +771,11 @@ class _MarketGridCard extends StatelessWidget {
                       const SizedBox(height: 4),
                       Row(
                         children: [
-                          Icon(Icons.location_on_outlined,
-                              size: 12, color: muted),
+                          Icon(
+                            Icons.location_on_outlined,
+                            size: 12,
+                            color: muted,
+                          ),
                           const SizedBox(width: 2),
                           Expanded(
                             child: Text(
@@ -764,14 +783,18 @@ class _MarketGridCard extends StatelessWidget {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: GoogleFonts.manrope(
-                                  fontSize: 10.5, color: muted),
+                                fontSize: 10.5,
+                                color: muted,
+                              ),
                             ),
                           ),
                           const SizedBox(width: 4),
                           Text(
                             timeLabel,
                             style: GoogleFonts.manrope(
-                                fontSize: 10.5, color: muted),
+                              fontSize: 10.5,
+                              color: muted,
+                            ),
                           ),
                         ],
                       ),
@@ -861,7 +884,11 @@ class _PhotoCount extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.photo_library_outlined, size: 11, color: Colors.white),
+          const Icon(
+            Icons.photo_library_outlined,
+            size: 11,
+            color: Colors.white,
+          ),
           const SizedBox(width: 3),
           Text(
             '$count',

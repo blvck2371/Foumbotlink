@@ -10,6 +10,7 @@ import '../../routes/app_routes.dart';
 import '../../services/auth_service.dart';
 import '../../services/user_profile_service.dart';
 import '../../theme/app_colors.dart';
+import '../../theme/market_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/post_body_text.dart';
 import '../../widgets/post_video.dart';
@@ -997,8 +998,7 @@ class _MarketFeedCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final ink = isDark ? AppColors.white : AppColors.black;
     final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
-    final isVente = item.listingType == MarketListingType.vente;
-    final accent = isVente ? AppColors.orange : AppColors.blue;
+    final accent = marketTypeColor(item.listingType);
 
     return Material(
       color: isDark ? AppColors.blackElevated : AppColors.white,
