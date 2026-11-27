@@ -12,7 +12,9 @@ import '../../widgets/foumbot_loader.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/form_field_box.dart';
 import '../../widgets/feed_image.dart';
+import '../../widgets/chat_video_viewer.dart';
 import '../../widgets/foumbot_app_bar.dart';
+import '../../widgets/post_image_viewer.dart';
 import '../../widgets/user_avatar.dart';
 
 class ComposeScreen extends GetView<ComposeController> {
@@ -168,13 +170,9 @@ class ComposeScreen extends GetView<ComposeController> {
                         ],
                       ),
                       const SizedBox(height: 22),
-                      _SectionLabel('Photos (facultatif)', ink: ink),
+                      _SectionLabel('Photos et vidéo (facultatif)', ink: ink),
                       const SizedBox(height: 10),
-                      _ImagesPicker(isDark: isDark),
-                      const SizedBox(height: 22),
-                      _SectionLabel('Vidéo (facultatif)', ink: ink),
-                      const SizedBox(height: 10),
-                      _VideoPicker(isDark: isDark),
+                      _MediaPicker(isDark: isDark),
                     ],
                   ),
                 ),
@@ -286,113 +284,6 @@ class _KindOption extends StatelessWidget {
   }
 }
 
-class _ImagesPicker extends StatelessWidget {
-  const _ImagesPicker({required this.isDark});
-
-  final bool isDark;
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = Get.find<ComposeController>();
-    final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
-
-    return Obx(() {
-      // En édition, deux sources cohabitent : les images déjà en ligne
-      // (retirées de Storage à l'enregistrement si l'auteur les supprime) et
-      // les fichiers ajoutés dans cette session, pas encore uploadés.
-      // `FeedNetworkImage` affiche indifféremment une URL ou un chemin local,
-      // ce qui permet de les rendre avec la même tuile.
-      final existing = controller.existingImageUrls;
-      final added = controller.images;
-      final total = existing.length + added.length;
-      final canAdd = controller.canAddImages;
-
-      return SizedBox(
-        height: 88,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: total + (canAdd ? 1 : 0),
-          separatorBuilder: (_, _) => const SizedBox(width: 10),
-          itemBuilder: (context, i) {
-            if (i == total) {
-              return InkWell(
-                onTap: controller.pickImages,
-                borderRadius: BorderRadius.circular(14),
-                child: Container(
-                  width: 88,
-                  height: 88,
-                  decoration: BoxDecoration(
-                    color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: muted.withValues(alpha: 0.4)),
-                  ),
-                  child: Icon(Icons.add_photo_alternate_outlined, color: muted),
-                ),
-              );
-            }
-
-            final isExisting = i < existing.length;
-            final source = isExisting ? existing[i] : added[i - existing.length];
-
-            return _ImageTile(
-              source: source,
-              isDark: isDark,
-              onRemove: () => isExisting
-                  ? controller.removeExistingImage(i)
-                  : controller.removeImage(i - existing.length),
-            );
-          },
-        ),
-      );
-    });
-  }
-}
-
-class _ImageTile extends StatelessWidget {
-  const _ImageTile({
-    required this.source,
-    required this.isDark,
-    required this.onRemove,
-  });
-
-  /// URL distante (image déjà publiée) ou chemin de fichier local.
-  final String source;
-  final bool isDark;
-  final VoidCallback onRemove;
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: SizedBox(
-            width: 88,
-            height: 88,
-            child: FeedNetworkImage(url: source, isDark: isDark),
-          ),
-        ),
-        Positioned(
-          top: 4,
-          right: 4,
-          child: InkWell(
-            onTap: onRemove,
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              padding: const EdgeInsets.all(3),
-              decoration: const BoxDecoration(
-                color: Colors.black54,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.close, size: 14, color: Colors.white),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _InsertChip extends StatelessWidget {
   const _InsertChip({
     required this.label,
@@ -481,10 +372,18 @@ class _MentionSuggestions extends StatelessWidget {
   }
 }
 
-class _VideoPicker extends StatelessWidget {
-  const _VideoPicker({required this.isDark});
+
+/// Photos et vidéo de la publication, choisies ensemble.
+///
+/// Un seul « + » ouvre la galerie sur les photos et les vidéos, avec
+/// sélection multiple. Chaque média choisi se touche pour être vu en grand
+/// — photo dans la visionneuse, vidéo dans le lecteur — avant de publier.
+class _MediaPicker extends StatelessWidget {
+  const _MediaPicker({required this.isDark});
 
   final bool isDark;
+
+  static const _tile = 96.0;
 
   @override
   Widget build(BuildContext context) {
@@ -492,104 +391,131 @@ class _VideoPicker extends StatelessWidget {
     final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
 
     return Obx(() {
-      final local = controller.videoPath.value;
-      final thumb = controller.videoThumbPath.value;
-      final existing = controller.editing;
-      final showExisting = local == null &&
-          controller.keepExistingVideo.value &&
-          (existing?.hasVideo ?? false);
+      final busy = controller.isPublishing.value;
+      final videoSource = controller.videoPreviewSource;
+      final localThumb = controller.videoThumbPath.value;
+      final remoteThumb = controller.videoPath.value == null
+          ? controller.editing?.videoThumbUrl
+          : null;
+      // En édition, deux sources de photos cohabitent : celles déjà en
+      // ligne et celles ajoutées dans cette session. `FeedNetworkImage`
+      // affiche indifféremment une URL ou un chemin local.
+      final existing = controller.existingImageUrls.toList();
+      final added = controller.images.toList();
+      final photos = [...existing, ...added];
 
-      if (local == null && !showExisting) {
-        return InkWell(
-          onTap: controller.isPublishing.value ? null : controller.pickVideo,
-          borderRadius: BorderRadius.circular(14),
-          child: Container(
-            height: 64,
-            decoration: BoxDecoration(
-              color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: muted.withValues(alpha: 0.4)),
+      final tiles = <Widget>[
+        if (videoSource != null)
+          _MediaTile(
+            isDark: isDark,
+            onRemove: busy ? null : controller.removeVideo,
+            onTap: () => openChatVideoViewer(
+              context,
+              source: videoSource,
+              heroTag: 'compose_video',
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            child: Stack(
+              fit: StackFit.expand,
               children: [
-                Icon(Icons.video_library_outlined, color: muted),
-                const SizedBox(width: 10),
-                Text(
-                  'Ajouter une vidéo',
-                  style: GoogleFonts.manrope(
-                    fontWeight: FontWeight.w700,
-                    color: muted,
+                const ColoredBox(color: AppColors.black),
+                if (localThumb != null)
+                  Image(image: LocalMedia.image(localThumb), fit: BoxFit.cover)
+                else if (remoteThumb != null)
+                  FeedNetworkImage(url: remoteThumb, isDark: true),
+                const Center(
+                  child: Icon(
+                    Icons.play_circle_fill,
+                    color: Colors.white,
+                    size: 34,
+                    shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
+                  ),
+                ),
+                Positioned(
+                  left: 6,
+                  bottom: 6,
+                  child: _TileBadge(
+                    controller.videoDurationLabel.isEmpty
+                        ? 'Vidéo'
+                        : controller.videoDurationLabel,
                   ),
                 ),
               ],
             ),
           ),
-        );
-      }
+        for (var i = 0; i < photos.length; i++)
+          _MediaTile(
+            isDark: isDark,
+            onRemove: busy
+                ? null
+                : () => i < existing.length
+                    ? controller.removeExistingImage(i)
+                    : controller.removeImage(i - existing.length),
+            onTap: () => openPostImageViewer(
+              context,
+              imageUrls: photos,
+              initialIndex: i,
+              heroPrefix: 'compose',
+            ),
+            child: FeedNetworkImage(
+              url: photos[i],
+              isDark: isDark,
+              decodeWidth: 300,
+            ),
+          ),
+        if (controller.canAddMedia && !busy)
+          InkWell(
+            onTap: controller.pickMedia,
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              width: _tile,
+              height: _tile,
+              decoration: BoxDecoration(
+                color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: muted.withValues(alpha: 0.4)),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.perm_media_outlined, color: muted),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Ajouter',
+                    style: GoogleFonts.manrope(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ];
 
-      final preview = showExisting
-          ? (existing!.videoThumbUrl != null
-              ? FeedNetworkImage(url: existing.videoThumbUrl!, isDark: isDark)
-              : null)
-          : (thumb != null
-              ? Image(image: LocalMedia.image(thumb), fit: BoxFit.cover)
-              : null);
-
+      final count = photos.length + (videoSource != null ? 1 : 0);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Stack(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: Container(
-                  width: double.infinity,
-                  height: 180,
-                  color: AppColors.black,
-                  child: preview ??
-                      const Icon(
-                        Icons.movie_outlined,
-                        color: AppColors.whiteMuted,
-                        size: 42,
-                      ),
-                ),
-              ),
-              const Positioned.fill(
-                child: Center(
-                  child: Icon(
-                    Icons.play_circle_fill,
-                    color: Colors.white70,
-                    size: 52,
-                  ),
-                ),
-              ),
-              Positioned(
-                top: 6,
-                right: 6,
-                child: InkWell(
-                  onTap: controller.isPublishing.value
-                      ? null
-                      : controller.removeVideo,
-                  borderRadius: BorderRadius.circular(14),
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: const BoxDecoration(
-                      color: Colors.black54,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.close,
-                      size: 18,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+          SizedBox(
+            height: _tile,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: tiles.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemBuilder: (_, i) => tiles[i],
+            ),
           ),
-          if (local != null) ...[
-            const SizedBox(height: 6),
+          const SizedBox(height: 8),
+          Text(
+            count == 0
+                ? 'Jusqu’à ${ComposeController.maxImages} photos et 1 vidéo, '
+                    'choisies ensemble dans la galerie.'
+                : 'Touchez un média pour le voir en grand avant de publier.',
+            style: GoogleFonts.manrope(fontSize: 12, color: muted),
+          ),
+          if (controller.videoPath.value != null) ...[
+            const SizedBox(height: 4),
             Text(
               controller.videoWillBeReduced
                   ? 'Vidéo de ${controller.videoSizeLabel} : sa qualité sera '
@@ -599,8 +525,7 @@ class _VideoPicker extends StatelessWidget {
               style: GoogleFonts.manrope(fontSize: 12, color: muted),
             ),
           ],
-          if (controller.isPublishing.value &&
-              controller.videoStage.value != VideoStage.none) ...[
+          if (busy && controller.videoStage.value != VideoStage.none) ...[
             const SizedBox(height: 8),
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
@@ -615,5 +540,91 @@ class _VideoPicker extends StatelessWidget {
         ],
       );
     });
+  }
+}
+
+class _MediaTile extends StatelessWidget {
+  const _MediaTile({
+    required this.isDark,
+    required this.child,
+    required this.onTap,
+    required this.onRemove,
+  });
+
+  final bool isDark;
+  final Widget child;
+  final VoidCallback onTap;
+
+  /// `null` pendant la publication : on ne retire rien en cours d'envoi.
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _MediaPicker._tile,
+      height: _MediaPicker._tile,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: onTap,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: child,
+              ),
+            ),
+          ),
+          if (onRemove != null)
+            Positioned(
+              top: 4,
+              right: 4,
+              child: Semantics(
+                button: true,
+                label: 'Retirer',
+                child: GestureDetector(
+                  onTap: onRemove,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Colors.black54,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.close,
+                      size: 15,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TileBadge extends StatelessWidget {
+  const _TileBadge(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.black54,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        text,
+        style: GoogleFonts.manrope(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
   }
 }

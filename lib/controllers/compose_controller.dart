@@ -188,16 +188,76 @@ class ComposeController extends GetxController {
   // Vidéo
   // ---------------------------------------------------------------------
 
-  /// Une vidéo par publication. Rien n'est réduit ici : la compression
-  /// (au-delà de 8 Mo) se fait à la publication, avec sa progression
-  /// affichée — la faire au choix bloquerait l'écran sans explication.
-  Future<void> pickVideo() async {
+  /// Un seul geste pour tout ajouter : la galerie s'ouvre sur les photos
+  /// **et** les vidéos, avec sélection multiple. Les photos sont réduites
+  /// dès la sélection (1600 px, qualité 80 : nettes en plein écran, cinq à
+  /// dix fois plus légères, ce qui se paie à chaque ouverture du fil) ; la
+  /// vidéo, elle, n'est réduite qu'à la publication, avec sa progression
+  /// affichée — la réduire ici bloquerait l'écran sans explication.
+  ///
+  /// Une publication porte au plus [_maxImages] photos et une vidéo : le
+  /// surplus est écarté avec un message plutôt qu'en silence.
+  Future<void> pickMedia() async {
+    final roomImages = _maxImages - totalImages;
+    final roomVideo = hasVideo ? 0 : 1;
+    final room = roomImages + roomVideo;
+    if (room <= 0) {
+      _notify('Médias', 'Maximum $_maxImages photos et 1 vidéo par publication.');
+      return;
+    }
+    final List<XFile> picked;
     try {
-      final picked = await ImagePicker().pickVideo(
-        source: ImageSource.gallery,
+      picked = await ImagePicker().pickMultipleMedia(
+        limit: room,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 80,
       );
-      if (picked == null) return;
-      final path = picked.path;
+    } catch (e) {
+      developer.log('Sélection de médias', name: 'ComposeController', error: e);
+      _notify('Médias indisponibles', 'Impossible d’ouvrir la galerie.');
+      return;
+    }
+    if (picked.isEmpty) return;
+
+    var skippedImages = 0;
+    var skippedVideos = 0;
+    for (final file in picked) {
+      if (isVideoFile(file)) {
+        if (hasVideo) {
+          skippedVideos++;
+        } else {
+          await _setVideo(file.path);
+        }
+      } else if (totalImages < _maxImages) {
+        images.add(file.path);
+      } else {
+        skippedImages++;
+      }
+    }
+    if (skippedImages + skippedVideos > 0) {
+      _notify(
+        'Certains médias n’ont pas été ajoutés',
+        'Une publication porte au plus $_maxImages photos et 1 vidéo.',
+      );
+    }
+  }
+
+  /// Vidéo ou photo ? Le type MIME quand la plateforme le donne (web,
+  /// iOS), l'extension sinon (Android rend souvent un simple chemin).
+  static bool isVideoFile(XFile file) {
+    final mime = file.mimeType;
+    if (mime != null && mime.isNotEmpty) return mime.startsWith('video/');
+    return isVideoPath(file.path.isNotEmpty ? file.path : file.name);
+  }
+
+  static bool isVideoPath(String path) => RegExp(
+    r'\.(mp4|mov|m4v|3gp|3gpp|webm|mkv|avi|qt)$',
+    caseSensitive: false,
+  ).hasMatch(path);
+
+  Future<void> _setVideo(String path) async {
+    try {
       final bytes = await LocalMedia.length(path);
       // Sur le web, pas d'encodeur : ce qui dépasse le plafond ne pourra
       // pas être réduit, inutile de laisser l'auteur attendre l'échec.
@@ -216,10 +276,30 @@ class ComposeController extends GetxController {
       keepExistingVideo.value = false;
       videoThumbPath.value = await _thumbnail(path);
     } catch (e) {
-      developer.log('Sélection de vidéo', name: 'ComposeController', error: e);
+      developer.log('Vidéo', name: 'ComposeController', error: e);
       _notify('Vidéo indisponible', 'Impossible d’ouvrir cette vidéo.');
     }
   }
+
+  /// Source à lire pour l'aperçu de la vidéo : fichier choisi, ou vidéo
+  /// déjà publiée en édition.
+  String? get videoPreviewSource =>
+      videoPath.value ??
+      (keepExistingVideo.value ? editing?.videoUrl : null);
+
+  String get videoDurationLabel {
+    final ms = videoPath.value != null
+        ? _videoDurationMs
+        : editing?.videoDurationMs;
+    if (ms == null || ms <= 0) return '';
+    final s = (ms / 1000).round();
+    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+  }
+
+  /// Médias ajoutables encore : le bouton « + » disparaît une fois pleins.
+  bool get canAddMedia => totalImages < _maxImages || !hasVideo;
+
+  static const maxImages = _maxImages;
 
   void removeVideo() {
     videoPath.value = null;
@@ -346,33 +426,6 @@ class ComposeController extends GetxController {
 
   void selectPostKind(FeedType kind) {
     postKind.value = kind;
-  }
-
-  /// Les photos sont redimensionnées et recompressées **à la sélection**,
-  /// pas à l'envoi : une photo d'appareil récent pèse plusieurs mégaoctets
-  /// et ce poids se paie deux fois — à la publication, puis à chaque
-  /// ouverture du fil par chaque habitant, pour une image affichée sur
-  /// quelques centaines de pixels. 1600 px et qualité 80 restent nets en
-  /// plein écran tout en divisant le poids par cinq à dix, ce qui est le
-  /// vrai levier sur le temps de chargement des images.
-  Future<void> pickImages() async {
-    final remaining = _maxImages - totalImages;
-    if (remaining <= 0) return;
-    try {
-      final picked = await ImagePicker().pickMultiImage(
-        limit: remaining,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 80,
-      );
-      if (picked.isEmpty) return;
-      // `limit` n'est qu'une indication sur certaines galeries Android :
-      // on retronque nous-mêmes pour ne jamais dépasser le plafond.
-      images.addAll(picked.take(remaining).map((f) => f.path));
-    } catch (e) {
-      developer.log('Sélection de photos', name: 'ComposeController', error: e);
-      _notify('Photos indisponibles', 'Impossible d’ouvrir la galerie.');
-    }
   }
 
   void removeImage(int index) => images.removeAt(index);
