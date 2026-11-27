@@ -15,7 +15,9 @@ import '../../theme/theme_controller.dart';
 import '../../widgets/foumbot_app_bar.dart';
 import '../../widgets/foumbot_loader.dart';
 import '../../widgets/post_actions_menu.dart';
+import '../../widgets/post_body_text.dart';
 import '../../widgets/post_media.dart';
+import '../../widgets/post_video.dart';
 import '../../widgets/repost_banner.dart';
 import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
@@ -409,13 +411,28 @@ class _FeedPostScreenState extends State<FeedPostScreen> {
                       if (post.hasBody) const SizedBox(height: 12),
                     ],
                     if (post.hasBody)
-                      Text(
-                        post.body,
-                        style: textTheme.bodyLarge?.copyWith(
-                          color: muted,
-                          height: 1.5,
-                        ),
+                      PostBodyText(
+                        text: post.body,
+                        mentions: post.mentions,
+                        expandable: false,
+                        linkColor: isDark
+                            ? AppColors.orangeSoft
+                            : AppColors.orangeReadable,
+                        style: (textTheme.bodyLarge ?? const TextStyle())
+                            .copyWith(color: muted, height: 1.5),
                       ),
+                    if (post.hasVideo) ...[
+                      const SizedBox(height: 14),
+                      PostVideo(
+                        url: post.videoUrl!,
+                        thumbUrl: post.videoThumbUrl,
+                        aspectRatio: post.videoAspectRatio,
+                        durationLabel: post.videoDurationLabel,
+                        isDark: isDark,
+                        heroTag: 'post_video_${post.id}',
+                        borderRadius: 16,
+                      ),
+                    ],
                     if (post.hasImages) ...[
                       const SizedBox(height: 14),
                       PostMedia(

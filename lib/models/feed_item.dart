@@ -1,3 +1,5 @@
+import 'post_text.dart';
+
 enum FeedType { info, annonce, post }
 
 enum FeedFilter { all, population, venteAchat }
@@ -107,6 +109,12 @@ class FeedItem {
     this.editedAt,
     this.commentsDisabled = false,
     this.hidden = false,
+    this.videoUrl,
+    this.videoThumbUrl,
+    this.videoDurationMs,
+    this.videoAspectRatio,
+    this.mentions = const [],
+    this.hashtags = const [],
     List<String>? imageUrls,
     List<FeedComment>? comments,
   }) : imageUrls = imageUrls ?? [],
@@ -145,7 +153,35 @@ class FeedItem {
   final List<String> imageUrls;
   final List<FeedComment> comments;
 
+  /// Vidéo de la publication (une au plus), compressée avant l'envoi
+  /// quand elle dépasse `ComposeController.compressAboveBytes`.
+  final String? videoUrl;
+
+  /// Image d'aperçu de la vidéo — absente sur le web, où le navigateur ne
+  /// sait pas l'extraire ; la carte affiche alors une tuile sombre.
+  final String? videoThumbUrl;
+  final int? videoDurationMs;
+
+  /// Largeur / hauteur, pour réserver la bonne place avant la lecture.
+  final double? videoAspectRatio;
+
+  /// À qui renvoie chaque « @Nom » du message.
+  final List<PostMention> mentions;
+
+  /// Hashtags du message, normalisés (`fete_foumbot`) — recherchables.
+  final List<String> hashtags;
+
   bool get hasImages => imageUrls.isNotEmpty;
+
+  bool get hasVideo => videoUrl != null && videoUrl!.isNotEmpty;
+
+  /// « 1:05 », ou vide si la durée est inconnue.
+  String get videoDurationLabel {
+    final ms = videoDurationMs;
+    if (ms == null || ms <= 0) return '';
+    final s = (ms / 1000).round();
+    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+  }
 
   /// Le titre est facultatif (voir `ComposeController.canSubmit`) : une
   /// publication peut n'être qu'un message, ou que des photos. Les écrans
@@ -183,6 +219,7 @@ class FeedItem {
   String get summaryLine {
     if (hasTitle) return title.trim();
     if (hasBody) return body.trim();
+    if (hasVideo) return 'Vidéo';
     return imageUrls.length > 1 ? '${imageUrls.length} photos' : 'Photo';
   }
 
@@ -199,6 +236,13 @@ class FeedItem {
     bool? hidden,
     List<String>? imageUrls,
     List<FeedComment>? comments,
+    String? videoUrl,
+    String? videoThumbUrl,
+    int? videoDurationMs,
+    double? videoAspectRatio,
+    bool clearVideo = false,
+    List<PostMention>? mentions,
+    List<String>? hashtags,
   }) {
     return FeedItem(
       id: id,
@@ -223,6 +267,14 @@ class FeedItem {
       hidden: hidden ?? this.hidden,
       imageUrls: imageUrls ?? this.imageUrls,
       comments: comments ?? List<FeedComment>.from(this.comments),
+      videoUrl: clearVideo ? null : (videoUrl ?? this.videoUrl),
+      videoThumbUrl: clearVideo ? null : (videoThumbUrl ?? this.videoThumbUrl),
+      videoDurationMs:
+          clearVideo ? null : (videoDurationMs ?? this.videoDurationMs),
+      videoAspectRatio:
+          clearVideo ? null : (videoAspectRatio ?? this.videoAspectRatio),
+      mentions: mentions ?? this.mentions,
+      hashtags: hashtags ?? this.hashtags,
     );
   }
 }

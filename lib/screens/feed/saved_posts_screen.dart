@@ -8,7 +8,9 @@ import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
 import '../../widgets/feed_skeleton.dart';
 import '../../widgets/foumbot_app_bar.dart';
+import '../../widgets/post_body_text.dart';
 import '../../widgets/post_media.dart';
+import '../../widgets/post_video.dart';
 import '../../widgets/user_avatar.dart';
 import '../../widgets/verified_badge.dart';
 
@@ -207,16 +209,31 @@ class _SavedCard extends StatelessWidget {
                 if (post.hasBody) const SizedBox(height: 6),
               ],
               if (post.hasBody)
-                Text(
-                  post.body,
+                PostBodyText(
+                  text: post.body,
+                  mentions: post.mentions,
+                  expandable: false,
                   maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
+                  linkColor: isDark
+                      ? AppColors.orangeSoft
+                      : AppColors.orangeReadable,
                   style: GoogleFonts.manrope(
                     fontSize: 14,
                     height: 1.4,
                     color: muted,
                   ),
                 ),
+              if (post.hasVideo) ...[
+                const SizedBox(height: 10),
+                PostVideo(
+                  url: post.videoUrl!,
+                  thumbUrl: post.videoThumbUrl,
+                  aspectRatio: post.videoAspectRatio,
+                  durationLabel: post.videoDurationLabel,
+                  isDark: isDark,
+                  heroTag: 'saved_video_${post.id}',
+                ),
+              ],
               if (!post.hasTitle && !post.hasBody && post.hasImages)
                 Text(
                   post.summaryLine,

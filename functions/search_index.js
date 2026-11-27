@@ -85,6 +85,9 @@ const SOURCES = {
     `${d.title || ""} ${d.authorName || ""}`,
     d.body,
     d.repostOfAuthorName,
+    // Une publication vidéo répond à « vidéo » : c'est ainsi qu'on
+    // retrouve les vidéos par la recherche, même sans légende.
+    d.videoUrl ? "video videos" : "",
   ],
   market: (d) => [d.title, d.description, d.location, d.sellerName],
 };

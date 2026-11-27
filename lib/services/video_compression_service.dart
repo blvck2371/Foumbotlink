@@ -56,11 +56,14 @@ class VideoCompressionService {
     String path, {
     VideoSendQuality quality = VideoSendQuality.standard,
     void Function(double progress)? onProgress,
+    int? compressAboveBytes,
   }) {
     final done = Completer<PreparedVideo>();
     _queue = _queue.then((_) async {
       try {
-        done.complete(await _prepare(path, quality, onProgress));
+        done.complete(
+          await _prepare(path, quality, onProgress, compressAboveBytes),
+        );
       } catch (e, st) {
         // Fichier illisible, par exemple : l'appelant le saura, et la file
         // reste libre pour les vidéos suivantes.
@@ -74,6 +77,7 @@ class VideoCompressionService {
     String path,
     VideoSendQuality quality,
     void Function(double progress)? onProgress,
+    int? compressAboveBytes,
   ) async {
     final originalBytes = await LocalMedia.length(path);
     final asIs = PreparedVideo(
@@ -85,7 +89,12 @@ class VideoCompressionService {
     // Web : pas d'encodeur vidéo accessible depuis le navigateur — la
     // vidéo part telle quelle (le plafond de taille s'applique toujours).
     if (kIsWeb) return asIs;
-    if (!VideoCompressionPolicy.shouldCompress(originalBytes)) return asIs;
+    if (!VideoCompressionPolicy.shouldCompress(
+      originalBytes,
+      threshold: compressAboveBytes,
+    )) {
+      return asIs;
+    }
 
     Subscription? progress;
     if (onProgress != null) {

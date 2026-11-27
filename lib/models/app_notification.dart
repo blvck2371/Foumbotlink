@@ -30,6 +30,10 @@ enum AppNotificationType {
   /// Décision sur une demande de certification (functions/
   /// certification.js).
   certification,
+
+  /// On vous a mentionné (@) dans une publication. Émise par
+  /// `onPostCreated`.
+  mention,
 }
 
 /// Document `users/{uid}/notifications/{id}` — flux personnel, jamais

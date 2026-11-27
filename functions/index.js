@@ -921,6 +921,34 @@ exports.onPostCreated = onDocumentCreated("posts/{postId}", async (event) => {
   const {postId} = event.params;
   if (!post.authorUid) return;
 
+  // @mentions : comptes et fiches pro (l'id d'une fiche *est* l'uid de
+  // son propriétaire). Une personne mentionnée reçoit « vous a
+  // mentionné » plutôt que la notification générique d'abonné. Une
+  // republication ne renotifie pas : la mention appartient à l'original.
+  const mentioned = new Set();
+  if (!post.repostOfId && Array.isArray(post.mentions)) {
+    for (const m of post.mentions.slice(0, 20)) {
+      const uid = m && typeof m.id === "string" ? m.id : "";
+      if (!uid || uid === post.authorUid || mentioned.has(uid)) continue;
+      const [blockedA, blockedB] = await Promise.all([
+        db.doc(`users/${uid}/blocked/${post.authorUid}`).get(),
+        db.doc(`users/${post.authorUid}/blocked/${uid}`).get(),
+      ]);
+      if (blockedA.exists || blockedB.exists) continue;
+      mentioned.add(uid);
+      const what = m.kind === "pro" ? "votre fiche pro" : "vous";
+      await notifyUser(uid, {
+        type: "mention",
+        title: post.authorName || "Nouvelle mention",
+        body: `a mentionné ${what} : ` +
+          preview(post.body || post.title || "", 70),
+        data: {postId},
+        fromUid: post.authorUid,
+        fromName: post.authorName,
+      });
+    }
+  }
+
   // Plafonné pour borner le coût d'un fan-out vers un compte à forte
   // audience — au-delà, seuls les 300 abonnés les plus récents sont
   // notifiés. Suffisant à l'échelle de ce projet (commune).
@@ -937,11 +965,14 @@ exports.onPostCreated = onDocumentCreated("posts/{postId}", async (event) => {
   const photoLabel = imageCount > 1 ?
     `${imageCount} photos` :
     "Une photo";
+  const mediaLabel = post.videoUrl ? "Une vidéo" :
+    (imageCount ? photoLabel : "");
 
-  await Promise.all(followers.docs.map((doc) => notifyUser(doc.id, {
+  const toNotify = followers.docs.filter((doc) => !mentioned.has(doc.id));
+  await Promise.all(toNotify.map((doc) => notifyUser(doc.id, {
     type: "post",
     title: post.authorName || "Nouvelle publication",
-    body: preview(post.title || post.body || (imageCount ? photoLabel : "")),
+    body: preview(post.title || post.body || mediaLabel),
     data: {postId},
     fromUid: post.authorUid,
     fromName: post.authorName,

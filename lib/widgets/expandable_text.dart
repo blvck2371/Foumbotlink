@@ -12,7 +12,12 @@ class ExpandableText extends StatefulWidget {
     required this.style,
     required this.linkColor,
     this.maxLines = 3,
+    this.span,
   });
+
+  /// Rendu enrichi (mentions, hashtags) du même [text] ; `null` = texte
+  /// simple.
+  final InlineSpan? span;
 
   final String text;
   final TextStyle style;
@@ -40,7 +45,9 @@ class _ExpandableTextState extends State<ExpandableText> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final painter = TextPainter(
-          text: TextSpan(text: widget.text, style: widget.style),
+          text: widget.span == null
+              ? TextSpan(text: widget.text, style: widget.style)
+              : TextSpan(style: widget.style, children: [widget.span!]),
           maxLines: widget.maxLines,
           textDirection: Directionality.of(context),
           textScaler: MediaQuery.textScalerOf(context),
@@ -48,8 +55,8 @@ class _ExpandableTextState extends State<ExpandableText> {
         final overflows = painter.didExceedMaxLines;
         painter.dispose();
 
-        final body = Text(
-          widget.text,
+        final body = Text.rich(
+          widget.span ?? TextSpan(text: widget.text),
           maxLines: _expanded ? null : widget.maxLines,
           overflow: _expanded ? TextOverflow.clip : TextOverflow.ellipsis,
           style: widget.style,

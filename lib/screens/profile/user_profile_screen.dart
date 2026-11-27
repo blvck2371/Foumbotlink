@@ -883,9 +883,11 @@ class _PostThumbnail extends StatelessWidget {
           fit: StackFit.expand,
           children: [
             // Background — image or colored card
-            if (item.hasImages)
+            if (item.hasImages || item.videoThumbUrl != null)
               CachedNetworkImage(
-                imageUrl: displayImageUrl(item.imageUrls.first),
+                imageUrl: displayImageUrl(
+                  item.hasImages ? item.imageUrls.first : item.videoThumbUrl!,
+                ),
                 fit: BoxFit.cover,
                 placeholder: (_, _) => Container(
                   color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
@@ -902,6 +904,18 @@ class _PostThumbnail extends StatelessWidget {
                 item: item,
                 badgeColor: badgeColor,
                 isDark: isDark,
+              ),
+
+            if (item.hasVideo)
+              const Positioned(
+                top: 6,
+                right: 6,
+                child: Icon(
+                  Icons.play_circle_fill,
+                  size: 22,
+                  color: AppColors.white,
+                  shadows: [Shadow(color: Colors.black54, blurRadius: 6)],
+                ),
               ),
 
             // Bottom gradient overlay

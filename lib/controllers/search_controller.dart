@@ -17,7 +17,7 @@ import '../widgets/live_ring.dart';
 import 'home_controller.dart';
 
 /// Onglets des résultats, dans l'ordre affiché.
-enum SearchTab { top, accounts, posts, listings, demarches, lives }
+enum SearchTab { top, accounts, posts, videos, listings, demarches, lives }
 
 /// Recherche globale façon TikTok : suggestions dès les premières
 /// lettres, résultats par familles, historique, comptes populaires et
@@ -78,6 +78,17 @@ class AppSearchController extends GetxController {
     textController.addListener(_onText);
     focusNode.addListener(() => typing.value = focusNode.hasFocus);
     unawaited(_loadSuggestions());
+    // Ouverte depuis un #hashtag touché dans une publication : la
+    // recherche part tout de suite, sur l'onglet des publications.
+    final initial = Get.arguments;
+    if (initial is String && initial.trim().isNotEmpty) {
+      textController.value = TextEditingValue(
+        text: initial,
+        selection: TextSelection.collapsed(offset: initial.length),
+      );
+      if (initial.startsWith('#')) tab.value = SearchTab.posts;
+      submit(initial);
+    }
   }
 
   Future<void> _loadSuggestions() async {

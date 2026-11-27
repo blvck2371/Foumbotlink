@@ -17,10 +17,21 @@ service firebase.storage {
     match /posts/{authorUid}/{postId}/{fileName} {
       allow read: if true;
 
+      // Photos (10 Mo) ou vidéo (60 Mo, après réduction par l'app au-delà
+      // de 8 Mo) — deux plafonds, comme pour les statuts : un seul plafond
+      // haut ouvrirait la porte à des « photos » de 60 Mo.
       allow create, update: if request.auth != null
         && request.auth.uid == authorUid
-        && request.resource.size < 10 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
+        && (
+          (
+            request.resource.contentType.matches('image/.*')
+            && request.resource.size < 10 * 1024 * 1024
+          )
+          || (
+            request.resource.contentType.matches('video/.*')
+            && request.resource.size < 60 * 1024 * 1024
+          )
+        );
 
       allow delete: if request.auth != null && request.auth.uid == authorUid;
     }

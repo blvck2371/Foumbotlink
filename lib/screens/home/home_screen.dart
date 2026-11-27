@@ -11,7 +11,8 @@ import '../../services/auth_service.dart';
 import '../../services/user_profile_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/theme_controller.dart';
-import '../../widgets/expandable_text.dart';
+import '../../widgets/post_body_text.dart';
+import '../../widgets/post_video.dart';
 import '../../widgets/feed_image.dart';
 import '../../widgets/feed_impression.dart';
 import '../../widgets/feed_skeleton.dart';
@@ -813,15 +814,29 @@ class _FeedCard extends StatelessWidget {
                 if (item.hasBody) const SizedBox(height: 6),
               ],
               if (item.hasBody)
-                ExpandableText(
+                PostBodyText(
                   text: item.body,
-                  linkColor: badgeColor,
+                  mentions: item.mentions,
+                  linkColor: isDark
+                      ? AppColors.orangeSoft
+                      : AppColors.orangeReadable,
                   style: GoogleFonts.manrope(
                     fontSize: 14,
                     height: 1.4,
                     color: muted,
                   ),
                 ),
+              if (item.hasVideo) ...[
+                const SizedBox(height: 10),
+                PostVideo(
+                  url: item.videoUrl!,
+                  thumbUrl: item.videoThumbUrl,
+                  aspectRatio: item.videoAspectRatio,
+                  durationLabel: item.videoDurationLabel,
+                  isDark: isDark,
+                  heroTag: 'feed_video_${item.id}',
+                ),
+              ],
               if (item.hasImages) ...[
                 const SizedBox(height: 10),
                 PostMedia(

@@ -39,6 +39,12 @@ class SearchResults {
   final List<LiveSession> lives;
   final List<Demarche> demarches;
 
+  /// Publications qui portent une vidéo, dans l'ordre de pertinence.
+  List<FeedItem> get videos => [
+    for (final p in posts)
+      if (p.hasVideo) p,
+  ];
+
   bool get isEmpty =>
       users.isEmpty &&
       posts.isEmpty &&
@@ -88,6 +94,25 @@ class SearchService extends GetxService {
     final tokens = searchQueryTokens(query);
     if (tokens.isEmpty) return SearchResults(query: query);
     final viewer = FeedMemory.instance.viewer(uid: _uid, following: following);
+
+    // « #fete_foumbot » : un hashtag est une recherche exacte sur le tag,
+    // pas une recherche plein texte.
+    final trimmed = query.trim();
+    if (trimmed.startsWith('#') && !trimmed.contains(' ')) {
+      try {
+        final posts = await _feed.postsByHashtag(trimmed);
+        return SearchResults(
+          query: query,
+          posts: _oneStoryEach([
+            for (final p in posts)
+              if (!_moderation.hides(p.authorUid)) p,
+          ]),
+        );
+      } on FirebaseException catch (e) {
+        developer.log('recherche hashtag', name: 'Search', error: e);
+        return SearchResults(query: query);
+      }
+    }
 
     final results = await Future.wait([
       _users(tokens, viewer.following, viewer.affinity),

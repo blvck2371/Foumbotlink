@@ -71,6 +71,7 @@ class NotificationRouter {
       case 'like':
       case 'comment':
       case 'post':
+      case 'mention':
         final postId = d['postId'] as String?;
         if (postId != null && postId.isNotEmpty) {
           return (route: AppRoutes.feedPost, args: postId);

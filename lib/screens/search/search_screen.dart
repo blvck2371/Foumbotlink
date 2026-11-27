@@ -302,6 +302,11 @@ class _Results extends StatelessWidget {
           for (final post in r.posts)
             _PostTile(post: post, tokens: tokens, c: c, p: p),
         ], 'Aucune publication');
+      case SearchTab.videos:
+        return list([
+          for (final post in r.videos)
+            _PostTile(post: post, tokens: tokens, c: c, p: p),
+        ], 'Aucune vidéo');
       case SearchTab.listings:
         return list([
           for (final item in r.listings)
@@ -360,6 +365,16 @@ class _Results extends StatelessWidget {
             for (final u in r.users.take(3))
               _UserTile(user: u, tokens: tokens, c: c, p: p),
           ],
+          if (r.videos.isNotEmpty) ...[
+            _SectionHeader(
+              title: 'Vidéos',
+              p: p,
+              action: r.videos.length > 3 ? 'Voir tout' : null,
+              onAction: () => c.tab.value = SearchTab.videos,
+            ),
+            for (final post in r.videos.take(3))
+              _PostTile(post: post, tokens: tokens, c: c, p: p),
+          ],
           if (r.posts.isNotEmpty) ...[
             _SectionHeader(
               title: 'Publications',
@@ -404,6 +419,7 @@ class _Tabs extends StatelessWidget {
       (SearchTab.top, 'Top', 0),
       (SearchTab.accounts, 'Comptes', results.users.length),
       (SearchTab.posts, 'Publications', results.posts.length),
+      (SearchTab.videos, 'Vidéos', results.videos.length),
       (SearchTab.listings, 'Annonces', results.listings.length),
       (SearchTab.demarches, 'Démarches', results.demarches.length),
       (SearchTab.lives, 'Lives', results.lives.length),
@@ -731,7 +747,9 @@ class _PostTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final title = p.title();
     final body = p.body();
-    final heading = post.title.trim().isNotEmpty ? post.title : post.body;
+    final heading = post.title.trim().isNotEmpty
+        ? post.title
+        : (post.hasBody ? post.body : post.summaryLine);
     final excerpt = post.title.trim().isNotEmpty ? post.body : '';
     return InkWell(
       onTap: () => c.openPost(post),
@@ -794,7 +812,30 @@ class _PostTile extends StatelessWidget {
                 ],
               ),
             ),
-            if (post.hasImages) ...[
+            if (post.hasVideo) ...[
+              const SizedBox(width: 12),
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  post.videoThumbUrl != null
+                      ? _Thumb(url: post.videoThumbUrl!, p: p, size: 76)
+                      : Container(
+                          width: 76,
+                          height: 76,
+                          decoration: BoxDecoration(
+                            color: AppColors.black,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                  const Icon(
+                    Icons.play_circle_fill,
+                    color: Colors.white,
+                    size: 30,
+                    shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
+                  ),
+                ],
+              ),
+            ] else if (post.hasImages) ...[
               const SizedBox(width: 12),
               _Thumb(url: post.imageUrls.first, p: p, size: 76),
             ],

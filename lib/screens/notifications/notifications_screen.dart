@@ -155,6 +155,10 @@ class _NotificationTile extends GetView<NotificationsController> {
       icon: Icons.campaign_rounded,
       color: AppColors.orangeDeep,
     ),
+    AppNotificationType.mention => (
+      icon: Icons.alternate_email_rounded,
+      color: AppColors.orange,
+    ),
     AppNotificationType.missedCall => (
       icon: Icons.call_missed_rounded,
       color: AppColors.orange,

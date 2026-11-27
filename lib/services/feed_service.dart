@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import '../models/feed_item.dart';
+import '../models/post_text.dart';
 import '../utils/local_media.dart';
 
 class FeedService {
@@ -310,8 +311,44 @@ class FeedService {
       editedAt: (d['editedAt'] as Timestamp?)?.toDate(),
       commentsDisabled: d['commentsDisabled'] as bool? ?? false,
       hidden: d['hidden'] as bool? ?? false,
+      videoUrl: d['videoUrl'] as String?,
+      videoThumbUrl: d['videoThumbUrl'] as String?,
+      videoDurationMs: (d['videoDurationMs'] as num?)?.toInt(),
+      videoAspectRatio: (d['videoAspectRatio'] as num?)?.toDouble(),
+      mentions: [
+        for (final m in (d['mentions'] as List? ?? const []))
+          if (m is Map) PostMention.fromMap(Map<String, dynamic>.from(m)),
+      ],
+      hashtags: List<String>.from(d['hashtags'] ?? const []),
     );
   }
+
+  /// Publications portant un hashtag (forme normalisée, sans « # »), les
+  /// plus récentes d'abord. Trié ici plutôt que par `orderBy` : pas
+  /// d'index composite à maintenir pour un volume de commune.
+  Future<List<FeedItem>> postsByHashtag(String tag, {int limit = 60}) async {
+    final normalized = normalizeHashtag(tag);
+    if (normalized.isEmpty) return const [];
+    final snap = await _postsRef
+        .where('hashtags', arrayContains: normalized)
+        .limit(limit)
+        .get();
+    final posts = [
+      for (final doc in snap.docs) _itemFromDoc(doc, false),
+    ]..removeWhere((p) => p.hidden);
+    posts.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
+    return posts;
+  }
+
+  /// Champs vidéo d'un document.
+  static Map<String, dynamic> _videoFields(UploadedVideo? v) => v == null
+      ? const {}
+      : {
+          'videoUrl': v.url,
+          'videoThumbUrl': v.thumbUrl,
+          'videoDurationMs': v.durationMs,
+          'videoAspectRatio': v.aspectRatio,
+        };
 
   // -----------------------------------------------------------------------
   // Créer un post (avec upload d'images vers Storage)
@@ -327,6 +364,9 @@ class FeedService {
     bool authorVerified = false,
     String? authorPhotoUrl,
     List<String> localImagePaths = const [],
+    PostVideoDraft? video,
+    List<PostMention> mentions = const [],
+    void Function(double progress)? onVideoProgress,
   }) async {
     final docRef = _postsRef.doc();
 
@@ -336,6 +376,15 @@ class FeedService {
       localImagePaths,
       'posts/$authorUid/${docRef.id}',
     );
+    final uploadedVideo = video == null
+        ? null
+        : await _uploadVideo(
+            video,
+            'posts/$authorUid/${docRef.id}',
+            onVideoProgress,
+          );
+    final keptMentions = mentionsStillIn(body, mentions);
+    final hashtags = extractHashtags('$title $body');
 
     final now = DateTime.now();
     await docRef.set({
@@ -350,6 +399,9 @@ class FeedService {
         'authorPhotoUrl': authorPhotoUrl,
       'publishedAt': Timestamp.fromDate(now),
       'imageUrls': imageUrls,
+      ..._videoFields(uploadedVideo),
+      'mentions': [for (final m in keptMentions) m.toMap()],
+      'hashtags': hashtags,
       'likesCount': 0,
       'commentsCount': 0,
       'commentsDisabled': false,
@@ -369,6 +421,12 @@ class FeedService {
       authorPhotoUrl: authorPhotoUrl,
       publishedAt: now,
       imageUrls: imageUrls,
+      videoUrl: uploadedVideo?.url,
+      videoThumbUrl: uploadedVideo?.thumbUrl,
+      videoDurationMs: uploadedVideo?.durationMs,
+      videoAspectRatio: uploadedVideo?.aspectRatio,
+      mentions: keptMentions,
+      hashtags: hashtags,
     );
   }
 
@@ -404,6 +462,14 @@ class FeedService {
         'authorPhotoUrl': authorPhotoUrl,
       'publishedAt': Timestamp.fromDate(now),
       'imageUrls': original.imageUrls,
+      if (original.hasVideo) ...{
+        'videoUrl': original.videoUrl,
+        'videoThumbUrl': original.videoThumbUrl,
+        'videoDurationMs': original.videoDurationMs,
+        'videoAspectRatio': original.videoAspectRatio,
+      },
+      'mentions': [for (final m in original.mentions) m.toMap()],
+      'hashtags': original.hashtags,
       'repostOfId': sourceId,
       'repostOfAuthorUid': sourceAuthorUid,
       'repostOfAuthorName': sourceAuthorName,
@@ -432,6 +498,12 @@ class FeedService {
       repostOfAuthorPhotoUrl: sourceAuthorPhoto,
       publishedAt: now,
       imageUrls: List<String>.from(original.imageUrls),
+      videoUrl: original.videoUrl,
+      videoThumbUrl: original.videoThumbUrl,
+      videoDurationMs: original.videoDurationMs,
+      videoAspectRatio: original.videoAspectRatio,
+      mentions: original.mentions,
+      hashtags: original.hashtags,
     );
   }
 
@@ -452,14 +524,23 @@ class FeedService {
     required String body,
     required List<String> keptImageUrls,
     List<String> newLocalImagePaths = const [],
+    bool keepVideo = true,
+    PostVideoDraft? newVideo,
+    List<PostMention> mentions = const [],
+    void Function(double progress)? onVideoProgress,
   }) async {
     final ref = _postsRef.doc(original.id);
+    final folder = 'posts/${original.authorUid}/${original.id}';
 
-    final uploaded = await _uploadImages(
-      newLocalImagePaths,
-      'posts/${original.authorUid}/${original.id}',
-    );
+    final uploaded = await _uploadImages(newLocalImagePaths, folder);
     final imageUrls = [...keptImageUrls, ...uploaded];
+    final uploadedVideo = newVideo == null
+        ? null
+        : await _uploadVideo(newVideo, folder, onVideoProgress);
+    final dropOldVideo =
+        original.hasVideo && (!keepVideo || uploadedVideo != null);
+    final keptMentions = mentionsStillIn(body, mentions);
+    final hashtags = extractHashtags('$title $body');
 
     final now = DateTime.now();
     await ref.update({
@@ -467,6 +548,16 @@ class FeedService {
       'title': title.trim(),
       'body': body.trim(),
       'imageUrls': imageUrls,
+      if (uploadedVideo != null)
+        ..._videoFields(uploadedVideo)
+      else if (dropOldVideo) ...{
+        'videoUrl': FieldValue.delete(),
+        'videoThumbUrl': FieldValue.delete(),
+        'videoDurationMs': FieldValue.delete(),
+        'videoAspectRatio': FieldValue.delete(),
+      },
+      'mentions': [for (final m in keptMentions) m.toMap()],
+      'hashtags': hashtags,
       'editedAt': Timestamp.fromDate(now),
     });
 
@@ -475,15 +566,32 @@ class FeedService {
     final removed = original.imageUrls.where(
       (url) => !keptImageUrls.contains(url),
     );
-    await _deleteImagesByUrl(removed);
+    await _deleteImagesByUrl([
+      ...removed,
+      if (dropOldVideo) ...[
+        original.videoUrl!,
+        if (original.videoThumbUrl != null) original.videoThumbUrl!,
+      ],
+    ]);
 
-    return original.copyWith(
+    final base = original.copyWith(
       type: type,
       title: title.trim(),
       body: body.trim(),
       imageUrls: imageUrls,
       editedAt: now,
+      mentions: keptMentions,
+      hashtags: hashtags,
+      clearVideo: dropOldVideo && uploadedVideo == null,
     );
+    return uploadedVideo == null
+        ? base
+        : base.copyWith(
+            videoUrl: uploadedVideo.url,
+            videoThumbUrl: uploadedVideo.thumbUrl,
+            videoDurationMs: uploadedVideo.durationMs,
+            videoAspectRatio: uploadedVideo.aspectRatio,
+          );
   }
 
   /// Ouvre ou ferme les commentaires d'une publication.
@@ -508,7 +616,15 @@ class FeedService {
   /// encore : les règles Storage vérifient `authorUid` sur le document
   /// Firestore, qui doit donc être supprimé en dernier.
   Future<void> deletePost(FeedItem post) async {
-    await _deleteImagesByUrl(post.imageUrls);
+    await _deleteImagesByUrl([
+      ...post.imageUrls,
+      // Une republication pointe sur la vidéo de l'original : ne pas
+      // l'effacer sous ses pieds.
+      if (post.hasVideo && !post.isRepost) ...[
+        post.videoUrl!,
+        if (post.videoThumbUrl != null) post.videoThumbUrl!,
+      ],
+    ]);
     await _postsRef.doc(post.id).delete();
   }
 
@@ -962,6 +1078,56 @@ class FeedService {
     return ref.getDownloadURL();
   }
 
+  /// Envoie la vidéo (déjà compressée si besoin) et sa vignette.
+  Future<UploadedVideo> _uploadVideo(
+    PostVideoDraft video,
+    String folder,
+    void Function(double progress)? onProgress,
+  ) async {
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    // L'extension suit le fichier réel : un `.mov` stocké sous `.mp4` se
+    // lit mal côté Android.
+    final ext = video.path.toLowerCase().endsWith('.mov') ? 'mov' : 'mp4';
+    final ref = _storage.ref('$folder/video_$stamp.$ext');
+    final task = await LocalMedia.upload(
+      ref,
+      video.path,
+      SettableMetadata(
+        contentType: ext == 'mov' ? 'video/quicktime' : 'video/mp4',
+        cacheControl: 'public, max-age=31536000, immutable',
+      ),
+    );
+    final sub = onProgress == null
+        ? null
+        : task.snapshotEvents.listen((s) {
+            if (s.totalBytes > 0) {
+              onProgress(s.bytesTransferred / s.totalBytes);
+            }
+          }, onError: (_) {});
+    try {
+      await task;
+    } finally {
+      await sub?.cancel();
+    }
+    final url = await ref.getDownloadURL();
+
+    String? thumbUrl;
+    final thumb = video.thumbPath;
+    if (thumb != null) {
+      try {
+        thumbUrl = await _uploadImage(thumb, '$folder/video_${stamp}_thumb.jpg');
+      } on Object catch (_) {
+        // Sans vignette, la carte affiche une tuile : pas de quoi échouer.
+      }
+    }
+    return UploadedVideo(
+      url: url,
+      thumbUrl: thumbUrl,
+      durationMs: video.durationMs,
+      aspectRatio: video.aspectRatio,
+    );
+  }
+
   /// Effacement au mieux : une image déjà absente (double suppression,
   /// purge serveur passée avant) ne doit pas faire échouer l'opération
   /// utilisateur qui l'a déclenchée.
@@ -985,4 +1151,35 @@ class LikeState {
 
   final int likesCount;
   final bool likedByMe;
+}
+
+/// Vidéo choisie pour une publication, prête à partir (déjà compressée si
+/// elle dépassait le seuil).
+class PostVideoDraft {
+  const PostVideoDraft({
+    required this.path,
+    this.thumbPath,
+    this.durationMs,
+    this.aspectRatio,
+  });
+
+  final String path;
+  final String? thumbPath;
+  final int? durationMs;
+  final double? aspectRatio;
+}
+
+/// Vidéo envoyée : ce qu'on écrit dans le document.
+class UploadedVideo {
+  const UploadedVideo({
+    required this.url,
+    this.thumbUrl,
+    this.durationMs,
+    this.aspectRatio,
+  });
+
+  final String url;
+  final String? thumbUrl;
+  final int? durationMs;
+  final double? aspectRatio;
 }

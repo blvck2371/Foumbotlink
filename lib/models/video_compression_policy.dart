@@ -31,8 +31,12 @@ class VideoCompressionPolicy {
   /// on perd en qualité sans rien gagner de visible sur le forfait.
   static const minSavingRatio = 0.10;
 
-  static bool shouldCompress(int originalBytes) =>
-      originalBytes >= skipBelowBytes;
+  /// Seuil des publications du fil : au-delà de 8 Mo, la vidéo est
+  /// réencodée ; en dessous, elle part telle quelle, sans perte.
+  static const feedCompressAboveBytes = 8 * 1024 * 1024;
+
+  static bool shouldCompress(int originalBytes, {int? threshold}) =>
+      originalBytes >= (threshold ?? skipBelowBytes);
 
   /// Vrai si la version compressée vaut la peine d'être envoyée à la
   /// place de l'original. Une compression ratée (`null`, fichier vide) ou

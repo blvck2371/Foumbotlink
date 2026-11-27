@@ -4,6 +4,8 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../controllers/compose_controller.dart';
 import '../../models/feed_item.dart';
+import '../../services/mention_service.dart';
+import '../../utils/local_media.dart';
 import '../../services/user_profile_service.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/foumbot_loader.dart';
@@ -142,15 +144,37 @@ class ComposeScreen extends GetView<ComposeController> {
                           maxLines: 8,
                           style: GoogleFonts.manrope(color: ink, height: 1.4),
                           decoration: InputDecoration.collapsed(
-                            hintText: 'Écrivez votre message…',
+                            hintText: 'Écrivez votre message… @ pour '
+                                'mentionner, # pour un hashtag',
                             hintStyle: GoogleFonts.manrope(color: muted),
                           ),
                         ),
+                      ),
+                      _MentionSuggestions(isDark: isDark),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          _InsertChip(
+                            label: '@ Mentionner',
+                            isDark: isDark,
+                            onTap: () => controller.insertAt('@'),
+                          ),
+                          const SizedBox(width: 8),
+                          _InsertChip(
+                            label: '# Hashtag',
+                            isDark: isDark,
+                            onTap: () => controller.insertAt('#'),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 22),
                       _SectionLabel('Photos (facultatif)', ink: ink),
                       const SizedBox(height: 10),
                       _ImagesPicker(isDark: isDark),
+                      const SizedBox(height: 22),
+                      _SectionLabel('Vidéo (facultatif)', ink: ink),
+                      const SizedBox(height: 10),
+                      _VideoPicker(isDark: isDark),
                     ],
                   ),
                 ),
@@ -166,7 +190,9 @@ class ComposeScreen extends GetView<ComposeController> {
                             }
                           : null,
                       child: controller.isPublishing.value
-                          ? const FoumbotLoader.button()
+                          ? (controller.videoStage.value == VideoStage.none
+                              ? const FoumbotLoader.button()
+                              : Text(controller.progressLabel))
                           : Text(controller.submitLabel),
                     ),
                   ),
@@ -364,5 +390,230 @@ class _ImageTile extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+class _InsertChip extends StatelessWidget {
+  const _InsertChip({
+    required this.label,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool isDark;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          child: Text(
+            label,
+            style: GoogleFonts.manrope(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+              color: isDark ? AppColors.orangeSoft : AppColors.orangeReadable,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Comptes, structures et pros proposés pendant qu'on tape « @… ».
+class _MentionSuggestions extends StatelessWidget {
+  const _MentionSuggestions({required this.isDark});
+
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = Get.find<ComposeController>();
+    final ink = isDark ? AppColors.white : AppColors.black;
+    final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
+    return Obx(() {
+      final list = controller.mentionSuggestions;
+      if (list.isEmpty) return const SizedBox.shrink();
+      return Container(
+        margin: const EdgeInsets.only(top: 6),
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.blackElevated : AppColors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: muted.withValues(alpha: 0.25)),
+        ),
+        child: Column(
+          children: [
+            for (final MentionSuggestion s in list)
+              ListTile(
+                dense: true,
+                onTap: () => controller.pickMention(s),
+                leading: UserAvatar(
+                  name: s.mention.name,
+                  photoUrl: s.photoUrl,
+                  radius: 16,
+                ),
+                title: Text(
+                  s.mention.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w700,
+                    color: ink,
+                  ),
+                ),
+                subtitle: Text(
+                  s.subtitle,
+                  style: GoogleFonts.manrope(fontSize: 12, color: muted),
+                ),
+              ),
+          ],
+        ),
+      );
+    });
+  }
+}
+
+class _VideoPicker extends StatelessWidget {
+  const _VideoPicker({required this.isDark});
+
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = Get.find<ComposeController>();
+    final muted = isDark ? AppColors.whiteMuted : AppColors.gray;
+
+    return Obx(() {
+      final local = controller.videoPath.value;
+      final thumb = controller.videoThumbPath.value;
+      final existing = controller.editing;
+      final showExisting = local == null &&
+          controller.keepExistingVideo.value &&
+          (existing?.hasVideo ?? false);
+
+      if (local == null && !showExisting) {
+        return InkWell(
+          onTap: controller.isPublishing.value ? null : controller.pickVideo,
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            height: 64,
+            decoration: BoxDecoration(
+              color: isDark ? AppColors.blackElevated : AppColors.whiteSoft,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: muted.withValues(alpha: 0.4)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.video_library_outlined, color: muted),
+                const SizedBox(width: 10),
+                Text(
+                  'Ajouter une vidéo',
+                  style: GoogleFonts.manrope(
+                    fontWeight: FontWeight.w700,
+                    color: muted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+
+      final preview = showExisting
+          ? (existing!.videoThumbUrl != null
+              ? FeedNetworkImage(url: existing.videoThumbUrl!, isDark: isDark)
+              : null)
+          : (thumb != null
+              ? Image(image: LocalMedia.image(thumb), fit: BoxFit.cover)
+              : null);
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  width: double.infinity,
+                  height: 180,
+                  color: AppColors.black,
+                  child: preview ??
+                      const Icon(
+                        Icons.movie_outlined,
+                        color: AppColors.whiteMuted,
+                        size: 42,
+                      ),
+                ),
+              ),
+              const Positioned.fill(
+                child: Center(
+                  child: Icon(
+                    Icons.play_circle_fill,
+                    color: Colors.white70,
+                    size: 52,
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 6,
+                right: 6,
+                child: InkWell(
+                  onTap: controller.isPublishing.value
+                      ? null
+                      : controller.removeVideo,
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Colors.black54,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.close,
+                      size: 18,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (local != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              controller.videoWillBeReduced
+                  ? 'Vidéo de ${controller.videoSizeLabel} : sa qualité sera '
+                      'réduite pour un envoi plus rapide.'
+                  : 'Vidéo de ${controller.videoSizeLabel}, envoyée telle '
+                      'quelle.',
+              style: GoogleFonts.manrope(fontSize: 12, color: muted),
+            ),
+          ],
+          if (controller.isPublishing.value &&
+              controller.videoStage.value != VideoStage.none) ...[
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: controller.videoProgress.value,
+                minHeight: 6,
+                color: AppColors.orange,
+                backgroundColor: muted.withValues(alpha: 0.2),
+              ),
+            ),
+          ],
+        ],
+      );
+    });
   }
 }
