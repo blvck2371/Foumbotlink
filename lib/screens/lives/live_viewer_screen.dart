@@ -198,6 +198,22 @@ class _LivePage extends StatelessWidget {
               ),
             ),
             const _Scrims(),
+            if (session.audioBlocked.value)
+              Center(
+                child: FilledButton.icon(
+                  onPressed: session.enableAudio,
+                  icon: const Icon(Icons.volume_up_rounded),
+                  label: const Text('Activer le son'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.black.withValues(alpha: 0.6),
+                    foregroundColor: AppColors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 14,
+                    ),
+                  ),
+                ),
+              ),
             AnimatedPadding(
               duration: const Duration(milliseconds: 120),
               padding: EdgeInsets.only(

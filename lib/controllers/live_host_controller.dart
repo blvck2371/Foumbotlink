@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:livekit_client/livekit_client.dart';
@@ -98,7 +99,11 @@ class LiveHostController extends GetxController {
     phase.value = LiveHostPhase.preparing;
     error.value = null;
     needsSettings.value = false;
-    final statuses = await [Permission.camera, Permission.microphone].request();
+    // Sur le web, le navigateur demande lui-même caméra et micro quand la
+    // caméra s'ouvre ci-dessous.
+    final statuses = kIsWeb
+        ? const <Permission, PermissionStatus>{}
+        : await [Permission.camera, Permission.microphone].request();
     if (!statuses.values.every((s) => s.isGranted)) {
       needsSettings.value = statuses.values.any((s) => s.isPermanentlyDenied);
       error.value =

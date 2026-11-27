@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:livekit_client/livekit_client.dart';
@@ -51,6 +52,10 @@ class LiveWatchSession {
   /// Montée ou descente en cours.
   final stageBusy = false.obs;
 
+  /// Navigateur qui bloque le son tant qu'on n'a pas touché la page : un
+  /// bouton « Activer le son » s'affiche (web surtout).
+  final audioBlocked = false.obs;
+
   Room? _room;
   EventsListener<RoomEvent>? _listener;
   Worker? _endedWorker;
@@ -101,12 +106,15 @@ class LiveWatchSession {
       await _connect(ticket);
       await feedStarted;
       if (_disposed) return;
-      // Le son d'un live sort du haut-parleur, pas de l'écouteur.
-      unawaited(
-        AudioManager.instance
-            .setSpeakerOutputPreferred(true)
-            .catchError((Object _) {}),
-      );
+      // Le son d'un live sort du haut-parleur, pas de l'écouteur (réglage
+      // propre au téléphone : le navigateur n'en a pas).
+      if (!kIsWeb) {
+        unawaited(
+          AudioManager.instance
+              .setSpeakerOutputPreferred(true)
+              .catchError((Object _) {}),
+        );
+      }
       status.value = LiveWatchStatus.watching;
       _onGuest();
     } catch (_) {
@@ -120,6 +128,7 @@ class LiveWatchSession {
     final room = Room(roomOptions: const RoomOptions(adaptiveStream: true));
     _room = room;
     _listener = media.attach(room)
+      ..on<AudioPlaybackStatusChanged>((e) => audioBlocked.value = !e.isPlaying)
       ..on<RoomDisconnectedEvent>((e) {
         if (_disposed || status.value == LiveWatchStatus.ended) return;
         // Retiré par l'hôte, salle fermée : on ne reste pas devant un
@@ -133,6 +142,23 @@ class LiveWatchSession {
       });
     await room.connect(ticket.url, ticket.token);
     media.refresh(room);
+    if (kIsWeb) {
+      // On arrive ici d'un toucher : la plupart des navigateurs laissent
+      // alors jouer le son. Sinon, le bouton « Activer le son » prend le
+      // relais.
+      try {
+        await room.startAudio();
+      } catch (_) {}
+      audioBlocked.value = !room.canPlaybackAudio;
+    }
+  }
+
+  /// « Activer le son » : un toucher suffit au navigateur.
+  Future<void> enableAudio() async {
+    try {
+      await _room?.startAudio();
+    } catch (_) {}
+    audioBlocked.value = !(_room?.canPlaybackAudio ?? true);
   }
 
   /// Suit ma place sur le panel, telle que le serveur la tient.
@@ -238,6 +264,9 @@ class LiveWatchSession {
 
   /// Caméra et micro autorisés, sinon pas de panel.
   Future<bool> _ensurePermissions() async {
+    // Sur le web, c'est le navigateur qui demande caméra et micro, à
+    // l'ouverture de la caméra.
+    if (kIsWeb) return true;
     final statuses = await [Permission.camera, Permission.microphone].request();
     if (statuses[Permission.microphone]?.isGranted ?? false) return true;
     Get.snackbar(
